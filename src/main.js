@@ -18,6 +18,7 @@ const preview = require("./src/preview");
 const simulate = require("./src/simulate");
 const colorwheel = require("./src/colorwheel");
 const cslider = require("./src/cslider");
+const photoanalysis = require("./src/photoanalysis");
 const { entrypoints } = require("uxp");
 
 // 두 패널(메인/미리보기)을 등록한다. 같은 JS 컨텍스트를 공유하므로 main.js가
@@ -70,8 +71,30 @@ const PALETTE = [
   [250, 250, 250], // 화이트
 ];
 
-// 큰 컬러휠에는 유채색만 얹는다(무채색은 중심에 뭉쳐 못 고르므로 미니휠로 분리).
-const COLOR_PALETTE = PALETTE.slice(0, 11);
+// 큰 컬러휠 마커는 유채 6색역에 1:1 대응한다. 마커 index가 곧 색역이다
+// (드래그 시 classify 없이 이 순서로 색역을 정한다).
+const CHROMA_ORDER = ["reds", "yellows", "greens", "cyans", "blues", "magentas"];
+
+// 사진 분석 실패/문서 없음 시 폴백 대표색 (각 색역 순색).
+const FALLBACK_CHROMA = {
+  reds: [200, 80, 70],
+  yellows: [214, 184, 84],
+  greens: [92, 162, 92],
+  cyans: [78, 176, 182],
+  blues: [78, 110, 200],
+  magentas: [182, 90, 172],
+};
+
+// 사진 색역 분석 결과 (photoanalysis.analyze). null이면 폴백 사용.
+let photoData = null;
+
+/** 큰 컬러휠에 얹을 유채 6색역 대표색 배열 (사진 기반, 없으면 폴백). */
+function getColorPalette() {
+  return CHROMA_ORDER.map((r) => {
+    const rep = photoData && photoData.ranges[r] && photoData.ranges[r].rep;
+    return rep || FALLBACK_CHROMA[r];
+  });
+}
 
 // 무채색 미니휠 색역과 대표 밝기(0~1). CMY 역매핑 기준.
 const ACHROMA_TONE = { whites: 0.88, neutrals: 0.5, blacks: 0.22 };
@@ -95,6 +118,7 @@ function scheduleRender() {
     renderPending = false;
     renderPalette();
     renderWheel();
+    renderDetail();
   });
 }
 
@@ -108,40 +132,71 @@ function onParamsChanged() {
 }
 
 let wheelCtrl = null;
+let detailCtrl = null;
+
+const RANGE_LABELS = {
+  reds: "레드", yellows: "옐로", greens: "그린", cyans: "시안", blues: "블루",
+  magentas: "마젠타", whites: "화이트", neutrals: "중간톤", blacks: "블랙",
+};
 
 /** 컬러휠 마커·화살표를 갱신한다 (DOM transform). 배경은 build에서 1회 구성됨. */
 function renderWheel() {
   if (!wheelCtrl) return;
   try {
-    wheelCtrl.update(COLOR_PALETTE, params.grading);
+    wheelCtrl.update(getColorPalette(), params.grading);
   } catch (e) {
     console.error("wheel update 실패", e);
   }
 }
 
-/** 색을 Selective Color 색역 중 하나로 분류한다. */
-function classifyRange(rgb) {
-  const { h, s, v } = colorwheel.rgbToHsv(rgb[0], rgb[1], rgb[2]);
-  if (s < 0.22) {
-    if (v > 0.7) return "whites";
-    if (v < 0.35) return "blacks";
-    return "neutrals";
+/**
+ * 세부 휠: 현재 선택된 색역의 밝기별 대표색(tones)이 grading으로 어디로 이동하는지
+ * 보여준다. 메인 휠은 색역당 대표 1개, 세부 휠은 그 색역 안을 밝기로 파고든다.
+ */
+function renderDetail() {
+  if (!detailCtrl) return;
+  const range = currentRange();
+  let tones = [];
+  if (photoData && photoData.ranges[range]) {
+    tones = photoData.ranges[range].tones.filter(Boolean);
   }
-  const bands = [
-    ["reds", 0], ["yellows", 60], ["greens", 120],
-    ["cyans", 180], ["blues", 240], ["magentas", 300],
-  ];
-  let best = "reds";
-  let bd = 999;
-  for (const [name, bh] of bands) {
-    let d = Math.abs(h - bh) % 360;
-    if (d > 180) d = 360 - d;
-    if (d < bd) {
-      bd = d;
-      best = name;
-    }
+  if (tones.length === 0) {
+    const rep = (photoData && photoData.ranges[range] && photoData.ranges[range].rep) ||
+      FALLBACK_CHROMA[range] || [128, 128, 128];
+    tones = [rep];
   }
-  return best;
+  try {
+    detailCtrl.update(tones, params.grading);
+  } catch (e) {
+    console.error("detail update 실패", e);
+  }
+  const label = $("detailLabel");
+  if (label) label.textContent = "색역 세부 — " + (RANGE_LABELS[range] || range);
+}
+
+let lastAnalyzedDocId = "none";
+
+function activeDocId() {
+  const psApp = require("photoshop").app;
+  return psApp.documents.length ? psApp.activeDocument.id : null;
+}
+
+/**
+ * 활성 문서를 분석해 컬러휠 대표색을 사진 기준으로 갱신한다.
+ * 같은 문서면 건너뛴다(문서 전환 시에만 재분석). force로 강제 갱신.
+ */
+async function refreshPhotoAnalysis(force) {
+  const id = activeDocId();
+  if (!force && id === lastAnalyzedDocId) return;
+  lastAnalyzedDocId = id;
+  try {
+    photoData = await photoanalysis.analyze();
+  } catch (e) {
+    photoData = null;
+    console.error("사진 분석 실패", e);
+  }
+  renderWheel();
+  renderDetail();
 }
 
 /**
@@ -153,9 +208,11 @@ function classifyRange(rgb) {
 const MARKER_GAIN = 1.4; // 마커 드래그 CMY 조절 강도 배율
 
 function handleMarkerDrag(index, targetHue, targetSat) {
-  const rgb = COLOR_PALETTE[index];
+  // 마커 index가 곧 색역이다(사진 대표색을 다시 classify하면 경계에서 어긋날 수
+  // 있으므로 순서로 직접 정한다).
+  const range = CHROMA_ORDER[index];
+  const rgb = getColorPalette()[index];
   const src = colorwheel.rgbToHsv(rgb[0], rgb[1], rgb[2]);
-  const range = classifyRange(rgb);
   // 방향(색조)의 최대채도색을 기준으로 CMY 델타 방향을 잡는다. 밝기에 하한(0.55)을
   // 둬 어두운 색도 충분한 색공간을 확보한다(원본 밝기를 그대로 쓰면 어두운 색은
   // 도달 범위가 극히 좁아진다). 강도는 드래그 거리(targetSat, 휠 밖이면 >1)로 키운다.
@@ -205,7 +262,7 @@ function resetRange(range) {
 
 /** 컬러휠 마커 더블탭 → 그 색의 색역 리셋. */
 function handleMarkerReset(index) {
-  resetRange(classifyRange(COLOR_PALETTE[index]));
+  resetRange(CHROMA_ORDER[index]);
 }
 
 /** 무채색 미니휠 더블탭 → 그 톤 색역 리셋 (마커 복귀는 buildMini가 처리). */
@@ -362,6 +419,7 @@ function setRange(range) {
   currentRangeVal = range;
   updateRangeChips();
   syncSelectiveColorSliders();
+  renderDetail(); // 세부 휠을 새 색역으로 갱신
 }
 
 function updateRangeChips() {
@@ -599,6 +657,7 @@ async function init() {
     onMarkerDrag: handleMarkerDrag,
     onMarkerReset: handleMarkerReset,
   });
+  detailCtrl = colorwheel.build($("wheelDetail"), {}); // 세부 휠 (보기 전용)
   miniWheels = {
     whites: colorwheel.buildMini($("miniWhites"), {
       onDrag: (h, s) => handleAchromaDrag("whites", h, s),
@@ -615,6 +674,7 @@ async function init() {
   };
   buildPalette();
   renderWheel();
+  renderDetail();
   renderPalette();
   try {
     await presets.seedIfEmpty();
@@ -623,6 +683,19 @@ async function init() {
     setStatus(`프리셋 초기화 실패: ${e.message || e}`, true);
   }
   preview.render(params); // 초기 미리보기 (문서 있으면)
+  await refreshPhotoAnalysis(true); // 사진 대표색으로 컬러휠 채우기
+
+  // 문서 전환 시 재분석. select 등이 자주 오지만 refreshPhotoAnalysis가 문서 id로
+  // 걸러 실제 전환일 때만 분석한다. 이벤트 미지원 시 조용히 무시.
+  try {
+    const { action } = require("photoshop");
+    action.addNotificationListener(
+      [{ event: "select" }, { event: "open" }, { event: "newDocument" }, { event: "close" }],
+      () => { refreshPhotoAnalysis(false); }
+    );
+  } catch (e) {
+    console.error("문서 전환 리스너 등록 실패", e);
+  }
 }
 
 init();
