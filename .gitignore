@@ -1,6 +1,9 @@
 # UXP devtools 세션 파일 (plugin load 시 생성)
 .uxprc
 
+# Claude Code 로컬 설정
+.claude/
+
 # 로그·OS 파일
 *.log
 .DS_Store
