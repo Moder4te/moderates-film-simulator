@@ -6,8 +6,9 @@
 ## 설치 (일반 사용자 — 개발자 툴 불필요)
 
 1. Photoshop 2023 (v24) 이상을 설치한다.
-2. [Releases](https://github.com/Moder4te/moderates-film-simulator/releases)에서
-   최신 `.ccx` 파일(`com.filmsim.photoshop_PS.ccx`)을 내려받는다.
+2. [최신 `.ccx` 다운로드](https://github.com/Moder4te/moderates-film-simulator/releases/latest/download/com.filmsim.photoshop_PS.ccx)
+   — 항상 최신 릴리스의 `com.filmsim.photoshop_PS.ccx`를 곧바로 내려받는다.
+   ([전체 릴리스 목록](https://github.com/Moder4te/moderates-film-simulator/releases))
 3. `.ccx`를 더블클릭한다. Adobe 플러그인 설치 관리자(Creative Cloud와 함께 설치됨)가
    설치를 진행한다. "확인되지 않은 게시자" 경고가 나오면 설치를 허용한다(자체 서명).
 4. Photoshop을 재시작한다.
