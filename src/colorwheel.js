@@ -90,10 +90,17 @@ function makeDot(size, style) {
   }, style || {}));
 }
 
+const SPREAD_R_MIN = 26; // 세부 휠 밝기 슬롯 최소 반경(가장 어두운 톤)
+
 function build(container, options) {
   container.innerHTML = "";
   const onMarkerDrag = options && options.onMarkerDrag;
   const onMarkerReset = options && options.onMarkerReset;
+  // 세부 휠 전용: 같은 색역의 밝기별 톤은 색조·채도가 비슷해 한 점에 뭉친다.
+  // 밝기순으로 색조 스포크(같은 각도)를 따라 반경을 벌려 겹침을 없앤다
+  // (어두운 톤=안쪽, 밝은 톤=바깥쪽). 적용점·경로는 같은 양만큼 평행이동해
+  // 그레이딩 이동 화살표(원본→적용)는 그대로 유지한다.
+  const spreadTones = !!(options && options.spreadTones);
   const ringR = SIZE / 2 - PAD; // 색상환 반경 (110)
   const markerR = ringR - 20; // 마커 최대 반경 (90), 링 안쪽
 
@@ -216,15 +223,39 @@ function build(container, options) {
     dot.style.transform = `translate(${x}px,${y}px)`;
   }
 
+  // 밝기순 반경 슬롯. rank 0(가장 어두움)=안쪽, 마지막(가장 밝음)=바깥쪽.
+  // 톤이 하나뿐이면 벌릴 필요가 없으니 자연 위치를 쓴다.
+  function toneRanks(palette) {
+    const vs = palette.map((rgb) => rgbToHsv(rgb[0], rgb[1], rgb[2]).v);
+    const order = vs.map((v, i) => [v, i]).sort((p, q) => p[0] - q[0]);
+    const rank = new Array(palette.length);
+    order.forEach(([, i], r) => { rank[i] = r; });
+    return rank;
+  }
+
   function update(palette, grading) {
     ensure(palette.length);
+    const ranks = spreadTones && palette.length > 1 ? toneRanks(palette) : null;
     for (let i = 0; i < palette.length; i++) {
       const rgb = palette[i];
       const after = simulate.applyGrading(rgb, grading);
       const b = rgbToHsv(rgb[0], rgb[1], rgb[2]);
       const a = rgbToHsv(after[0], after[1], after[2]);
-      const [ox, oy] = polarOffset(b.h, b.s, markerR);
-      const [gx, gy] = polarOffset(a.h, a.s, markerR);
+      let [ox, oy] = polarOffset(b.h, b.s, markerR);
+      let [gx, gy] = polarOffset(a.h, a.s, markerR);
+
+      if (ranks) {
+        // 원본 색조 스포크를 따라 밝기 슬롯 반경으로 원본점을 옮기고,
+        // 적용점·경로는 같은 이동벡터로 평행이동한다(화살표 보존).
+        const n = palette.length;
+        const slotR = SPREAD_R_MIN + (markerR - SPREAD_R_MIN) * (ranks[i] / (n - 1));
+        const baseR = b.s * markerR;
+        const rad = (b.h * Math.PI) / 180;
+        const dx = Math.cos(rad) * (slotR - baseR);
+        const dy = -Math.sin(rad) * (slotR - baseR);
+        ox += dx; oy += dy;
+        gx += dx; gy += dy;
+      }
 
       origDots[i].style.background = `rgb(${rgb.join(",")})`;
       place(origDots[i], ox, oy);

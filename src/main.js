@@ -133,6 +133,8 @@ function onParamsChanged() {
 
 let wheelCtrl = null;
 let detailCtrl = null;
+// 세부 휠에 현재 얹혀 있는 톤 색 배열. 마커 index → 원본색 조회용(드래그).
+let detailTones = [];
 
 const RANGE_LABELS = {
   reds: "레드", yellows: "옐로", greens: "그린", cyans: "시안", blues: "블루",
@@ -165,6 +167,7 @@ function renderDetail() {
       FALLBACK_CHROMA[range] || [128, 128, 128];
     tones = [rep];
   }
+  detailTones = tones; // 세부 휠 드래그가 마커 index로 원본색을 찾는다
   try {
     detailCtrl.update(tones, params.grading);
   } catch (e) {
@@ -182,10 +185,10 @@ function activeDocId() {
 }
 
 /**
- * 활성 문서를 분석해 컬러휠 대표색을 사진 기준으로 갱신한다.
+ * 활성 문서가 바뀌면 컬러휠 대표색과 미리보기를 새 문서 기준으로 갱신한다.
  * 같은 문서면 건너뛴다(문서 전환 시에만 재분석). force로 강제 갱신.
  */
-async function refreshPhotoAnalysis(force) {
+async function refreshForActiveDoc(force) {
   const id = activeDocId();
   if (!force && id === lastAnalyzedDocId) return;
   lastAnalyzedDocId = id;
@@ -197,6 +200,24 @@ async function refreshPhotoAnalysis(force) {
   }
   renderWheel();
   renderDetail();
+  // 미리보기도 새 문서로 다시 그린다. 이게 빠지면 문서를 바꿔도 파라미터를
+  // 건드리기 전까지 이전 사진이 그대로 남는다.
+  await preview.render(params);
+}
+
+/**
+ * 문서 알림 처리를 짧게 디바운스한다. 한 동작에 select/open이 여러 번 몰려 오고,
+ * close는 문서 목록이 실제로 정리되기 전에 오기도 해서 곧바로 읽으면 닫히는
+ * 문서를 활성 문서로 잘못 잡는다.
+ */
+let docCheckTimer = null;
+
+function scheduleDocCheck() {
+  if (docCheckTimer) clearTimeout(docCheckTimer);
+  docCheckTimer = setTimeout(() => {
+    docCheckTimer = null;
+    refreshForActiveDoc(false);
+  }, 150);
 }
 
 /**
@@ -210,8 +231,26 @@ const MARKER_GAIN = 1.4; // 마커 드래그 CMY 조절 강도 배율
 function handleMarkerDrag(index, targetHue, targetSat) {
   // 마커 index가 곧 색역이다(사진 대표색을 다시 classify하면 경계에서 어긋날 수
   // 있으므로 순서로 직접 정한다).
-  const range = CHROMA_ORDER[index];
-  const rgb = getColorPalette()[index];
+  applyMarkerDrag(CHROMA_ORDER[index], getColorPalette()[index], targetHue, targetSat);
+}
+
+/**
+ * 세부 휠 마커 드래그. 세부 휠 마커는 색역이 아니라 현재 선택된 색역 안의
+ * 밝기별 톤이므로, 색역은 현재 선택값을 쓰고 기준색만 그 톤 색으로 잡는다.
+ */
+function handleDetailDrag(index, targetHue, targetSat) {
+  const rgb = detailTones[index];
+  if (!rgb) return;
+  applyMarkerDrag(currentRange(), rgb, targetHue, targetSat);
+}
+
+/** 세부 휠 마커 더블탭 → 현재 색역 리셋. */
+function handleDetailReset() {
+  resetRange(currentRange());
+}
+
+/** 기준색 rgb를 targetHue/targetSat 방향으로 미는 CMY 델타를 range에 적용한다. */
+function applyMarkerDrag(range, rgb, targetHue, targetSat) {
   const src = colorwheel.rgbToHsv(rgb[0], rgb[1], rgb[2]);
   // 방향(색조)의 최대채도색을 기준으로 CMY 델타 방향을 잡는다. 밝기에 하한(0.55)을
   // 둬 어두운 색도 충분한 색공간을 확보한다(원본 밝기를 그대로 쓰면 어두운 색은
@@ -657,7 +696,11 @@ async function init() {
     onMarkerDrag: handleMarkerDrag,
     onMarkerReset: handleMarkerReset,
   });
-  detailCtrl = colorwheel.build($("wheelDetail"), {}); // 세부 휠 (보기 전용)
+  detailCtrl = colorwheel.build($("wheelDetail"), {
+    onMarkerDrag: handleDetailDrag,
+    onMarkerReset: handleDetailReset,
+    spreadTones: true, // 밝기별 톤을 반경으로 벌려 겹침 방지
+  });
   miniWheels = {
     whites: colorwheel.buildMini($("miniWhites"), {
       onDrag: (h, s) => handleAchromaDrag("whites", h, s),
@@ -682,16 +725,17 @@ async function init() {
   } catch (e) {
     setStatus(`프리셋 초기화 실패: ${e.message || e}`, true);
   }
-  preview.render(params); // 초기 미리보기 (문서 있으면)
-  await refreshPhotoAnalysis(true); // 사진 대표색으로 컬러휠 채우기
+  // 컬러휠 대표색 + 초기 미리보기. 분석과 미리보기가 각각 executeAsModal을 잡으므로
+  // 동시에 띄우지 않고 이 한 경로에서 순서대로 처리한다.
+  await refreshForActiveDoc(true);
 
-  // 문서 전환 시 재분석. select 등이 자주 오지만 refreshPhotoAnalysis가 문서 id로
-  // 걸러 실제 전환일 때만 분석한다. 이벤트 미지원 시 조용히 무시.
+  // 문서 전환 시 재갱신. select 등이 자주 오지만 refreshForActiveDoc이 문서 id로
+  // 걸러 실제 전환일 때만 처리한다. 이벤트 미지원 시 조용히 무시.
   try {
     const { action } = require("photoshop");
     action.addNotificationListener(
       [{ event: "select" }, { event: "open" }, { event: "newDocument" }, { event: "close" }],
-      () => { refreshPhotoAnalysis(false); }
+      () => { scheduleDocCheck(); }
     );
   } catch (e) {
     console.error("문서 전환 리스너 등록 실패", e);

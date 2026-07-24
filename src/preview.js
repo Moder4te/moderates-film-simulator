@@ -27,11 +27,23 @@ function imgEl() {
   return document.getElementById("pvImage");
 }
 
-/** RGBA 버퍼에 grading을 적용해 RGB 3채널 버퍼로 만든다. */
-function gradePixels(data, w, h, grading) {
-  const rgb = new Uint8Array(w * h * 3);
-  for (let i = 0, j = 0; i < data.length; i += 4, j += 3) {
-    const out = simulate.applyGrading([data[i], data[i + 1], data[i + 2]], grading);
+/**
+ * 소스 버퍼에 grading을 적용해 RGB 3채널 버퍼로 만든다.
+ *
+ * 채널 수는 문서마다 다르다 — 투명도/레이어가 있으면 4(RGBA), 플랫 JPEG 같은
+ * 불투명 문서는 3(RGB). 스트라이드를 4로 고정하면 3채널 문서에서 채널이 밀려
+ * 색이 깨지고 출력 하위 1/4이 검게 남는다. imageData.components를 그대로 쓴다.
+ */
+function gradePixels(data, comps, pixelCount, grading) {
+  // 출력은 항상 w*h*3 이어야 한다(createImageDataFromBuffer가 크기를 검사한다).
+  // 소스가 짧으면 읽기만 줄이고 남는 픽셀은 0으로 둔다.
+  const rgb = new Uint8Array(pixelCount * 3);
+  const count = Math.min(pixelCount, Math.floor(data.length / comps));
+  // 그레이스케일(comps 1) 같은 경우 단일 채널을 3채널로 복제한다.
+  const gOff = comps > 1 ? 1 : 0;
+  const bOff = comps > 2 ? 2 : 0;
+  for (let p = 0, i = 0, j = 0; p < count; p++, i += comps, j += 3) {
+    const out = simulate.applyGrading([data[i], data[i + gOff], data[i + bOff]], grading);
     rgb[j] = out[0];
     rgb[j + 1] = out[1];
     rgb[j + 2] = out[2];
@@ -48,19 +60,22 @@ async function renderOnce(params) {
     if (empty) empty.style.display = "block";
     return;
   }
-  const doc = app.activeDocument;
+  const docId = app.activeDocument.id;
 
   await core.executeAsModal(
     async () => {
+      // colorSpace를 RGB로 고정해 그레이스케일·CMYK 문서에서도 RGB로 받는다.
       const px = await imaging.getPixels({
-        documentID: doc.id,
+        documentID: docId,
         targetSize: { width: PV_WIDTH },
+        colorSpace: "RGB",
       });
       const w = px.imageData.width;
       const h = px.imageData.height;
+      const comps = px.imageData.components;
       const data = await px.imageData.getData({ chunky: true });
 
-      const rgb = gradePixels(data, w, h, params.grading);
+      const rgb = gradePixels(data, comps, w * h, params.grading);
 
       const rgbID = await imaging.createImageDataFromBuffer(rgb, {
         width: w,
@@ -71,9 +86,14 @@ async function renderOnce(params) {
       });
       const enc = await imaging.encodeImageData({ imageData: rgbID, base64: true });
 
-      img.src = "data:image/jpeg;base64," + enc;
-      img.style.display = "block";
-      if (empty) empty.style.display = "none";
+      // 렌더 도중 문서가 바뀌었으면 낡은 프레임으로 덮어쓰지 않는다.
+      // (덮어쓰면 새 문서 위에 이전 사진이 남는다)
+      const stillCurrent = app.documents.length && app.activeDocument.id === docId;
+      if (stillCurrent) {
+        img.src = "data:image/jpeg;base64," + enc;
+        img.style.display = "block";
+        if (empty) empty.style.display = "none";
+      }
 
       rgbID.dispose();
       px.imageData.dispose();
