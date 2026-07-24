@@ -8,3 +8,6 @@ Thumbs.db
 
 # 의존성 (현재 없음, 향후 대비)
 node_modules/
+
+# 빌드 산출물 (.ccx는 GitHub 릴리스로 배포)
+dist/

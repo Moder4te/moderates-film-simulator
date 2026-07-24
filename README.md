@@ -1,19 +1,30 @@
-# Film Simulation — Photoshop UXP 플러그인
+# Moderate's Film Simulator — Photoshop UXP 플러그인
 
 디지털 사진에 아날로그 필름의 광학적·화학적 특성을 재현하는 포토샵 플러그인.
 기획 문서는 [SPEC.md](./SPEC.md) 참고.
 
-## 설치 및 실행
+## 설치 (일반 사용자 — 개발자 툴 불필요)
 
-빌드 단계가 없다. 소스를 그대로 로드한다.
+1. Photoshop 2023 (v24) 이상을 설치한다.
+2. [Releases](https://github.com/Moder4te/moderates-film-simulator/releases)에서
+   최신 `.ccx` 파일(`com.filmsim.photoshop_PS.ccx`)을 내려받는다.
+3. `.ccx`를 더블클릭한다. Adobe 플러그인 설치 관리자(Creative Cloud와 함께 설치됨)가
+   설치를 진행한다. "확인되지 않은 게시자" 경고가 나오면 설치를 허용한다(자체 서명).
+4. Photoshop을 재시작한다.
+5. `플러그인` 메뉴에 **Film Simulation**(메인)과 **Film Sim 미리보기**(별도 패널)가
+   나타난다. 미리보기 패널을 열어 메인 옆에 도킹하면 된다.
+
+설치형(.ccx)은 UXP Developer Tool이 필요 없고 Photoshop 재시작 후에도 유지된다.
+
+## 개발 (소스에서 로드)
 
 1. [UXP Developer Tool](https://developer.adobe.com/photoshop/uxp/devtool/) 설치
 2. Photoshop 실행 (2023 / v24 이상)
-3. UDT에서 **Add Plugin** → `F:\customplugin\manifest.json` 선택
-4. 해당 플러그인 행의 **Load** 클릭
-5. Photoshop → `플러그인 > Film Simulation`
+3. UDT에서 **Add Plugin** → 이 저장소의 `manifest.json` 선택 → **Load**
+4. 코드 수정 후 UDT **Reload**로 반영
 
-코드 수정 후에는 UDT에서 **Reload**만 누르면 반영된다.
+패키징(.ccx 생성): `uxp plugin package --outputPath dist`
+(플러그인·패널 아이콘이 manifest에 있어야 하며, `icons/`에 포함되어 있다)
 
 ## 파일 구조
 
