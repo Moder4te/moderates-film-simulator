@@ -33,8 +33,17 @@
 3. UDT에서 **Add Plugin** → 이 저장소의 `manifest.json` 선택 → **Load**
 4. 코드 수정 후 UDT **Reload**로 반영
 
-패키징(.ccx 생성): `uxp plugin package --outputPath dist`
-(플러그인·패널 아이콘이 manifest에 있어야 하며, `icons/`에 포함되어 있다)
+패키징(.ccx 생성):
+
+```bash
+uxp service start          # 별도 터미널. 떠 있어야 packaging이 된다
+node tools/build-ccx.js
+```
+
+`uxp plugin package`를 저장소 루트에서 직접 돌리면 안 된다 — **manifest가 있는
+폴더를 통째로 담고 제외 옵션이 없어서 `.git`이 전부 실린다** (v1.2.0 배포판이
+실제로 그랬고 13.2MB 중 12.6MB가 `.git`이었다). `tools/build-ccx.js`가 런타임
+파일만 `build/`에 모아 거기서 패키징한다. 결과는 90KB.
 
 ## 문서
 
