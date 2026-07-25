@@ -16,9 +16,6 @@ const ps = require("./ps");
 const grading = require("./grading");
 const halation = require("./halation");
 const grain = require("./grain");
-const film = require("./film");
-const films = require("./films");
-const apply = require("./apply");
 
 /**
  * 이전에 이 플러그인이 만든 레이어/그룹(이름이 "FilmSim"으로 시작)을 모두 제거한다.
@@ -65,32 +62,10 @@ async function groupFilmSimLayers(doc) {
  */
 async function run(doc, params) {
   await clearFilmSimLayers(doc);
-  await applyColor(doc, params);
+  await grading.apply(params.grading);
   await halation.apply(doc, params.halation);
   await grain.apply(doc, params.grain);
   await groupFilmSimLayers(doc);
-}
-
-/**
- * 색 단계.
- *
- * 필름이 켜져 있으면 **필름 룩 위에 사용자 색 조정을 구워 넣은 LUT 한 장**으로
- * 처리한다. 필름 스톡을 고르고 취향대로 손보는 순서를 그대로 따른 것이다.
- * 꺼져 있으면 v1 경로(Photoshop 조정 레이어)로 간다.
- *
- * 필름 엔진은 조정 레이어가 아니라 픽셀 레이어로 결과를 올린다 — Color Lookup
- * 조정 레이어에 자체 LUT을 실을 수 없다는 것이 실측으로 확인됐기 때문이다
- * (v2plan.md 부록 B). 그래서 이 단계는 아래 레이어들의 합성을 읽어 덮는다.
- */
-async function applyColor(doc, params) {
-  const f = params.film;
-  if (!f || !f.enabled) {
-    await grading.apply(params.grading);
-    return;
-  }
-  const size = f.lutSize || 33;
-  const table = film.buildForParams(params, size);
-  await apply.applyLut(doc, table, size);
 }
 
 /** 단일 문서용 진입점. 모달 래핑과 히스토리 병합을 담당한다. */

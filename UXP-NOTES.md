@@ -1,0 +1,458 @@
+# Photoshop UXP 플러그인 — 실측 지식 정리
+
+FilmSim(v1.0 → v1.4.0) 개발에서 **실제로 부딪혀 확인한 것만** 모았다. 추측은 넣지
+않았고, 확인하지 못한 것은 그렇다고 적었다.
+
+용도는 두 가지다. 이 저장소에서 이어서 작업하는 경우, 그리고 **다른 Photoshop UXP
+플러그인을 처음부터 만드는 경우**. 후자를 위해 FilmSim 고유의 내용(센시토메트리 등)은
+빼고 플랫폼 지식만 남겼다. 설계 결정과 근거는 `v2plan.md`에 있다.
+
+---
+
+## 0. 시간을 가장 많이 잡아먹은 것들 — 요약
+
+순서대로 읽을 필요는 없지만, 이 다섯 개는 먼저 알고 시작하는 편이 낫다.
+
+| 증상 | 진짜 원인 | 절 |
+|---|---|---|
+| 플러그인이 아예 안 뜬다 | manifest.json의 UTF-8 BOM | 1.1 |
+| 재시작 전엔 되다가 후엔 안 된다 | 설치판과 개발판의 ID 충돌 | 1.2 |
+| 16bit 문서에서 "스마트 오브젝트" 오류 | `getPixels`의 `componentSize: 8` | 3.2 |
+| 픽셀 값이 범위를 벗어난다 | Photoshop 16bit는 0~65535가 **아니다** | 3.1 |
+| 반복 작업이 "전부 실패" | 루프 안에서 같은 예외 — 첫 에러를 안 보여줌 | 6.2 |
+
+---
+
+## 1. 플러그인이 로드되지 않을 때
+
+### 1.1 manifest.json에 BOM이 있으면 즉사한다
+
+UDT의 Add Plugin이 이렇게 거부한다.
+
+```
+Unexpected token ﻿ in JSON at position 0
+```
+
+UTF-8 BOM(`EF BB BF`) 3바이트가 JSON 파서에 그대로 들어간다. **Windows에서
+PowerShell의 `Out-File -Encoding utf8`이나 `Set-Content`로 저장하면 BOM이 자동으로
+붙는다.** 스크립트로 버전 번호만 고쳐도 붙는다.
+
+```bash
+head -c 3 manifest.json | xxd -p          # efbbbf 나오면 BOM
+git ls-files | while read f; do [ "$(head -c 3 "$f" | xxd -p)" = efbbbf ] && echo "$f"; done
+```
+
+JS 파일의 BOM은 엔진이 공백으로 넘겨 대개 조용히 지나가지만 manifest는 죽는다.
+`git show HEAD:manifest.json | head -c 4 | xxd`로 원본과 비교하면 언제 들어갔는지 안다.
+
+### 1.2 같은 플러그인 ID를 개발판과 설치판이 동시에 못 가진다
+
+릴리스판(.ccx)을 설치해 둔 채 UDT로 같은 `id`의 개발판을 올리면 실패한다.
+**Photoshop 재시작 시 설치판이 먼저 ID를 선점**하므로 "재시작 전에는 되다가 재시작
+후 안 되는" 형태로 나타나 원인을 짚기 어렵다.
+
+```
+%APPDATA%\Adobe\UXP\Plugins\External\<id>_<version>\           설치판 본체
+%APPDATA%\Adobe\UXP\PluginsStorage\PHSP\<ver>\Developer\<id>\  개발판 데이터
+%APPDATA%\Adobe\UXP\PluginsStorage\PHSP\<ver>\External\<id>\   설치판 데이터
+```
+
+개발 중에는 설치판을 제거한다. 사용자 프리셋은 `PluginsStorage\...\PluginData\`에
+있으므로 제거 전에 복사해 둘 것.
+
+### 1.3 개발자 모드는 Photoshop 시작 시점에 읽힌다
+
+실행 중에 켜면 `plugin validate`는 통과하는데 `plugin load`가
+`Devtools: Failed to load the devtools plugin.` 한 줄만 남기고 실패한다. 사유가
+전혀 나오지 않아 오진하기 쉽다. 켠 뒤 Photoshop을 재시작한다.
+
+### 1.4 로드 전에 정적으로 잡을 수 있는 것들
+
+실기에 올리기 전 3분이면 끝나고, 실기에서 진단하면 30분 걸린다.
+
+- `node --check src/*.js` — 문법
+- `JSON.parse(manifest)` — BOM 포함 검사
+- manifest가 참조하는 파일(`main`, 아이콘) 실존 확인
+- `index.html`의 `<div>` 개수 균형 **+ 닫히지 않은 태그 정규식**
+  (한 번 `<div ... ` 에서 `>`가 빠졌는데 개수 균형 검사는 통과했다)
+- 코드가 `$("...")`로 찾는 id가 전부 `index.html`에 있는지
+- **로드 시뮬레이션** — `uxp`/`photoshop`/`document`를 스텁으로 갈아끼우고
+  Node에서 진입 모듈을 실제로 `require`해 본다. 로드 시점 예외를 거의 다 잡는다.
+
+---
+
+## 2. 모듈과 언어 런타임
+
+### 2.1 require 경로
+
+`<script src="./src/main.js">`로 로드된 **진입 모듈**에서는 플러그인 루트 기준으로
+쓴다.
+
+```js
+// src/main.js (진입)
+require("./src/params")     // ○
+require("./params")         // × Module not found. Parent module folder was: "./"
+
+// src/film.js (그 아래)
+require("./curve")          // ○ 자기 폴더 기준
+```
+
+### 2.2 없는 전역
+
+- **`TextEncoder` / `TextDecoder`** — 버전에 따라 없다. Node나 브라우저에서
+  테스트하면 통과하므로 **실기에서만 터진다.** UTF-8 인코딩은 직접 구현한다
+  (`src/xmpcodec.js`의 `utf8` 참고).
+- 압축(zlib) API 없음. 필요하면 라이브러리를 벤더링하거나 DEFLATE의
+  **stored 블록**을 직접 쓴다(규격상 유효, 30줄). 데이터가 잘 안 줄어드는
+  종류라면 후자가 낫다 — 이 프로젝트는 압축률이 1.1배라 무압축을 택했다.
+- 해시 없음. md5 정도는 60줄이니 직접 쓴다.
+
+`Math.round`, `DataView`, `TypedArray`, 템플릿 리터럴, `padStart`는 정상이다.
+
+---
+
+## 3. 픽셀 다루기 (`imaging`)
+
+### 3.1 Photoshop 16bit는 0~32768이다
+
+0~65535가 **아니다.** 15비트 + 1. 범위를 넘기면 이렇게 죽는다.
+
+```
+invalid pixel data - 16 bit value is outside the photoshop range
+```
+
+```js
+const PS_MAX_16 = 32768;
+const maxV = data.BYTES_PER_ELEMENT === 2 ? PS_MAX_16 : 255;
+```
+
+> **함정** — 테스트 LUT으로 R↔B 스왑을 썼더니 이 버그가 드러나지 않았다.
+> 출력이 입력 범위를 절대 넘지 않는 변환이라 그렇다. 범위 검증에는
+> **값을 키우는 변환**을 써야 한다.
+
+### 3.2 `componentSize: 8`을 쓰지 마라
+
+16bit 문서에서 `getPixels`에 이 옵션을 주면 실패하는데, 오류 메시지가
+**`-32005 스마트 오브젝트`** 라서 완전히 엉뚱한 곳을 파게 된다(두 번 헤맸다).
+옵션을 빼고 JS에서 정규화한다.
+
+### 3.3 왕복 경로
+
+```js
+const { imaging } = require("photoshop");
+const px = await imaging.getPixels({ documentID, targetSize });   // componentSize 주지 말 것
+const buf = await px.imageData.getData({ chunky: true });
+// ... 변환 ...
+const out = await imaging.createImageDataFromBuffer(newBuf, {
+  width, height, components, colorSpace, colorProfile, chunky: true,
+});
+await imaging.putPixels({ documentID, layerID, imageData: out });
+```
+
+`executeAsModal` 안에서 돌린다. 미리보기용으로는 `imaging.encodeImageData`로
+JPEG를 만들어 `<img>`에 넣는다.
+
+### 3.4 실측 성능 (6336×9504 / 60.2MP / 16bit / ProPhoto)
+
+| 작업 | 시간 |
+|---|---|
+| `getPixels` → 변환 → `putPixels` 왕복 | 3.4초 |
+| 65³ LUT 생성 | 2ms (캐시 불필요) |
+| 512px 미리보기 렌더 | 29fps |
+
+WASM/SIMD 없이 나온 수치다. 도입 검토했다가 불필요로 결론냈다. WebGL은 실현
+가능성 자체가 없었다.
+
+---
+
+## 4. batchPlay
+
+### 4.1 되는 것 / 안 되는 것
+
+- **바이너리 데이터 주입 불가.** Color Lookup 조정 레이어에 `.cube` 데이터를
+  넣으려 했으나 실패했다. Photoshop 자신의 내장 `.cube` 경로를 대조군으로 써서
+  확인했다 — 구조 문제가 아니라 batchPlay가 그 형태를 받지 않는다.
+  결과적으로 설계를 `putPixels`로 바꿨다.
+- **문자열 페이로드는 된다.** ACR 필터는 `$Look` 키에 **XMP 텍스트 전체**를
+  문자열로 실어 구동할 수 있다(`Adobe Camera Raw Filter` + `$CrVe`/`$PrVN`/`$PrVe`
+  버전 키 필수).
+
+### 4.2 descriptor를 알아내는 법
+
+추측하지 마라. **한 번 손으로 하고 덤프한다.** UXP에서 ScriptListener에 해당하는
+것이 알림 리스너다.
+
+```js
+const { action } = require("photoshop");
+action.addNotificationListener([{ event: "all" }], (event, descriptor) => {
+  console.log(event, JSON.stringify(descriptor));
+});
+```
+
+문서 전환 감지에도 같은 걸 쓴다(`select` / `open` / `newDocument` / `close`).
+`select`가 자주 오므로 문서 id로 걸러 실제 전환일 때만 처리한다.
+
+### 4.3 32bpc 제약
+
+32비트 문서에서는 **Color Lookup과 Selective Color가 비활성**이다. LUT 기반
+설계라면 16bit를 전제로 잡아야 한다.
+
+---
+
+## 5. UI (Spectrum Web Components)
+
+### 5.1 `sp-picker`의 값을 읽고 쓸 수 없다
+
+코드에서 선택 항목을 바꿀 수도, 현재 값을 읽을 수도 없다. 선택 상태를 모델과
+동기화해야 하는 곳에는 쓸 수 없다.
+
+**대안** — `div` 기반 커스텀 칩. `dataset`에 값을 넣고 `classList`로 활성 표시.
+
+```js
+const chip = document.createElement("div");
+chip.className = "chip-btn";
+chip.dataset.filmId = f.id;
+chip.addEventListener("click", () => { params.film.id = f.id; syncUI(); });
+```
+
+슬라이더도 마찬가지 이유로 `div` + `PointerEvent`로 직접 만들었다.
+
+### 5.2 미리보기 색이 어긋난다
+
+`encodeImageData`로 만든 JPEG를 `<img>`에 넣으면 **UXP가 sRGB로 간주해 표시한다.
+프로파일을 붙일 방법이 없다.** 문서가 ProPhoto면 숫자를 그대로 넘길 경우 어둡게
+보인다.
+
+18% 그레이 인코딩 값: ProPhoto γ1.8은 0.386, sRGB는 0.46. 0.386을 sRGB로 해석하면
+광량이 0.124로 읽혀 **약 2/3스톱 어두워진다.**
+
+8bit sRGB로만 작업하면 드러나지 않으니, 광색역을 쓰기 시작하는 순간 반드시 변환
+경로를 넣어야 한다. 행렬은 모듈 로드 시 곱해서 만든다 — 상수를 손으로 곱해 적어두면
+틀렸을 때 알아채기 어렵다.
+
+---
+
+## 6. 오류를 드러나게 만들기
+
+### 6.1 오류 메시지가 거짓말을 한다
+
+이 프로젝트에서 나온 실제 사례.
+
+| 표시된 메시지 | 진짜 원인 |
+|---|---|
+| `-32005 스마트 오브젝트` | `getPixels`의 `componentSize: 8` |
+| `Devtools: Failed to load the devtools plugin.` | 개발자 모드를 실행 중에 켬 |
+| `Unexpected token ﻿ in JSON at position 0` | manifest BOM (그나마 정직한 편) |
+| 아무 메시지 없이 로드 실패 | 플러그인 ID 충돌 |
+
+메시지를 액면 그대로 따라가기 전에 **대조 실험**을 설계하는 편이 빠르다. 예를 들어
+"batchPlay로 LUT을 못 넣는다"를 확정할 때, Photoshop 자신의 내장 경로를 대조군으로
+돌려 "구조가 틀린 것인지 기능이 없는 것인지"를 갈랐다.
+
+### 6.2 반복 작업의 실패 처리
+
+프로파일 16개 내보내기가 전멸했는데 상태줄에는 "실패 16"만 떴다. 원인
+(`TextEncoder` 부재)을 짚는 데 한참 걸렸다.
+
+- **첫 실패의 메시지를 그대로 보여준다.** 개수만 세지 않는다.
+- **첫 항목이 실패하면 즉시 멈춘다.** 환경 문제면 나머지도 같은 이유로 죽는다.
+  같은 에러를 16번 쌓을 이유가 없다.
+
+---
+
+## 7. Lightroom / Camera Raw 연계
+
+Photoshop 플러그인이 만든 룩을 Lightroom에서도 쓰고 싶을 때.
+
+### 7.1 프로파일은 그냥 파일이다
+
+```
+Windows  %APPDATA%\Adobe\CameraRaw\Settings\
+macOS    ~/Library/Application Support/Adobe/CameraRaw/Settings/
+```
+
+여기에 `.xmp`를 넣고 재시작하면 Profile Browser에 뜬다. 하위 폴더도 재귀로 읽는다.
+상용 제품이 "설치하니 수백 개가 한 번에 들어오는" 것도 전부 이 방식이다.
+
+`<crs:Group>` 요소가 브라우저에서의 그룹 이름이 된다.
+
+### 7.2 .cube에서 만들기 (수작업)
+
+Adobe가 변환기를 Camera Raw 안에 넣어놨다. **배치는 지원하지 않는다.**
+
+1. 필터 → Camera Raw 필터
+2. 오른쪽 세로 아이콘 줄에서 Presets (동그라미 두 개 겹친 모양)
+3. **Alt(Option)를 누른 채** `+` → "New Profile" 대화상자
+4. 체크박스 전부 해제 → **Color Look-Up Table만** 체크
+5. 색공간 드롭다운(sRGB / Adobe RGB / P3 / ProPhoto RGB) 지정
+6. `.cube` 선택 → 이름 → OK
+
+ACR 10.3 이상 필요. 색공간은 **드롭다운이 직접 물어보므로 추측할 필요가 없다.**
+내부 작업 공간이 무엇인지 알아낼 필요도 없다.
+
+### 7.3 .xmp를 직접 생성하기 (포맷 규명 완료)
+
+```
+binary  = <4I : 1, 1, 3, N>                 헤더 16바이트 (N = 격자 크기)
+        + N³ × 3 × uint16 LE                 잔차 — 인덱스 = r·N² + g·N + b
+        + <3I : 색공간, ?, 0>                 꼬리
+        + <2d : 0.0, 2.0>
+payload = <I : len(binary)> + zlib(binary)
+text    = AdobeBase85(payload)
+속성    = crs:RGBTable="<ID>"  crs:Table_<ID>="<text>"
+ID      = md5(binary) 대문자 16진수 32자
+```
+
+**샘플은 값이 아니라 항등과의 차이다.**
+
+```
+stored = round((v − i/(N−1)) × 65536)  mod 65536
+```
+
+`i`는 그 채널에 대응하는 축 인덱스(R은 r, G는 g, B는 b). 항등 LUT이면 전부 0이라
+압축이 잘 된다. ±65536은 감기면 0이 되어 정반대 값으로 복호되므로 65535로 자른다.
+
+**Adobe Base85** — Z85에서 XML 위험문자 `&` `<` `>` 셋만 `` ` `` `'` `|` 로 치환.
+
+```
+0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?`'|()[]{}@%$#
+```
+
+방향이 표준 Z85와 반대다 — 4바이트를 **리틀엔디언 uint32**로 읽고 85로 나눈 나머지를
+**최하위 자리부터** 내보낸다.
+
+기타:
+- **격자는 32³이다.** 더 큰 `.cube`를 넣어도 ACR이 32로 리샘플한다. 직접 생성하면
+  그 리샘플 한 단계가 사라지므로 품질에서도 낫다.
+- 색공간은 꼬리 3정수에 실린다. 실측: ProPhoto `(2,2,0)`, sRGB `(0,1,0)`.
+  **테이블 데이터는 색공간과 무관하게 동일하다** — ACR은 메타데이터로만 기록하고
+  렌더 시점에 해석한다.
+- `crs:Version`은 실측 파일에서 가져와 쓴다. 이 값의 호환 범위는 확인하지 못했다.
+
+구현은 `src/xmpcodec.js`(md5 / zlib / Base85)와 `src/xmpexport.js`(조립)에 있다.
+
+---
+
+## 8. 검증 방법론 — 실패한 검증들
+
+이 절이 이 문서에서 가장 값어치 있는 부분이다. 위의 기술 정보는 검색으로도 얻을 수
+있지만, 아래는 **잘못된 검증을 통과시켜 며칠을 날린 기록**이다.
+
+### 8.1 대칭점은 아무것도 증명하지 못한다
+
+프로파일 포맷을 규명하면서 **코너 8점**으로 검증하고 "6/8 일치, 포맷 맞음"이라고
+판단했다. 결과물은 Lightroom에서 하이라이트가 파랑·자홍으로 뭉개졌다.
+
+코너가 무력했던 이유가 두 개다.
+
+1. **잔차 인코딩에서도 값 그대로일 때와 같은 수가 나온다.** i=0이면 항등항이 0,
+   i=N−1이면 65536 ≡ 0. 두 끝 다 잔차 = 값.
+2. **축 순열에 불변이다.** 코너 집합은 어떤 축 순서로 읽어도 코너 집합이다.
+
+즉 코너 일치는 **틀린 인코딩과 틀린 축 순서를 동시에 통과시킨다.**
+
+> **원칙 — 검사를 설계할 때 "이 검사가 틀린 가설도 통과시키는가"를 먼저 따진다.**
+> 원점·코너·항등·중립처럼 대칭성이 높은 지점은 여러 가설을 동시에 만족시키기 쉽다.
+> 값이 실제로 변하는 축을 따라 훑어야 한다.
+
+### 8.2 전수 오차를 먼저 재라
+
+무엇이 잘못됐는지 모를 때 표본 몇 점을 보는 것은 시간 낭비다. **전체 평균 오차 한
+숫자**가 문제의 규모를 즉시 알려준다.
+
+- 63.9% → 구조가 틀렸다 (리샘플·반올림으로는 설명 불가)
+- 0.006% → 남은 건 보간 오차뿐
+
+그리고 규모를 안 뒤에 **축을 따라 훑으면** 패턴이 바로 보인다. 이 건에서는 차이가
+`−i × 2114`로 일정하게 증가했고 `65536/31 = 2114.06`이 답을 알려줬다.
+
+순열 전수 탐색(축 6 × 채널 6 = 36가지)을 먼저 돌린 것은 낭비였다. **좌표 하나를
+역추적**했으면 한 번에 끝났다.
+
+### 8.3 표본 오염
+
+필름 시뮬레이션을 **이미 적용한 사진**으로 비교 시트를 만들어 결론을 냈다. 이중
+적용이라 결론이 전부 무효였다("전체적으로 어두워진다", "특정 필름이 시안으로 간다").
+
+- 테스트 입력이 파이프라인을 이미 통과한 것이 아닌지 확인한다
+- 생성기 쪽에 가드를 넣는다 (이 경우 FilmSim 레이어 존재 검사)
+
+### 8.4 결과 비교는 Difference 블렌드로
+
+"눈으로 비슷해 보인다"는 판정이 아니다.
+
+1. 같은 원본 두 장
+2. A에 경로 1, B에 경로 2 적용
+3. B를 **차이(Difference)** 블렌드
+4. 위에 **레벨**을 얹고 입력 화이트를 20 부근까지 내림
+
+4번이 핵심이다. 1~2 레벨 차이는 증폭하지 않으면 보이지 않는다. 검정이면 일치.
+
+다만 이건 육안 판정이므로 "완전 동일"이 아니라 **"판별 한계 내 일치"** 다.
+
+### 8.5 데이터에 물리적으로 불가능한 값이 있다
+
+문헌·PDF에서 곡선을 추출할 때, 원본 자체가 틀린 경우가 있다.
+
+- 어떤 필름의 청색 곡선이 발끝에서 **역행**했다(물리적으로 불가능). 그대로 두면
+  외삽이 음의 기울기로 폭주한다 → 단조 보정(PAVA) 후 보간
+- 어떤 문서는 x축 눈금 **라벨 순서가 오타**였다 (`-4.0 -2.0 -3.0 -1.0 0.0 1.0`)
+- 인접 열의 라벨이 새어 들어와 축 범위가 `[1.0, 4.0]`으로 잡혔다
+
+→ 추출기에 **불변식 검사**를 넣는다. 이 프로젝트에서는 채널 간 크기 관계, 눈금
+교차 검증, 라벨 순서 복구를 자동화했다. 그리고 **역산으로 검증**한다(추출한 곡선에서
+ISO를 되계산해 표기값과 맞는지).
+
+---
+
+## 9. 조사 방법론
+
+### 9.1 포맷을 뜯기 전에 그 회사의 도구를 찾아라
+
+`crs:Table_<ID>` 인코딩을 "비공개 포맷"으로 단정하고 페이로드를 직접 해독하려
+했다. 실제로는 **Adobe가 변환기를 Photoshop 안에 넣어놨고**, 포맷도 DNG SDK의
+`dng_big_table` 구조로 공개돼 있었으며, 결정적 단서(인코딩 방향)는 MIT 라이선스
+오픈소스 구현에서 얻었다.
+
+검색 한 번이면 나올 것을 디코더에 몇 시간 썼다.
+
+> **순서** — ① 공식 도구 · SDK · 문서 → ② 오픈소스 구현 → ③ 직접 해독
+
+### 9.2 그래도 해독해야 한다면
+
+이 건에서 실제로 통한 순서.
+
+1. **문자셋을 센다.** 85종이면 base85 계열
+2. **구조적 제약으로 걸러낸다.** ASCII85/Z85는 5자 그룹이 2³² 미만이어야 한다.
+   초과율이 무작위 기대치와 같으면 알파벳 순서가 틀린 것이다
+3. **불가능한 자리를 찾는다.** 값 83·84는 그룹 선두에 올 수 없다 → 그 두 문자가
+   특정된다. 값 82는 드물게만 가능 → 저빈도로 관측된다
+4. 그 위치가 **알려진 알파벳의 어디와 맞는지** 본다 (여기서 Z85 확정)
+5. **차집합**으로 치환을 확정한다 (빠진 3자 ↔ 추가된 3자)
+6. **알려진 평문**을 활용한다. zlib이면 첫 바이트가 `0x78`
+
+그리고 **같은 입력으로 두 번 만들어 비교한다.** 결정적 인코딩인지, ID가 내용
+해시인지가 한 번에 드러난다.
+
+### 9.3 남의 저작물
+
+포맷 이해를 위해 남의 파일을 읽는 것과, 그 안의 데이터를 가져다 쓰는 것은 다르다.
+전자는 상호운용성 목적의 정상적 분석이고 후자는 복제다. 상용 제품의 LUT을 자기
+제품에 넣거나 **거기에 맞춰 파라미터를 피팅하는 것도** 우회 복제다.
+
+---
+
+## 10. 참고 코드 위치
+
+| 주제 | 파일 |
+|---|---|
+| 픽셀 왕복 · 16bit 범위 | `src/apply.js`, `src/lut.js` |
+| 색공간 변환 | `src/colorspace.js` |
+| 미리보기 (JPEG → img) | `src/preview.js` |
+| 커스텀 칩 · 슬라이더 | `src/main.js`, `src/cslider.js` |
+| batchPlay 래퍼 | `src/ps.js` |
+| .cube 직렬화 | `src/lut.js`, `src/cubeexport.js` |
+| ACR 프로파일 생성 | `src/xmpcodec.js`, `src/xmpexport.js` |
+| PDF 벡터 곡선 추출 | `tools/extract_tds_curves.py` |
+
+설계 결정과 그 근거는 `v2plan.md`, 특히 부록 B(UXP 실측 로그)와 7.5절(프로파일 포맷)에 있다.

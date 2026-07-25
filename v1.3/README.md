@@ -27,15 +27,6 @@
 패키징(.ccx 생성): `uxp plugin package --outputPath dist`
 (플러그인·패널 아이콘이 manifest에 있어야 하며, `icons/`에 포함되어 있다)
 
-## 문서
-
-| 파일 | 내용 |
-|---|---|
-| `UXP-NOTES.md` | **Photoshop UXP 실측 지식** — 함정, 성능, 프로파일 포맷, 검증 방법론. 다른 UXP 플러그인에도 그대로 쓰인다 |
-| `v2plan.md` | 설계 문서 — 결정과 그 근거, 실측 로그 |
-| `SPEC.md` | 원본 기능 명세 |
-| `tools/README.md` | TDS 곡선 추출기 사용법과 함정 |
-
 ## 파일 구조
 
 ```
@@ -45,30 +36,14 @@ src/
   main.js              부트스트랩, 멀티패널 setup, UI ↔ 모델 바인딩, 액션 배선
   params.js            파라미터 스키마, 기본값, 구버전 프리셋 마이그레이션
   ps.js                batchPlay 래퍼 및 저수준 액션 헬퍼
-
-  ── 필름 엔진 (v1.4) ──
-  curve.js             PCHIP 단조 보간 + PAVA 등장회귀 (TDS 곡선 이상치 방어)
-  films.js             필름 정의 8종 — 제조사 TDS에서 추출한 실제 특성곡선
-  film.js              센시토메트리 → 3D LUT (농도곡선 → 인화 → 인코딩)
-  scanner.js           스캐너·인화 단계 (레벨 · 3점 틴트 · 피벗 S커브 · 채도)
-  lut.js               사면체 보간, .cube 직렬화
-  colorspace.js        ProPhoto/AdobeRGB ↔ sRGB, 전달함수
-  apply.js             getPixels → LUT → putPixels 적용 경로
-  cubeexport.js        .cube 내보내기 (33³/65³, ProPhoto γ1.8 · Camera Raw)
-  xmpcodec.js          md5 · zlib(stored) · Adobe Base85 — 외부 의존성 없음
-  xmpexport.js         Lightroom/ACR Look 프로파일(.xmp) 직접 생성
-
-  ── 레거시 그레이딩 (JPEG 후처리용) ──
   grading.js           CMYK 그레이딩 (Curves + Crosstalk + Selective Color)
   halation.js          할레이션 (하이라이트 추출 → 채널별 블러 → Screen)
   grain.js             명암별 차등 그레인 (노이즈 + Blend If 존 마스킹)
-  simulate.js          그레이딩 JS 근사 시뮬레이션 (팔레트·컬러휠 미리보기용)
-
-  ── UI · 입출력 ──
-  colorwheel.js        컬러휠 색 이동 시각화 + 마커 편집 (DOM, translate 전용)
+  simulate.js          그레이딩 JS 근사 시뮬레이션 (팔레트·컬러휠 미리보기용, v2)
+  colorwheel.js        컬러휠 색 이동 시각화 + 마커 편집 (DOM, translate 전용, v2)
   photoanalysis.js     사진 색역 분석 → 컬러휠 대표색 추출 (v1.2)
-  cslider.js           커스텀 슬라이더 (div + PointerEvent)
-  preview.js           미리보기 패널 렌더 (imaging → LUT 픽셀 → img)
+  cslider.js           커스텀 슬라이더 (div + PointerEvent, v2)
+  preview.js           미리보기 패널 렌더 (imaging → grading 픽셀 → img, v2)
   pipeline.js          처리 순서 고정 및 히스토리 병합
   presets.js           프리셋 저장/불러오기/가져오기/내보내기
   batch.js             폴더 배치 적용
@@ -189,41 +164,6 @@ ActionDescriptor에서 green 채널의 값은 `"grain"`이다. `"green"`이 아�
 `grading.js`와 `halation.js` 양쪽에 해당한다.
 
 ## UXP 함정 (실제로 부딪힌 것들)
-
-**manifest.json에 BOM이 붙으면 플러그인을 못 올린다**
-UDT의 Add Plugin이 `Unexpected token ﻿ in JSON at position 0`으로 거부한다.
-UTF-8 BOM(`EF BB BF`) 3바이트가 JSON 파서에 그대로 들어가기 때문이다.
-Windows에서 PowerShell의 `Out-File -Encoding utf8` / `Set-Content`로 저장하면
-**BOM이 자동으로 붙는다.** 편집기·스크립트가 무엇을 쓰는지 확인할 것.
-
-```bash
-head -c 3 manifest.json | xxd -p        # efbbbf 나오면 BOM
-git ls-files | while read f; do [ "$(head -c 3 "$f" | xxd -p)" = efbbbf ] && echo "$f"; done
-```
-
-JS 파일의 BOM은 엔진이 공백으로 넘겨 대개 조용히 지나가지만, manifest는 즉사한다.
-
-**같은 플러그인 ID를 개발판과 설치판이 동시에 가질 수 없다**
-릴리스판(.ccx)을 설치해 둔 채 UDT로 같은 `id`의 개발판을 올리면 로드가 실패한다.
-Photoshop 재시작 시 설치판이 먼저 ID를 선점하므로, **재시작 전에는 되다가 재시작 후
-안 되는** 형태로 나타나 원인을 짚기 어렵다. 등록 상태는 여기서 확인한다.
-
-```
-%APPDATA%\Adobe\UXP\Plugins\External\        설치판
-%APPDATA%\Adobe\UXP\PluginsStorage\PHSP\<버전>\{Developer,External}\<id>\
-```
-
-개발 중에는 설치판을 제거한다. 프리셋은 위 `PluginsStorage\...\PluginData\presets`에
-있으므로 제거 전에 따로 복사해 둘 것.
-
-**`TextEncoder`가 없다**
-UXP 버전에 따라 전역에 존재하지 않는다. 노드나 브라우저에서 테스트하면 멀쩡히
-통과하므로 실기에서만 터진다. 게다가 루프 안에서 쓰면 항목마다 같은 예외가 나서
-**"전부 실패"로만 보이고 원인이 드러나지 않는다** (프로파일 16개 내보내기가 이렇게
-전멸했다). UTF-8 인코딩은 `xmpcodec.utf8`로 직접 한다.
-
-같은 이유로 반복 작업의 실패 처리는 개수만 세면 안 된다. **첫 실패의 메시지를
-그대로 보여주고 즉시 멈춰라** — 환경 문제면 나머지도 같은 이유로 죽는다.
 
 **개발자 모드는 Photoshop 시작 시점에 읽힌다**
 Photoshop 실행 중에 개발자 모드를 켜면 `plugin validate`는 통과하지만 `plugin load`가
@@ -398,72 +338,6 @@ Photoshop 27.7.0 (2026)에서 실제 실행하여 확인한 항목:
 - **배치는 순차 처리.** 문서를 하나씩 열고 닫아 메모리 누적을 막는 대신 느리다.
 
 (크로스토크 매트릭스, 레이어 그룹화는 구현 완료 — 위 "크로스토크"·"재적용은 덮어쓴다" 절 참고)
-
-## LUT 내보내기 (.cube) — v1.4
-
-패널의 "LUT 내보내기" 카드에서 현재 설정을 `.cube` 파일로 뽑는다. 내보낸 LUT은
-"현재 문서에 적용"과 **같은 결과**를 낸다 (유제 → 스캐너 → 색 조정까지 전부 구워짐).
-
-**격자** 33³ / 65³. 33이 Photoshop·Camera Raw 표준, 65는 정밀도용.
-
-**색공간** — 기본값 **ProPhoto γ1.8**을 쓰면 된다. 엔진이 굽는 공간 그대로이고
-아래 두 경로 모두 이 공간을 받는다. "Camera Raw (폴백)"은 New Profile에 색공간
-드롭다운이 없는 구버전에서만 쓴다.
-
-### 1. Photoshop — Color Lookup 조정 레이어
-
-조정 레이어 → 색상 검색 → 3DLUT 파일 → 내보낸 `.cube` 로드. 문서가 **ProPhoto**여야 한다.
-
-**GPU 가속 + 비파괴**라 대용량 파일에서는 플러그인의 픽셀 적용보다 빠르다.
-
-## Lightroom 프로파일 (.xmp) — v1.4
-
-**"Lightroom 프로파일" 카드 → 세트 전체.** 폴더를 고르면 필름 × 스캐너 조합
-16개를 `.xmp` 프로파일로 한 번에 쓴다 (개당 약 20ms, 242KB).
-
-사용자 설치는 폴더에 복사하고 Lightroom을 재시작하면 끝이다.
-
-```
-Windows  %APPDATA%\Adobe\CameraRaw\Settings\
-macOS    ~/Library/Application Support/Adobe/CameraRaw/Settings/
-```
-
-Profile Browser의 **FilmSim** 그룹에 전부 뜨고 강도 슬라이더도 붙는다.
-Lightroom · Lightroom Classic · Camera Raw 공통이다.
-
-프로파일은 32³ ProPhoto로 굽는다 — ACR이 프로파일 안에 담는 격자 크기가 32이고,
-더 큰 LUT을 넣어도 32로 줄어들기 때문이다. 엔진에서 바로 32³을 구우면 리샘플링이
-한 번도 일어나지 않는다.
-
-### 아래 대화상자 경로보다 나은 점
-
-| | 대화상자 | 직접 생성 |
-|---|---|---|
-| 프로파일 16개 만들기 | 클릭 100여 회 | 버튼 1회 |
-| 보간 횟수 | 2회 (엔진→65³→ACR 32³) | 1회 (엔진→32³) |
-| 엔진 수정 후 재생성 | 전부 다시 손으로 | 버튼 1회 |
-
-대화상자 경로는 `.cube`를 다른 앱에서도 쓰고 싶을 때 남겨둔다.
-
-### 2. Lightroom / Camera Raw — 대화상자로 만들기 (.cube에서)
-
-Adobe가 .cube → 프로파일 변환을 Camera Raw 안에 넣어놨다.
-
-1. Photoshop에서 **필터 → Camera Raw 필터** (`Shift+Ctrl+A`)
-2. 오른쪽 세로 아이콘 줄에서 **Presets** (동그라미 두 개 겹친 아이콘)
-3. **Alt(Option)를 누른 채** `+` 클릭 → "New Profile" 대화상자
-   (Alt 안 누르면 그냥 프리셋 만들기가 뜬다)
-4. 체크박스 전부 해제 → **Color Look-Up Table만 체크**
-5. 색공간 드롭다운에서 **ProPhoto RGB** 선택
-6. 내보낸 `.cube` 지정 → 이름 입력 → OK
-
-Lightroom · Lightroom Classic · Camera Raw의 Profile Browser에 뜨고 강도 슬라이더도 붙는다.
-
-> 5번 색공간을 틀리면 **검정이 뜨고 전체가 파르스름해진다.** 암부가 최대 1스톱
-> 뜨고 18% 그레이의 색조가 웜에서 쿨로 뒤집힌다. 플러그인의 "현재 문서에 적용"
-> 결과와 나란히 비교하면 바로 보인다.
-
-ACR 10.3 이상 필요.
 
 ## 배치 적용 안전 규칙
 

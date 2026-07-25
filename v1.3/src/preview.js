@@ -16,12 +16,8 @@
  * 근사가 부정확하므로 미리보기에서 제외한다. 실제 결과는 [적용]으로 확인한다.
  */
 
-const { app, imaging, core, action } = require("photoshop");
+const { app, imaging, core } = require("photoshop");
 const simulate = require("./simulate");
-const lut = require("./lut");
-const film = require("./film");
-const films = require("./films");
-const colorspace = require("./colorspace");
 
 const PV_WIDTH = 300; // 썸네일 긴 축(가로) px
 let busy = false;
@@ -31,26 +27,14 @@ function imgEl() {
   return document.getElementById("pvImage");
 }
 
-function clamp255(v) {
-  return v < 0 ? 0 : v > 255 ? 255 : v;
-}
-
 /**
- * 소스 버퍼에 색 단계를 적용해 8bit RGB 3채널 버퍼로 만든다.
+ * 소스 버퍼에 grading을 적용해 RGB 3채널 버퍼로 만든다.
  *
  * 채널 수는 문서마다 다르다 — 투명도/레이어가 있으면 4(RGBA), 플랫 JPEG 같은
  * 불투명 문서는 3(RGB). 스트라이드를 4로 고정하면 3채널 문서에서 채널이 밀려
  * 색이 깨지고 출력 하위 1/4이 검게 남는다. imageData.components를 그대로 쓴다.
- *
- * ⚠ **심도도 문서마다 다르다.** 16bit 문서에서 getPixels는 0~65535를 그대로 준다.
- * v1은 이걸 8bit로 가정해 전부 255로 클램프했고, 그래서 16bit 문서에서는 미리보기가
- * 하얗게 날아갔다. 평소 8bit JPEG로 작업하면 드러나지 않던 버그다. v2는 16bit가
- * 전제이므로 여기서 정규화한다. (`getPixels`에 `componentSize: 8`을 주는 방법은
- * 쓰면 안 된다 — 16bit 문서에서 -32005로 죽는다. v2plan.md 부록 B 참조)
- *
- * 출력이 항상 8bit인 이유는 encodeImageData가 JPEG를 만들기 때문이다.
  */
-function renderPixels(data, comps, pixelCount, params, table, size, toDisplay) {
+function gradePixels(data, comps, pixelCount, grading) {
   // 출력은 항상 w*h*3 이어야 한다(createImageDataFromBuffer가 크기를 검사한다).
   // 소스가 짧으면 읽기만 줄이고 남는 픽셀은 0으로 둔다.
   const rgb = new Uint8Array(pixelCount * 3);
@@ -58,58 +42,13 @@ function renderPixels(data, comps, pixelCount, params, table, size, toDisplay) {
   // 그레이스케일(comps 1) 같은 경우 단일 채널을 3채널로 복제한다.
   const gOff = comps > 1 ? 1 : 0;
   const bOff = comps > 2 ? 2 : 0;
-
-  // 16bit 문서의 최대값은 32768이다(65535가 아니다). lut.js의 PS_MAX_16 참조.
-  const maxV = lut.maxValueFor(data);
-  const is16 = data.BYTES_PER_ELEMENT === 2;
-
-  // 색 단계는 문서 색공간에서 하고, 마지막에 표시용 sRGB로 옮긴다.
-  // 순서가 중요하다 — LUT은 ProPhoto 기준으로 구워졌으므로 변환 전에 적용해야 한다.
-  const disp = toDisplay || colorspace.passthrough;
-  const shown = [0, 0, 0];
-
-  if (table) {
-    const inv = 1 / maxV;
-    const out = [0, 0, 0];
-    for (let p = 0, i = 0, j = 0; p < count; p++, i += comps, j += 3) {
-      lut.sample(table, size, data[i] * inv, data[i + gOff] * inv, data[i + bOff] * inv, out);
-      disp(out[0], out[1], out[2], shown);
-      rgb[j] = clamp255(shown[0] * 255);
-      rgb[j + 1] = clamp255(shown[1] * 255);
-      rgb[j + 2] = clamp255(shown[2] * 255);
-    }
-    return rgb;
-  }
-
-  // v1 경로 (film.enabled = false). 16bit 정규화만 더했다.
-  const n = is16 ? 255 / maxV : 1;
   for (let p = 0, i = 0, j = 0; p < count; p++, i += comps, j += 3) {
-    const out = simulate.applyGrading(
-      [data[i] * n, data[i + gOff] * n, data[i + bOff] * n],
-      params.grading
-    );
-    disp(out[0] / 255, out[1] / 255, out[2] / 255, shown);
-    rgb[j] = clamp255(shown[0] * 255);
-    rgb[j + 1] = clamp255(shown[1] * 255);
-    rgb[j + 2] = clamp255(shown[2] * 255);
+    const out = simulate.applyGrading([data[i], data[i + gOff], data[i + bOff]], grading);
+    rgb[j] = out[0];
+    rgb[j + 1] = out[1];
+    rgb[j + 2] = out[2];
   }
   return rgb;
-}
-
-/**
- * 문서의 색 프로파일 이름. 표시용 변환기를 고르는 데 쓴다.
- * 읽지 못하면 null — 그 경우 변환 없이 그대로 보여준다.
- */
-async function documentProfile() {
-  try {
-    const r = await action.batchPlay(
-      [{ _obj: "get", _target: [{ _ref: "document", _enum: "ordinal", _value: "targetEnum" }] }],
-      {}
-    );
-    return r[0] ? r[0].profile : null;
-  } catch (e) {
-    return null;
-  }
 }
 
 async function renderOnce(params) {
@@ -122,22 +61,6 @@ async function renderOnce(params) {
     return;
   }
   const docId = app.activeDocument.id;
-
-  // 필름 엔진이 켜져 있으면 LUT을 굽는다(색 조정까지 구워 넣은 최종본).
-  // 33³ 생성이 1ms라 매 렌더마다 새로 구워도 부담이 없다 — 캐시가 필요 없는
-  // 이유다(v2plan.md 4.1).
-  let table = null;
-  const size = 33;
-  if (params.film && params.film.enabled) {
-    try {
-      table = film.buildForParams(params, size);
-    } catch (e) {
-      console.error("LUT 생성 실패", e);
-    }
-  }
-
-  // 표시용 변환기. 문서가 ProPhoto면 sRGB로 옮겨야 어둡게 보이지 않는다.
-  const toDisplay = colorspace.displayConverter(await documentProfile());
 
   await core.executeAsModal(
     async () => {
@@ -152,7 +75,7 @@ async function renderOnce(params) {
       const comps = px.imageData.components;
       const data = await px.imageData.getData({ chunky: true });
 
-      const rgb = renderPixels(data, comps, w * h, params, table, size, toDisplay);
+      const rgb = gradePixels(data, comps, w * h, params.grading);
 
       const rgbID = await imaging.createImageDataFromBuffer(rgb, {
         width: w,

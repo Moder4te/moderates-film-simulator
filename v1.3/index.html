@@ -190,13 +190,6 @@
         font-weight: 600;
       }
 
-      .film-note {
-        margin-top: 6px;
-        font-size: 9px;
-        line-height: 1.5;
-        opacity: 0.6;
-      }
-
       /* 커스텀 슬라이더 (div + pointer). native sp-slider 대체. */
       .cs {
         display: flex;
@@ -355,26 +348,6 @@
       </div>
     </div>
 
-    <!-- 필름 시뮬레이션 (v2 엔진) -->
-    <div class="card">
-      <div class="card-head">
-        <span class="card-title">필름</span>
-        <sp-checkbox id="filmEnabled" size="s" checked></sp-checkbox>
-      </div>
-      <!-- sp-picker는 value를 읽고 쓸 수 없어(UXP 제약) 커스텀 칩을 쓴다 -->
-      <div id="filmChips" class="btn-row"></div>
-      <div style="height: 8px"></div>
-      <div class="sub-head"><span class="sub-title">스캐너</span></div>
-      <div id="scannerChips" class="btn-row"></div>
-      <div style="height: 6px"></div>
-      <div class="cs" data-id="filmExposure" data-min="-2" data-max="2" data-step="0.333" data-value="0">
-        <div class="cs-label">노광 (스톱)</div>
-        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
-        <div class="cs-val">0</div>
-      </div>
-      <div id="filmNote" class="film-note"></div>
-    </div>
-
     <!-- 컬러휠 색 이동 -->
     <div class="card">
       <div class="card-head">
@@ -424,7 +397,7 @@
     <!-- 컬러 그레이딩 -->
     <div class="card">
       <div class="card-head">
-        <span class="card-title">CMYK 그레이딩 · 필름 위에 적용</span>
+        <span class="card-title">CMYK 그레이딩</span>
         <sp-checkbox id="gradingEnabled" size="s" checked></sp-checkbox>
       </div>
 
@@ -555,32 +528,6 @@
       <sp-checkbox id="grainColor" size="s">채널별 컬러 그레인</sp-checkbox>
     </div>
 
-    <!-- LUT 내보내기 -->
-    <div class="card">
-      <div class="card-head"><span class="card-title">LUT 내보내기 (.cube)</span></div>
-      <div class="sub-head"><span class="sub-title">격자</span></div>
-      <div id="cubeSizeChips" class="btn-row"></div>
-      <div style="height: 6px"></div>
-      <div class="sub-head"><span class="sub-title">색공간</span></div>
-      <div id="cubeSpaceChips" class="btn-row"></div>
-      <div id="cubeNote" class="film-note"></div>
-      <div style="height: 6px"></div>
-      <div class="btn-row">
-        <sp-button id="btnExportCube" size="s" variant="secondary">.cube 내보내기</sp-button>
-      </div>
-    </div>
-
-    <!-- Lightroom / Camera Raw 프로파일 -->
-    <div class="card">
-      <div class="card-head"><span class="card-title">Lightroom 프로파일 (.xmp)</span></div>
-      <div id="xmpNote" class="film-note"></div>
-      <div style="height: 6px"></div>
-      <div class="btn-row">
-        <sp-button id="btnExportXmp" size="s" variant="secondary">현재 설정</sp-button>
-        <sp-button id="btnExportXmpSet" size="s" variant="secondary">세트 전체</sp-button>
-      </div>
-    </div>
-
     <!-- 실행 -->
     <div class="card exec">
       <div class="card-head"><span class="card-title">실행</span></div>
@@ -608,7 +555,6 @@
 
       <div id="status"></div>
     </div>
-
     </div><!-- /mainPanel -->
 
     <script src="./src/main.js"></script>

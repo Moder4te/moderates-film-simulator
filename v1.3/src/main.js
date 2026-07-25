@@ -19,15 +19,6 @@ const simulate = require("./src/simulate");
 const colorwheel = require("./src/colorwheel");
 const cslider = require("./src/cslider");
 const photoanalysis = require("./src/photoanalysis");
-const films = require("./src/films");
-const scanner = require("./src/scanner");
-const film = require("./src/film");
-const lut = require("./src/lut");
-const colorspace = require("./src/colorspace");
-const cubeexport = require("./src/cubeexport");
-const xmpexport = require("./src/xmpexport");
-const apply = require("./src/apply");
-const ps = require("./src/ps");
 const { entrypoints } = require("uxp");
 
 // 두 패널(메인/미리보기)을 등록한다. 같은 JS 컨텍스트를 공유하므로 main.js가
@@ -138,7 +129,6 @@ function scheduleRender() {
 function onParamsChanged() {
   schedulePreviewRefresh();
   scheduleRender();
-  syncCubeUI(); // 제안 파일명이 필름·스캐너·노광을 담고 있다
 }
 
 let wheelCtrl = null;
@@ -155,10 +145,7 @@ const RANGE_LABELS = {
 function renderWheel() {
   if (!wheelCtrl) return;
   try {
-    // 기준색은 필름을 통과한 색이다. 휠은 그 위에서 색 조정이 색을 어디로
-    // 미는지를 그린다 — 필름 룩을 고르고 그 위에서 손보는 순서와 같다.
-    const t = visualTables().film;
-    wheelCtrl.update(getColorPalette().map((c) => throughLut(c, t)), params.grading);
+    wheelCtrl.update(getColorPalette(), params.grading);
   } catch (e) {
     console.error("wheel update 실패", e);
   }
@@ -182,8 +169,7 @@ function renderDetail() {
   }
   detailTones = tones; // 세부 휠 드래그가 마커 index로 원본색을 찾는다
   try {
-    const t = visualTables().film;
-    detailCtrl.update(tones.map((c) => throughLut(c, t)), params.grading);
+    detailCtrl.update(tones, params.grading);
   } catch (e) {
     console.error("detail update 실패", e);
   }
@@ -344,64 +330,6 @@ function buildPalette() {
   }
 }
 
-const PALETTE_LUT_SIZE = 33;
-
-/**
- * 시각화용 LUT 두 벌.
- *   film — 필름만. 컬러휠의 **기준색**을 만든다 (휠은 그 위에서 grading 이동을 그린다)
- *   full — 필름 + 색 조정. 팔레트의 **최종색**을 만든다 (적용 결과와 같다)
- *
- * 팔레트·큰휠·세부휠이 한 프레임에 함께 갱신되므로 매번 새로 구우면 낭비다.
- * 파라미터가 그대로면 재사용한다.
- */
-let lutCache = { key: null, film: null, full: null };
-
-function visualTables() {
-  const f = params.film;
-  if (!f || !f.enabled) return { film: null, full: null };
-
-  const key = `${f.id}|${f.exposure}|${JSON.stringify(params.grading)}`;
-  if (lutCache.key === key) return lutCache;
-
-  try {
-    const base = film.buildLut(films.byId(f.id), {
-      size: PALETTE_LUT_SIZE,
-      exposure: f.exposure || 0,
-    });
-    const full = film.gradingIsActive(params.grading)
-      ? film.bakeGrading(Float32Array.from(base), params.grading)
-      : base;
-    lutCache = { key, film: base, full };
-  } catch (e) {
-    console.error("시각화 LUT 생성 실패", e);
-    lutCache = { key, film: null, full: null };
-  }
-  return lutCache;
-}
-
-/**
- * sRGB 색 하나를 LUT에 통과시킨다.
- *
- * 팔레트·컬러휠 색은 sRGB로 정의돼 있는데 LUT은 ProPhoto 기준으로 구워진다.
- * 그래서 sRGB → ProPhoto → LUT → sRGB로 왕복해야 격자의 올바른 위치를 조회한다.
- * 그냥 넣으면 엉뚱한 색이 나온다.
- */
-function throughLut(rgb, table) {
-  if (!table) return rgb;
-  const work = [0, 0, 0];
-  const shown = [0, 0, 0];
-  colorspace.srgbToProPhoto(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, work);
-  lut.sample(table, PALETTE_LUT_SIZE, work[0], work[1], work[2], work);
-  colorspace.proPhotoToSrgb(work[0], work[1], work[2], shown);
-  return [shown[0] * 255, shown[1] * 255, shown[2] * 255];
-}
-
-/** 팔레트 스와치 한 칸의 최종색. */
-function paletteResult(rgb, table) {
-  if (!table) return simulate.applyGrading(rgb, params.grading);
-  return throughLut(rgb, table);
-}
-
 /**
  * 팔레트 스와치 배경만 갱신한다 (div 재생성 없이 in-place).
  * DOM 생성 비용을 피해 매 갱신을 가볍게 한다.
@@ -411,12 +339,9 @@ function renderPalette() {
   if (!el) return;
   const swatches = el.children;
   if (swatches.length !== PALETTE.length) buildPalette();
-
-  const table = visualTables().full;
-
   for (let i = 0; i < PALETTE.length; i++) {
     const rgb = PALETTE[i];
-    const graded = paletteResult(rgb, table);
+    const graded = simulate.applyGrading(rgb, params.grading);
     const orig = `rgb(${rgb.join(",")})`;
     const done = `rgb(${graded.map(Math.round).join(",")})`;
     // 좌상 원본 / 우하 적용색 (::after가 대각 경계선을 얹는다)
@@ -483,168 +408,8 @@ function getByPath(obj, path) {
 }
 
 /** 모델 → UI 전체 반영. 프리셋 로드 후 호출한다. */
-/**
- * 필름 선택 칩을 만든다. sp-picker는 UXP에서 value를 읽고 쓸 수 없어
- * (코드로 선택 항목을 바꿀 수 없다) 커스텀 칩으로 대체한다.
- */
-function buildFilmChips() {
-  const host = $("filmChips");
-  if (!host) return;
-  host.textContent = "";
-  for (const f of films.all()) {
-    const chip = document.createElement("div");
-    chip.className = "chip-btn";
-    chip.textContent = f.displayName;
-    chip.dataset.filmId = f.id;
-    chip.addEventListener("click", () => {
-      params.film.id = f.id;
-      syncFilmUI();
-      onParamsChanged();
-    });
-    host.appendChild(chip);
-  }
-}
-
-/** 스캐너 선택 칩. 필름 칩과 같은 이유로 커스텀 칩을 쓴다. */
-function buildScannerChips() {
-  const host = $("scannerChips");
-  if (!host) return;
-  host.textContent = "";
-  for (const s of scanner.all()) {
-    const chip = document.createElement("div");
-    chip.className = "chip-btn";
-    chip.textContent = s.displayName;
-    chip.dataset.scannerId = s.id;
-    chip.addEventListener("click", () => {
-      params.film.scanner = s.id;
-      syncFilmUI();
-      onParamsChanged();
-    });
-    host.appendChild(chip);
-  }
-}
-
-function syncFilmUI() {
-  const host = $("filmChips");
-  if (host) {
-    for (const chip of host.querySelectorAll(".chip-btn")) {
-      chip.classList.toggle("active", chip.dataset.filmId === params.film.id);
-    }
-  }
-  const shost = $("scannerChips");
-  if (shost) {
-    for (const chip of shost.querySelectorAll(".chip-btn")) {
-      chip.classList.toggle("active", chip.dataset.scannerId === params.film.scanner);
-    }
-  }
-  const note = $("filmNote");
-  if (note) {
-    let def = null;
-    try {
-      def = films.byId(params.film.id);
-    } catch (e) {
-      /* 알 수 없는 id — 안내문만 비운다 */
-    }
-    const sc = scanner.byId(params.film.scanner);
-    const parts = [];
-    if (def && def.source && def.source.note) parts.push(def.source.note);
-    if (sc && sc.id !== "none" && sc.note) parts.push(sc.note);
-    note.textContent = parts.join("  /  ");
-  }
-}
-
-/**
- * .cube 내보내기 설정.
- *
- * params에 넣지 않는다 — 프리셋은 "룩"을 담는 것이고 격자 크기나 대상 색공간은
- * 룩이 아니라 출력 형식이다. 프리셋에 섞으면 남의 프리셋을 불러올 때마다 내보내기
- * 설정이 같이 바뀐다.
- */
-const cubeOpts = { size: cubeexport.SIZES[0], space: cubeexport.SPACES[0].id };
-
-/** 격자·색공간 선택 칩. 필름 칩과 같은 이유로 sp-picker를 쓰지 않는다. */
-function buildCubeChips() {
-  const sizeHost = $("cubeSizeChips");
-  if (sizeHost) {
-    sizeHost.textContent = "";
-    for (const n of cubeexport.SIZES) {
-      const chip = document.createElement("div");
-      chip.className = "chip-btn";
-      chip.textContent = `${n}³`;
-      chip.dataset.cubeSize = String(n);
-      chip.addEventListener("click", () => {
-        cubeOpts.size = n;
-        syncCubeUI();
-      });
-      sizeHost.appendChild(chip);
-    }
-  }
-
-  const spaceHost = $("cubeSpaceChips");
-  if (spaceHost) {
-    spaceHost.textContent = "";
-    for (const s of cubeexport.SPACES) {
-      const chip = document.createElement("div");
-      chip.className = "chip-btn";
-      chip.textContent = s.displayName;
-      chip.dataset.cubeSpace = s.id;
-      chip.addEventListener("click", () => {
-        cubeOpts.space = s.id;
-        syncCubeUI();
-      });
-      spaceHost.appendChild(chip);
-    }
-  }
-}
-
-function syncCubeUI() {
-  const sizeHost = $("cubeSizeChips");
-  if (sizeHost) {
-    for (const chip of sizeHost.querySelectorAll(".chip-btn")) {
-      chip.classList.toggle("active", Number(chip.dataset.cubeSize) === cubeOpts.size);
-    }
-  }
-  const spaceHost = $("cubeSpaceChips");
-  if (spaceHost) {
-    for (const chip of spaceHost.querySelectorAll(".chip-btn")) {
-      chip.classList.toggle("active", chip.dataset.cubeSpace === cubeOpts.space);
-    }
-  }
-  const note = $("cubeNote");
-  if (note) {
-    // 설명과 함께 실제 파일명을 보여준다. 여러 벌 뽑을 때 어느 조합인지 헷갈린다.
-    let name = "";
-    try {
-      name = cubeexport.suggestName(params, cubeOpts);
-    } catch (e) {
-      name = "";
-    }
-    note.textContent = `${cubeexport.spaceById(cubeOpts.space).note}${name ? `  /  ${name}` : ""}`;
-  }
-
-  const xn = $("xmpNote");
-  if (xn) {
-    // 프로파일은 격자가 32로 고정이고(ACR이 그 이상을 받지 않는다) 색공간도
-    // ProPhoto로 고정이다. 고를 것이 없으므로 현재 대상만 알려준다.
-    let n = "";
-    try {
-      n = xmpexport.profileName(params);
-    } catch (e) {
-      n = "";
-    }
-    const count = xmpexport.defaultSet(params).length;
-    xn.textContent =
-      `${xmpexport.LUT_SIZE}³ ProPhoto · Profile Browser의 "${xmpexport.GROUP}" 그룹` +
-      `${n ? `  /  현재: ${n}` : ""}  /  세트 ${count}개`;
-  }
-}
-
 function syncUI() {
   $("presetName").value = params.name === "Untitled" ? "" : params.name;
-
-  $("filmEnabled").checked = params.film.enabled;
-  setSlider("filmExposure", params.film.exposure);
-  syncFilmUI();
 
   $("gradingEnabled").checked = params.grading.enabled;
   setSlider("toe", params.grading.toe);
@@ -755,19 +520,8 @@ async function onApply() {
   setBusy(true);
   setStatus("적용 중…");
   try {
-    // 필름 엔진은 16bit RGB를 전제로 설계됐다. 8bit에서도 동작은 하지만
-    // 계조가 부족해 감산 혼합 구간에서 밴딩이 보인다. 막지 않고 알리기만 한다.
-    let warning = "";
-    if (params.film.enabled) {
-      try {
-        const warnings = apply.validate(ps.activeDocument());
-        if (warnings.length) warning = " (" + warnings.join(" ") + ")";
-      } catch (e) {
-        /* 문서 없음 등은 아래 파이프라인이 제대로 보고한다 */
-      }
-    }
     await pipeline.applyToActiveDocument(params);
-    setStatus("적용 완료" + warning);
+    setStatus("적용 완료");
   } catch (e) {
     setStatus(e.message || String(e), true);
   } finally {
@@ -916,58 +670,6 @@ function wire() {
     }
   });
 
-  $("btnExportCube").addEventListener("click", async () => {
-    const btn = $("btnExportCube");
-    btn.disabled = true;
-    try {
-      setStatus("LUT 굽는 중...");
-      const name = await cubeexport.exportToFile(params, cubeOpts);
-      setStatus(name ? `${name} 내보냄` : "취소됨");
-    } catch (e) {
-      setStatus(e.message || String(e), true);
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
-  $("btnExportXmp").addEventListener("click", async () => {
-    const btn = $("btnExportXmp");
-    btn.disabled = true;
-    try {
-      setStatus("프로파일 만드는 중...");
-      const name = await xmpexport.exportOne(params, { space: "prophoto" });
-      setStatus(name ? `${name} 내보냄` : "취소됨");
-    } catch (e) {
-      setStatus(e.message || String(e), true);
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
-  $("btnExportXmpSet").addEventListener("click", async () => {
-    const btn = $("btnExportXmpSet");
-    btn.disabled = true;
-    try {
-      const list = xmpexport.defaultSet(params);
-      setStatus(`${list.length}개 프로파일 — 저장할 폴더를 고르세요`);
-      const r = await xmpexport.exportSet(list, { space: "prophoto" }, (done, total) => {
-        if (done < total) setStatus(`프로파일 ${done + 1}/${total} 생성 중...`);
-      });
-      if (!r) return setStatus("취소됨");
-      if (r.failed.length) {
-        // 실패 건수만 보여주면 원인을 알 수 없다. 첫 에러 메시지를 그대로 낸다.
-        console.error("프로파일 내보내기 실패", r.failed);
-        setStatus(`실패 (${r.failed[0].name}): ${r.failed[0].error}`, true);
-      } else {
-        setStatus(`${r.written.length}개 내보냄 — ${r.folder}`);
-      }
-    } catch (e) {
-      setStatus(e.message || String(e), true);
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
   $("btnImport").addEventListener("click", async () => {
     try {
       const imported = await presets.importFromFile();
@@ -982,9 +684,6 @@ function wire() {
     }
   });
 
-  bindCheckbox("filmEnabled", "film.enabled");
-  bindSlider("filmExposure", "film.exposure");
-
   $("btnApply").addEventListener("click", onApply);
   $("btnBatch").addEventListener("click", onBatch);
 
@@ -992,11 +691,7 @@ function wire() {
 
 async function init() {
   wire();
-  buildFilmChips(); // syncUI가 칩 상태를 갱신하므로 먼저 만들어 둔다
-  buildScannerChips();
-  buildCubeChips();
   syncUI();
-  syncCubeUI();
   wheelCtrl = colorwheel.build($("wheel"), {
     onMarkerDrag: handleMarkerDrag,
     onMarkerReset: handleMarkerReset,
@@ -1048,5 +743,3 @@ async function init() {
 }
 
 init();
-
-

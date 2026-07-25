@@ -1,0 +1,16 @@
+# UXP devtools 세션 파일 (plugin load 시 생성)
+.uxprc
+
+# Claude Code 로컬 설정
+.claude/
+
+# 로그·OS 파일
+*.log
+.DS_Store
+Thumbs.db
+
+# 의존성 (현재 없음, 향후 대비)
+node_modules/
+
+# 빌드 산출물 (.ccx는 GitHub 릴리스로 배포)
+dist/

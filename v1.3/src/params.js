@@ -25,21 +25,10 @@ function defaultParams() {
   }
 
   return {
-    version: "1.4",
+    version: "1.0",
     name: "Untitled",
     category: "",
     tags: [],
-
-    // v2 엔진. 켜져 있으면 grading 대신 필름 LUT이 색을 담당한다.
-    // grading은 v1 경로로 남아 있고, film.enabled를 끄면 그쪽이 동작한다.
-    // (전환기 조치 — 필름 UI가 완성되면 grading 일체를 제거한다)
-    film: {
-      enabled: true,
-      id: "kodak-portra-400",
-      exposure: 0, // 스톱. 필름 정의의 exposureRange 안이어야 한다.
-      scanner: "none", // "none" | "frontier" | "noritsu" — scanner.js 참조
-      lutSize: 33, // 33 = 프리뷰/일반, 65 = 정밀
-    },
 
     grading: {
       enabled: true,
@@ -114,7 +103,6 @@ function migrate(raw) {
   return {
     ...base,
     ...raw,
-    film: { ...base.film, ...(raw.film || {}) },
     grading: { ...base.grading, ...(raw.grading || {}),
       selectiveColor: { ...base.grading.selectiveColor, ...((raw.grading || {}).selectiveColor || {}) },
       channelGain: { ...base.grading.channelGain, ...((raw.grading || {}).channelGain || {}) },
@@ -162,4 +150,3 @@ module.exports = {
   crosstalkMatrixFromAmount,
   crosstalkAmountFromMatrix,
 };
-

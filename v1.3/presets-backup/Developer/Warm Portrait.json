@@ -1,0 +1,107 @@
+{
+  "version": "1.0",
+  "name": "Warm Portrait",
+  "category": "Starter",
+  "tags": [],
+  "grading": {
+    "enabled": true,
+    "method": "relative",
+    "selectiveColor": {
+      "reds": {
+        "c": -6,
+        "m": 3,
+        "y": 8,
+        "k": 0
+      },
+      "yellows": {
+        "c": -4,
+        "m": 0,
+        "y": 10,
+        "k": 0
+      },
+      "greens": {
+        "c": 0,
+        "m": 0,
+        "y": 0,
+        "k": 0
+      },
+      "cyans": {
+        "c": 0,
+        "m": 0,
+        "y": 0,
+        "k": 0
+      },
+      "blues": {
+        "c": 0,
+        "m": 0,
+        "y": 0,
+        "k": 0
+      },
+      "magentas": {
+        "c": 0,
+        "m": 0,
+        "y": 0,
+        "k": 0
+      },
+      "whites": {
+        "c": 0,
+        "m": 0,
+        "y": 0,
+        "k": 0
+      },
+      "neutrals": {
+        "c": -2,
+        "m": 1,
+        "y": 4,
+        "k": 0
+      },
+      "blacks": {
+        "c": 4,
+        "m": 0,
+        "y": -3,
+        "k": 2
+      }
+    },
+    "channelGain": {
+      "r": 1,
+      "g": 1,
+      "b": 1
+    },
+    "toe": 30,
+    "shoulder": 20
+  },
+  "grain": {
+    "enabled": true,
+    "shadow": 25,
+    "midtone": 45,
+    "highlight": 15,
+    "shadowRange": [
+      0,
+      85
+    ],
+    "midtoneRange": [
+      60,
+      195
+    ],
+    "highlightRange": [
+      170,
+      255
+    ],
+    "feather": 40,
+    "size": 20,
+    "colorMode": "mono"
+  },
+  "halation": {
+    "enabled": true,
+    "threshold": 205,
+    "strength": 45,
+    "radius": 1.2,
+    "channelSpread": {
+      "r": 1,
+      "g": 0.55,
+      "b": 0.3
+    },
+    "tintHue": 18,
+    "tintSaturation": 65
+  }
+}
