@@ -21,8 +21,10 @@ function defaultParams() {
     medium: {
       // "35mm" | "645" | "66" | "67" | "4x5"
       format: "35mm",
-      // 그레인 크기 계산의 긴 변 기준. "document" | "standard" | "high"
+      // 그레인 크기 계산의 긴 변 기준. "document" | "standard" | "high" | "custom"
       reference: "document",
+      // reference가 "custom"일 때 쓸 긴 변 px. 웹 축소본 크기 등을 직접 지정한다.
+      customLongEdge: 2048,
     },
 
     halation: {

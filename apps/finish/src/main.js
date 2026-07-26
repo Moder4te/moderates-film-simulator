@@ -90,7 +90,7 @@ function buildMediumChips() {
  * 포맷을 바꿨을 때 무엇이 달라지는지가 숫자로 보이지 않으면 고를 근거가 없다.
  */
 function syncMediumUI() {
-  if (!params.medium) params.medium = { format: "35mm", reference: "document" };
+  if (!params.medium) params.medium = { format: "35mm", reference: "document", customLongEdge: 2048 };
   const m = params.medium;
 
   for (const [id, key] of [["formatChips", "formatId"], ["referenceChips", "referenceId"]]) {
@@ -102,6 +102,12 @@ function syncMediumUI() {
     }
   }
 
+  // 직접 입력 칸은 그 기준일 때만 보인다.
+  const row = $("customEdgeRow");
+  if (row) row.style.display = m.reference === "custom" ? "flex" : "none";
+  const edge = $("customEdge");
+  if (edge && String(m.customLongEdge) !== String(edge.value)) edge.value = m.customLongEdge;
+
   const note = $("mediumNote");
   if (!note) return;
   const parts = [format.byId(m.format).note];
@@ -112,7 +118,7 @@ function syncMediumUI() {
     doc = null;
   }
   if (doc) {
-    const s = format.grainSize(doc, m.format, params.grain.size, m.reference);
+    const s = format.grainSize(doc, m, params.grain.size);
     const px = s.px < 1 ? s.px.toFixed(2) : s.px.toFixed(1);
     parts.push(
       `입자 ${s.microns.toFixed(0)}µm → ${px}px` +
@@ -285,6 +291,14 @@ function wire() {
   bindCheckbox("grainEnabled", "grain.enabled");
   $("grainColor").addEventListener("change", () => {
     params.grain.colorMode = $("grainColor").checked ? "rgb" : "mono";
+    onParamsChanged();
+  });
+
+  // 직접 입력 긴 변. **원문 문자열을 그대로 저장한다.** Number로 강제하면 빈칸이
+  // 0이 되고, syncMediumUI가 그 0을 필드에 다시 써넣어 타이핑을 방해한다.
+  // 유효성(빈칸·하한 미만·NaN)은 format.longEdgeFor가 문서 값 폴백으로 흡수한다.
+  $("customEdge").addEventListener("input", () => {
+    params.medium.customLongEdge = $("customEdge").value;
     onParamsChanged();
   });
 

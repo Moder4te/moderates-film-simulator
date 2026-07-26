@@ -45,9 +45,13 @@ const REFERENCES = [
   { id: "document", displayName: "문서", longEdge: null, note: "문서 픽셀 그대로. 물리적으로 옳은 기본값" },
   { id: "standard", displayName: "6000px", longEdge: 6000, note: "일반 스캔·DSLR 기준으로 고정" },
   { id: "high", displayName: "9000px", longEdge: 9000, note: "고화소·드럼스캔 기준으로 고정" },
+  { id: "custom", displayName: "직접 입력", longEdge: null, note: "최종 출력 긴 변을 직접 지정 (웹 축소본 등)" },
 ];
 
 const REF_BY_ID = new Map(REFERENCES.map((r) => [r.id, r]));
+
+/** 직접 입력 긴 변의 하한. 이보다 작으면 입자가 사라져 무의미하다. */
+const MIN_LONG_EDGE = 256;
 
 /** DPI가 없거나 이상한 파일의 가정값. 인쇄 크기 안내에만 쓴다. */
 const ASSUMED_DPI = 300;
@@ -79,25 +83,42 @@ function micronsFor(size) {
   return 2 + (s / 100) * 40;
 }
 
-/** 계산에 쓸 긴 변 픽셀. 기준이 "문서"면 문서 값, 아니면 고정값. */
-function longEdgeFor(doc, referenceId) {
+/**
+ * 계산에 쓸 긴 변 픽셀.
+ *   document — 문서 값
+ *   standard/high — 고정값
+ *   custom — 사용자 입력. **비었거나 비정상이면 문서 값으로 폴백한다.**
+ *            0으로 떨어뜨리면 입자가 조용히 사라지므로, NaN·빈칸·하한 미만을
+ *            전부 문서 값으로 되돌린다(그레인이 꺼지는 것보다 정상 크기가 낫다).
+ */
+function longEdgeFor(doc, referenceId, customLongEdge) {
   const ref = referenceById(referenceId);
+  const docEdge = Math.max((doc && doc.width) || 0, (doc && doc.height) || 0) || 6000;
+
+  if (ref.id === "custom") {
+    const v = Number(customLongEdge);
+    return isFinite(v) && v >= MIN_LONG_EDGE ? v : docEdge;
+  }
   if (ref.longEdge) return ref.longEdge;
-  return Math.max(doc.width || 0, doc.height || 0) || 6000;
+  return docEdge;
 }
 
 /**
  * 그레인 크기를 픽셀로 환산한다.
  *
+ * @param {object} doc     활성 문서 (width/height)
+ * @param {object} medium  { format, reference, customLongEdge }
+ * @param {number} size    그레인 크기 슬라이더 0~100
  * @returns {{px:number, pxPerMm:number, microns:number, subPixel:boolean, amountScale:number}}
  *   px          가우시안 블러 반경으로 쓸 값
  *   subPixel    1px 미만 — 블러로 표현할 수 없다
  *   amountScale 서브픽셀일 때 노이즈 amount에 곱할 계수 (0~1)
  */
-function grainSize(doc, formatId, size, referenceId) {
-  const fmt = byId(formatId);
+function grainSize(doc, medium, size) {
+  const m = medium || {};
+  const fmt = byId(m.format);
   const microns = micronsFor(size);
-  const longEdge = longEdgeFor(doc, referenceId);
+  const longEdge = longEdgeFor(doc, m.reference, m.customLongEdge);
   const pxPerMm = longEdge / fmt.longEdgeMm;
   const px = (microns / 1000) * pxPerMm;
 
@@ -144,6 +165,7 @@ function printSize(doc) {
 module.exports = {
   FORMATS,
   REFERENCES,
+  MIN_LONG_EDGE,
   ASSUMED_DPI,
   all,
   byId,

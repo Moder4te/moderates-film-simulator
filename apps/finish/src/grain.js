@@ -71,7 +71,7 @@ async function apply(doc, grain, medium, prefix) {
   // 입자 크기는 세 존이 공유한다 — 같은 필름의 같은 유제이므로 톤에 따라 크기가
   // 달라질 이유가 없다. 톤별로 다른 것은 가시성(강도)이다.
   const m = medium || {};
-  const sizing = format.grainSize(doc, m.format, grain.size, m.reference);
+  const sizing = format.grainSize(doc, m, grain.size);
 
   // 암부 → 중간톤 → 명부 순서로 쌓는다. 순서는 결과에 영향이 없지만
   // 레이어 패널에서 톤 순서대로 보이는 편이 읽기 쉽다.
