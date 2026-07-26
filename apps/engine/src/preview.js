@@ -25,7 +25,11 @@ const ps = require("../lib/host/ps");
 
 const PV_WIDTH = 300; // 썸네일 긴 축(가로) px
 let busy = false;
+let busySince = 0;
 let pendingParams = null;
+
+/** 이 시간 넘게 잠겨 있으면 잠금이 새어 나간 것으로 보고 강제로 재시작한다. */
+const STUCK_MS = 8000;
 
 function imgEl() {
   return document.getElementById("pvImage");
@@ -166,10 +170,21 @@ async function renderOnce(params) {
  */
 async function render(params) {
   if (busy) {
-    pendingParams = params;
-    return;
+    // ⚠️ `busy`가 풀리지 않으면 **미리보기가 영구히 멈춘다.** 실제로 그런 일이
+    // 있었다 — batchPlay 조회 하나가 끝나지 않아 `renderOnce`가 반환하지 않았고,
+    // 이후 요청이 전부 여기서 삼켜졌다. 사용자에게는 "미리보기가 호출되지 않는"
+    // 것으로 보인다.
+    //
+    // 예외는 아래 finally가 풀어 주지만 **영영 끝나지 않는 경우는 못 푼다.**
+    // 그래서 오래 잠겨 있으면 잠금을 무시하고 새로 시작한다.
+    if (Date.now() - busySince < STUCK_MS) {
+      pendingParams = params;
+      return;
+    }
+    console.error("미리보기가 " + STUCK_MS + "ms 넘게 잠겨 있어 강제로 재시작합니다");
   }
   busy = true;
+  busySince = Date.now();
   try {
     await renderOnce(params);
     // 렌더 중 들어온 최신 요청이 있으면 한 번 더.

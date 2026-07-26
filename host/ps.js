@@ -8,25 +8,34 @@ const { app, core, action } = require("photoshop");
 /**
  * batchPlay 래퍼.
  *
- * **모든 명령에 "대화상자를 띄우지 말 것"을 붙인다.** 이 플러그인의 어떤 동작도
- * Photoshop 대화상자를 띄워서는 안 된다 — 자동화 중에 떠 버리면 사용자는 왜
- * 나왔는지 알 수 없고, 미리보기처럼 자주 도는 경로에서는 작업이 막힌다.
+ * ⚠️ **모든 명령에 `_options`를 자동으로 붙이려다 미리보기를 죽였다.**
+ * 대화상자를 막으려고 `_options: { dialogOptions: "dontDisplay" }`를 전 명령에
+ * 넣었는데, `get`처럼 원래 그 필드를 받지 않는 디스크립터에서 batchPlay가
+ * 끝나지 않았다. 그러면 호출자의 `busy` 플래그가 계속 참으로 남아 **이후 요청이
+ * 전부 삼켜진다.**
  *
- * 실제로 그런 일이 있었다. 문서 프로파일을 읽는 `get` 하나가 인쇄 설정까지
- * 평가해 **미리보기를 열 때마다 프린터 대화상자가 떴다.** 근본 원인은 따로
- * 고쳤지만(documentProfile 참조), 같은 일이 다른 디스크립터에서 또 일어나지
- * 않도록 여기서 한 번에 막는다.
- *
- * 호출자가 `_options`를 직접 준 경우는 존중한다.
+ * 대화상자를 막아야 한다면 **그 디스크립터에만** 붙인다. 여기서 일괄 처리하지
+ * 않는다 — 어떤 디스크립터가 어떤 필드를 받는지는 문서화돼 있지 않고,
+ * 추측으로 붙이면 조용히 멈춘다(UXP-NOTES 4).
  */
 async function play(commands) {
-  const list = (Array.isArray(commands) ? commands : [commands]).map((cmd) =>
-    cmd && cmd._options
-      ? cmd
-      : Object.assign({}, cmd, { _options: { dialogOptions: "dontDisplay" } })
-  );
+  const list = Array.isArray(commands) ? commands : [commands];
   const result = await action.batchPlay(list, { synchronousExecution: false });
   return result;
+}
+
+/**
+ * 끝나지 않을 수 있는 조회를 감싼다.
+ *
+ * batchPlay가 응답하지 않으면 호출자가 그대로 멈춘다. 미리보기처럼 **없어도
+ * 되는 정보**를 읽을 때는 기다리다 포기하고 진행하는 편이 낫다 — 색이 조금
+ * 어긋나는 것이 화면이 갱신되지 않는 것보다 낫다.
+ */
+function withTimeout(promise, ms, fallback) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
 }
 
 /**
@@ -179,16 +188,22 @@ async function documentProfile() {
     // 대화상자가 뜬다.** 미리보기를 열 때마다 프린터 창이 나오던 원인이었다.
     //
     // `_property`를 앞에 두는 형태가 "이 객체의 이 속성만"을 뜻한다.
-    const r = await play([
-      {
-        _obj: "get",
-        _target: [
-          { _property: "profile" },
-          { _ref: "document", _enum: "ordinal", _value: "targetEnum" },
-        ],
-      },
-    ]);
-    return (r[0] && r[0].profile) || null;
+    // 응답이 없으면 포기하고 진행한다. 이 값이 없으면 색 변환을 건너뛸 뿐이지만,
+    // 여기서 멈추면 미리보기 전체가 갱신되지 않는다.
+    const r = await withTimeout(
+      play([
+        {
+          _obj: "get",
+          _target: [
+            { _property: "profile" },
+            { _ref: "document", _enum: "ordinal", _value: "targetEnum" },
+          ],
+        },
+      ]),
+      2000,
+      null
+    );
+    return (r && r[0] && r[0].profile) || null;
   } catch (e) {
     return null;
   }
