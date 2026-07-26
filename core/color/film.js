@@ -488,6 +488,16 @@ function bakeGrading(table, grading) {
       const ratio = before > 0 ? linSrgb[c] * (after / before) : 0;
       const delta = linSrgb[c] + (after - before);
       out[c] = w * ratio + (1 - w) * delta;
+
+      // ⚠️ **`before === 0`을 "어둡다"로 읽으면 안 된다.** 그것은 그 채널이
+      // 색역 **밖**이라는 뜻이고, 밝고 채도 높은 색에서도 일어난다. 한 번
+      // 어두운 쪽 분기를 `after`(= 대리색 결과)로 바꿨다가 색역 보존이 통째로
+      // 무너졌다 — 33³ 중 65,246점이 다시 잘렸다. 정합성 검사가 잡았다.
+      //
+      // 남은 문제는 TODO 0-13에 적어 뒀다. 리프트가 중립이어야 하는데, 잘린
+      // 채널은 `after`를 통째로 받고 안 잘린 채널은 `after − before`만 받아
+      // 암부에서 색이 조금 틀어진다. 두 요구(색역 보존 · 중립 리프트)를 한
+      // 식으로 만족시키는 형태를 아직 찾지 못했다.
     }
 
     mul3v(M_BACK, out, linWork);
