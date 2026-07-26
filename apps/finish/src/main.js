@@ -170,6 +170,7 @@ function syncUI() {
   setSlider("grainMid", g.midtone);
   setSlider("grainHigh", g.highlight);
   setSlider("grainSize", g.size);
+  setSlider("grainDiffusion", g.diffusion);
   setSlider("grainClump", g.clump);
   setSlider("grainDyeSpread", g.dyeSpread);
   setSlider("grainFeather", g.feather);
@@ -289,6 +290,7 @@ function wire() {
   bindSlider("grainMid", "grain.midtone");
   bindSlider("grainHigh", "grain.highlight");
   bindSlider("grainSize", "grain.size");
+  bindSlider("grainDiffusion", "grain.diffusion");
   bindSlider("grainClump", "grain.clump");
   bindSlider("grainDyeSpread", "grain.dyeSpread");
   bindSlider("grainFeather", "grain.feather");

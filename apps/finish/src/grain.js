@@ -114,6 +114,37 @@ async function addZone(doc, label, strength, range, cfg, sizing, prefix) {
   }
 }
 
+/**
+ * 디퓨전 — 그레인이 엣지를 뭉개는 것을 재현한다.
+ *
+ * 우리 그레인은 샤프한 베이스 **위에** Overlay로 얹혀서 엣지가 디지털 razor
+ * 그대로 남는다. 진짜 필름은 다르다. A7R5 마크로로 스캔한 Vision3 250D를 재보니
+ * **가장 날카로운 엣지도 10-90 상승폭이 7.5px**였다(디지털 razor는 1-2px).
+ * 필름은 해상도가 유제 산란·입자·MTF로 제한돼 razor 엣지가 존재할 수 없다.
+ *
+ * 흐린 합성본을 낮은 불투명도로 얹어 razor 엣지를 필름 해상도로 눌러준다. 그
+ * 위에 그레인이 쌓이므로, 결과는 "부드러운 엣지 + 그 위 입자"가 된다.
+ *
+ * stampVisible은 디스크립터 두 개다(빈 레이어 + 병합). 펼치지 않으면 배경을
+ * 덮어 원본이 사라진다(ps.js 참조).
+ */
+async function applyDiffusion(doc, grain, sizing, prefix) {
+  const amt = grain.diffusion || 0;
+  if (amt <= 0) return;
+
+  // 입자 스케일 반경. 그레인이 만드는 해상 손실이므로 입자 크기에 묶는다.
+  // 하한을 둬 서브픽셀 입자에서도 razor 엣지는 눌러준다.
+  const radius = Math.max(0.8, sizing.px * 2.0);
+
+  await play([
+    ...ps.stampVisible(),
+    ps.renameLayer(`${prefix} · Diffusion`),
+    ps.gaussianBlur(radius),
+    // 불투명도 = 번짐량. 흐린 복사본을 amt%만큼 섞어 엣지를 넓힌다.
+    ps.setLayerBlend("normal", amt),
+  ]);
+}
+
 async function apply(doc, grain, medium, prefix) {
   if (!grain.enabled) return;
 
@@ -122,6 +153,9 @@ async function apply(doc, grain, medium, prefix) {
   const m = medium || {};
   const sizing = format.grainSize(doc, m, grain.size);
 
+  // 디퓨전이 먼저다 — 그레인은 부드러워진 이미지 위에 얹혀야 한다.
+  await applyDiffusion(doc, grain, sizing, prefix);
+
   // 암부 → 중간톤 → 명부 순서로 쌓는다. 순서는 결과에 영향이 없지만
   // 레이어 패널에서 톤 순서대로 보이는 편이 읽기 쉽다.
   await addZone(doc, "Shadow", grain.shadow, grain.shadowRange, grain, sizing, prefix);
@@ -129,4 +163,4 @@ async function apply(doc, grain, medium, prefix) {
   await addZone(doc, "Highlight", grain.highlight, grain.highlightRange, grain, sizing, prefix);
 }
 
-module.exports = { apply, noiseAmountFor, blendRangeFor };
+module.exports = { apply, applyDiffusion, noiseAmountFor, blendRangeFor };
