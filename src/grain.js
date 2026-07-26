@@ -10,25 +10,17 @@
 
 const ps = require("./ps");
 const { play } = require("./ps");
-
-/**
- * size(0~100) → 노이즈 후 적용할 블러 반경.
- * 노이즈는 항상 1px 단위로 생성되므로, 블러로 입자를 뭉쳐 크기를 키운다.
- * 이미지 해상도에 비례시켜 체감 입자 크기를 유지한다.
- */
-function grainBlurRadius(doc, size) {
-  if (size <= 0) return 0;
-  const longEdge = Math.max(doc.width, doc.height);
-  const resolutionScale = longEdge / 3000; // 3000px 기준으로 정규화
-  return (size / 100) * 2.2 * Math.max(0.35, resolutionScale);
-}
+const format = require("./format");
 
 /**
  * 강도(0~100) → Add Noise의 amount와 레이어 불투명도로 분배.
  * amount만 올리면 입자가 거칠어지기만 하므로 두 값을 함께 움직인다.
+ *
+ * `scale`은 서브픽셀 입자 보정이다 — 픽셀보다 고운 입자는 블러로 크기를 줄일 수
+ * 없으므로 세기로 환산한다(format.js 참조).
  */
-function noiseAmountFor(strength) {
-  return Math.max(1, (strength / 100) * 55);
+function noiseAmountFor(strength, scale) {
+  return Math.max(1, (strength / 100) * 55 * (scale === undefined ? 1 : scale));
 }
 
 function opacityFor(strength) {
@@ -48,22 +40,23 @@ function blendRangeFor([lo, hi], feather) {
   return [blackMin, blackMax, whiteMin, whiteMax];
 }
 
-async function addZone(doc, label, strength, range, cfg) {
+async function addZone(doc, label, strength, range, cfg, sizing) {
   if (strength <= 0) return;
 
   const monochromatic = cfg.colorMode === "mono";
-  const blur = grainBlurRadius(doc, cfg.size);
   const [bMin, bMax, wMin, wMax] = blendRangeFor(range, cfg.feather);
 
   const commands = [
     ps.makePixelLayer(),
     ps.renameLayer(`FilmSim · Grain ${label}`),
     ps.fillLayer("gray"),
-    ps.addNoise(noiseAmountFor(strength), monochromatic),
+    ps.addNoise(noiseAmountFor(strength, sizing.amountScale), monochromatic),
   ];
 
-  if (blur > 0.15) {
-    commands.push(ps.gaussianBlur(blur));
+  // 서브픽셀 입자는 블러를 걸지 않는다. 반경 1px 미만의 가우시안은 입자를 뭉치지
+  // 못하고 노이즈만 흐리게 만든다. 대신 amount로 이미 세기를 낮춰 뒀다.
+  if (!sizing.subPixel && sizing.px > 0.15) {
+    commands.push(ps.gaussianBlur(sizing.px));
   }
 
   commands.push(ps.setLayerBlend("overlay", opacityFor(strength)));
@@ -72,14 +65,19 @@ async function addZone(doc, label, strength, range, cfg) {
   await play(commands);
 }
 
-async function apply(doc, grain) {
+async function apply(doc, grain, medium) {
   if (!grain.enabled) return;
+
+  // 입자 크기는 세 존이 공유한다 — 같은 필름의 같은 유제이므로 톤에 따라 크기가
+  // 달라질 이유가 없다. 톤별로 다른 것은 가시성(강도)이다.
+  const m = medium || {};
+  const sizing = format.grainSize(doc, m.format, grain.size, m.reference);
 
   // 암부 → 중간톤 → 명부 순서로 쌓는다. 순서는 결과에 영향이 없지만
   // 레이어 패널에서 톤 순서대로 보이는 편이 읽기 쉽다.
-  await addZone(doc, "Shadow", grain.shadow, grain.shadowRange, grain);
-  await addZone(doc, "Midtone", grain.midtone, grain.midtoneRange, grain);
-  await addZone(doc, "Highlight", grain.highlight, grain.highlightRange, grain);
+  await addZone(doc, "Shadow", grain.shadow, grain.shadowRange, grain, sizing);
+  await addZone(doc, "Midtone", grain.midtone, grain.midtoneRange, grain, sizing);
+  await addZone(doc, "Highlight", grain.highlight, grain.highlightRange, grain, sizing);
 }
 
-module.exports = { apply };
+module.exports = { apply, noiseAmountFor, blendRangeFor };

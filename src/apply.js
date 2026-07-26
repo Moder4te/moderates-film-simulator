@@ -20,15 +20,26 @@ const lut = require("./lut");
 const LAYER_NAME = "FilmSim · Color";
 
 /**
- * 문서가 v2 파이프라인의 전제를 만족하는지 본다.
- * 막지는 않고 경고만 돌려준다 — 8bit 문서도 동작은 한다.
+ * 문서가 전제를 만족하는지 본다. 막지는 않고 경고만 돌려준다.
+ *
+ * **필름 엔진이 꺼져 있으면 비트 심도를 경고하지 않는다.** 그 상태는 마감 모드,
+ * 즉 이미 색이 정해진 JPEG에 할레이션·그레인·약간의 보정을 얹는 작업이고,
+ * 8bit는 그 경로의 정상적인 입력이다(v2plan 1.5의 도구 이분화). 정상 입력에
+ * 경고를 띄우면 진짜 경고를 무시하게 만든다.
+ *
+ * @param {object} doc
+ * @param {object} [params]  없으면 필름 엔진이 켜진 것으로 본다
  */
-function validate(doc) {
+function validate(doc, params) {
   const warnings = [];
+  const filmOn = !params || !params.film || params.film.enabled !== false;
   const depth = String(doc.bitsPerChannel);
-  if (depth !== "bitDepth16") {
+
+  if (filmOn && depth !== "bitDepth16") {
     warnings.push(
-      `문서가 ${depth}입니다. 16비트를 권장합니다 (이미지 → 모드 → 16비트/채널).`
+      `필름 엔진은 16비트를 전제로 합니다. 문서가 ${depth}입니다 ` +
+        `(이미지 → 모드 → 16비트/채널). 색이 이미 정해진 파일이라면 필름을 끄고 ` +
+        `마감(할레이션·그레인)만 쓰는 편이 맞습니다.`
     );
   }
   if (String(doc.mode) !== "RGBColorMode") {

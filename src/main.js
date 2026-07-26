@@ -25,6 +25,7 @@ const film = require("./src/film");
 const lut = require("./src/lut");
 const colorspace = require("./src/colorspace");
 const cubeexport = require("./src/cubeexport");
+const format = require("./src/format");
 const xmpexport = require("./src/xmpexport");
 const apply = require("./src/apply");
 const ps = require("./src/ps");
@@ -139,6 +140,8 @@ function onParamsChanged() {
   schedulePreviewRefresh();
   scheduleRender();
   syncCubeUI(); // 제안 파일명이 필름·스캐너·노광을 담고 있다
+  syncMediumUI(); // 입자 크기 표시가 grain.size에 따라 바뀐다
+  syncFilmUI(); // 필름 on/off가 카드 설명(색 모드 ↔ 마감 모드)을 바꾼다
 }
 
 let wheelCtrl = null;
@@ -538,6 +541,16 @@ function syncFilmUI() {
     }
   }
   const note = $("filmNote");
+  if (note && !params.film.enabled) {
+    // 필름을 끈 상태는 "기능 없음"이 아니라 **마감 모드**다. 색이 이미 정해진
+    // 파일(프로파일로 현상한 JPEG 등)에 할레이션·그레인만 얹는 경로이고,
+    // 도구 이분화의 v1 쪽이다(v2plan 1.5). 그렇게 읽히지 않으면 사용자가
+    // 8bit 문서에서 필름을 켜 놓고 밴딩을 보게 된다.
+    note.textContent =
+      "마감 모드 — 색은 그대로 두고 할레이션·그레인·색 조정만 얹습니다. " +
+      "이미 현상된 JPEG 후처리에 맞습니다.";
+    return;
+  }
   if (note) {
     let def = null;
     try {
@@ -549,6 +562,81 @@ function syncFilmUI() {
     const parts = [];
     if (def && def.source && def.source.note) parts.push(def.source.note);
     if (sc && sc.id !== "none" && sc.note) parts.push(sc.note);
+    note.textContent = parts.join("  /  ");
+  }
+}
+
+/** 매체(포맷·기준 해상도) 칩. 필름 칩과 같은 이유로 sp-picker를 쓰지 않는다. */
+function buildMediumChips() {
+  const fHost = $("formatChips");
+  if (fHost) {
+    fHost.textContent = "";
+    for (const f of format.all()) {
+      const chip = document.createElement("div");
+      chip.className = "chip-btn";
+      chip.textContent = f.displayName;
+      chip.dataset.formatId = f.id;
+      chip.addEventListener("click", () => {
+        params.medium.format = f.id;
+        syncMediumUI();
+      });
+      fHost.appendChild(chip);
+    }
+  }
+  const rHost = $("referenceChips");
+  if (rHost) {
+    rHost.textContent = "";
+    for (const r of format.references()) {
+      const chip = document.createElement("div");
+      chip.className = "chip-btn";
+      chip.textContent = r.displayName;
+      chip.dataset.referenceId = r.id;
+      chip.addEventListener("click", () => {
+        params.medium.reference = r.id;
+        syncMediumUI();
+      });
+      rHost.appendChild(chip);
+    }
+  }
+}
+
+/**
+ * 매체 카드 갱신. 선택 상태와 함께 **실제 입자 크기를 픽셀로 보여준다** —
+ * 포맷을 바꿨을 때 무엇이 달라지는지가 숫자로 보이지 않으면 고를 근거가 없다.
+ */
+function syncMediumUI() {
+  // 구버전 프리셋을 직접 밀어 넣은 경우를 대비한다. migrate가 채우지만
+  // 이 함수는 UI 경로 어디서든 불릴 수 있다.
+  if (!params.medium) params.medium = { format: "35mm", reference: "document" };
+  const m = params.medium;
+  for (const [id, key] of [["formatChips", "formatId"], ["referenceChips", "referenceId"]]) {
+    const host = $(id);
+    if (!host) continue;
+    const want = key === "formatId" ? m.format : m.reference;
+    for (const chip of host.querySelectorAll(".chip-btn")) {
+      chip.classList.toggle("active", chip.dataset[key] === want);
+    }
+  }
+
+  const note = $("mediumNote");
+  if (note) {
+    const parts = [format.byId(m.format).note];
+    // 문서가 있어야 픽셀 환산이 가능하다. 없으면 설명만 보여준다.
+    let doc = null;
+    try {
+      doc = require("photoshop").app.activeDocument;
+    } catch (e) {
+      doc = null;
+    }
+    if (doc) {
+      const s = format.grainSize(doc, m.format, params.grain.size, m.reference);
+      const px = s.px < 1 ? s.px.toFixed(2) : s.px.toFixed(1);
+      parts.push(
+        `입자 ${s.microns.toFixed(0)}µm → ${px}px` +
+          (s.subPixel ? " (1px 미만 — 블러 대신 강도로 환산)" : "")
+      );
+      parts.push(format.printSize(doc));
+    }
     note.textContent = parts.join("  /  ");
   }
 }
@@ -673,6 +761,8 @@ function syncUI() {
   setSlider("grainSize", g.size);
   setSlider("grainFeather", g.feather);
   $("grainColor").checked = g.colorMode === "rgb";
+
+  syncMediumUI();
 }
 
 /** 커스텀 슬라이더 값을 프로그램적으로 설정한다 (통지 없음). */
@@ -755,16 +845,14 @@ async function onApply() {
   setBusy(true);
   setStatus("적용 중…");
   try {
-    // 필름 엔진은 16bit RGB를 전제로 설계됐다. 8bit에서도 동작은 하지만
-    // 계조가 부족해 감산 혼합 구간에서 밴딩이 보인다. 막지 않고 알리기만 한다.
+    // 막지 않고 알리기만 한다. 무엇을 경고할지는 모드에 따라 다르다 —
+    // 마감 모드(필름 끔)의 8bit는 정상 입력이므로 경고하지 않는다.
     let warning = "";
-    if (params.film.enabled) {
-      try {
-        const warnings = apply.validate(ps.activeDocument());
-        if (warnings.length) warning = " (" + warnings.join(" ") + ")";
-      } catch (e) {
-        /* 문서 없음 등은 아래 파이프라인이 제대로 보고한다 */
-      }
+    try {
+      const warnings = apply.validate(ps.activeDocument(), params);
+      if (warnings.length) warning = " (" + warnings.join(" ") + ")";
+    } catch (e) {
+      /* 문서 없음 등은 아래 파이프라인이 제대로 보고한다 */
     }
     await pipeline.applyToActiveDocument(params);
     setStatus("적용 완료" + warning);
@@ -995,8 +1083,10 @@ async function init() {
   buildFilmChips(); // syncUI가 칩 상태를 갱신하므로 먼저 만들어 둔다
   buildScannerChips();
   buildCubeChips();
+  buildMediumChips();
   syncUI();
   syncCubeUI();
+  syncMediumUI();
   wheelCtrl = colorwheel.build($("wheel"), {
     onMarkerDrag: handleMarkerDrag,
     onMarkerReset: handleMarkerReset,

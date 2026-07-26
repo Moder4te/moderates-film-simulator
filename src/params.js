@@ -69,6 +69,18 @@ function defaultParams() {
       },
     },
 
+    // 매체(필름면) 기준. 그레인과 할레이션이 함께 쓴다 — 둘 다 필름면에서
+    // 크기가 고정이고 확대율 차이로 최종 이미지에서 달라 보이는 현상이다.
+    // grain 안에 두지 않은 이유가 그것이다 (format.js 참조).
+    medium: {
+      // "35mm" | "645" | "66" | "67" | "4x5"
+      format: "35mm",
+      // 그레인 크기 계산의 긴 변 기준. "document" | "standard" | "high"
+      // 기본은 문서 픽셀 그대로 — 물리적으로 옳다. 작업 파일과 최종 출력 크기가
+      // 다를 때만 고정 기준을 쓴다.
+      reference: "document",
+    },
+
     grain: {
       enabled: true,
       // 존별 강도 0~100
@@ -80,7 +92,8 @@ function defaultParams() {
       midtoneRange: [60, 195],
       highlightRange: [170, 255],
       feather: 40,
-      // 입자 크기 0~100. 내부적으로 노이즈 후 블러 반경으로 매핑된다.
+      // 입자 크기 0~100 → 필름면 유효 입자 지름 2~42µm.
+      // 기본값 20이 10µm으로, Portra 400의 유효 입자 크기다.
       size: 20,
       // "mono" | "rgb"
       colorMode: "mono",
@@ -111,9 +124,12 @@ function migrate(raw) {
   const base = defaultParams();
   if (!raw || typeof raw !== "object") return base;
 
+  // v1.5 이전 프리셋에는 medium이 없다. 기본값(35mm / 문서 기준)으로 채우면
+  // 할레이션은 배율 1.0이라 그대로 재현되고, 그레인만 물리 모델로 다시 계산된다.
   return {
     ...base,
     ...raw,
+    medium: { ...base.medium, ...(raw.medium || {}) },
     film: { ...base.film, ...(raw.film || {}) },
     grading: { ...base.grading, ...(raw.grading || {}),
       selectiveColor: { ...base.grading.selectiveColor, ...((raw.grading || {}).selectiveColor || {}) },

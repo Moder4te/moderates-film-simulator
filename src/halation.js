@@ -16,6 +16,7 @@
 
 const ps = require("./ps");
 const { play } = require("./ps");
+const format = require("./format");
 
 /** 임계값 이상만 남기고 나머지를 검정으로 눌러 하이라이트를 추출한다. */
 function extractHighlights(threshold) {
@@ -48,10 +49,13 @@ function colorize(hue, saturation) {
   };
 }
 
-async function apply(doc, halation) {
+async function apply(doc, halation, formatId) {
   if (!halation.enabled || halation.strength <= 0) return;
 
-  const baseRadius = ps.percentToPixels(doc, halation.radius);
+  // 포맷 배율 — 산란 거리는 필름면에서 고정이므로 큰 포맷일수록 좁게 보인다.
+  // 35mm에서 1.0이라 기존 프리셋의 결과가 그대로 재현된다(format.js 참조).
+  const baseRadius =
+    ps.percentToPixels(doc, halation.radius) * format.relativeScale(formatId);
   const spread = halation.channelSpread;
 
   // 스탬프 + 하이라이트 추출

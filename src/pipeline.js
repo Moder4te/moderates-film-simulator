@@ -64,10 +64,11 @@ async function groupFilmSimLayers(doc) {
  * 한다(단일 적용·배치 공통). 끝에 결과 레이어를 하나의 그룹으로 묶는다.
  */
 async function run(doc, params) {
+  const medium = params.medium || { format: "35mm", reference: "document" };
   await clearFilmSimLayers(doc);
   await applyColor(doc, params);
-  await halation.apply(doc, params.halation);
-  await grain.apply(doc, params.grain);
+  await halation.apply(doc, params.halation, medium.format);
+  await grain.apply(doc, params.grain, medium);
   await groupFilmSimLayers(doc);
 }
 
