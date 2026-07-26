@@ -17,53 +17,15 @@
 
 const simulate = require("../lib/core/color/simulate");
 
-function rgbToHsv(r, g, b) {
-  r /= 255;
-  g /= 255;
-  b /= 255;
-  const mx = Math.max(r, g, b);
-  const mn = Math.min(r, g, b);
-  const d = mx - mn;
-  let h = 0;
-  if (d > 0) {
-    if (mx === r) h = ((g - b) / d) % 6;
-    else if (mx === g) h = (b - r) / d + 2;
-    else h = (r - g) / d + 4;
-    h *= 60;
-    if (h < 0) h += 360;
-  }
-  return { h, s: mx === 0 ? 0 : d / mx, v: mx };
-}
+// 순수 색 수학은 core가 소유한다. 여기(UI)에 두면 사진 분석이 DOM 모듈에
+// 의존하게 되고, 노드에서 시험할 수 없어진다 — 실제로 그래서 16bit 버그가
+// 실기에서만 드러났다.
+const gamut = require("../lib/core/color/gamut");
+const { rgbToHsv, hsvToRgb, hslToRgb, polarOffset } = gamut;
 
-function hslToRgb(h, s, l) {
-  h /= 360;
-  const a = s * Math.min(l, 1 - l);
-  const f = (n) => {
-    const k = (n + h * 12) % 12;
-    return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
-  };
-  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
-}
 
-/** 색조·채도 → 중심 기준 [dx, dy] px 오프셋. */
-function polarOffset(h, s, radius) {
-  const rad = (h * Math.PI) / 180;
-  return [Math.cos(rad) * s * radius, -Math.sin(rad) * s * radius];
-}
 
-function hsvToRgb(h, s, v) {
-  const hh = (((h % 360) + 360) % 360) / 60;
-  const c = v * s;
-  const x = c * (1 - Math.abs((hh % 2) - 1));
-  const m = v - c;
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  if (hh < 1) { r = c; g = x; } else if (hh < 2) { r = x; g = c; }
-  else if (hh < 3) { g = c; b = x; } else if (hh < 4) { g = x; b = c; }
-  else if (hh < 5) { r = x; b = c; } else { r = c; b = x; }
-  return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
-}
+
 
 function makeEl(cls, style) {
   const d = document.createElement("div");
@@ -386,4 +348,5 @@ function buildMini(container, opts) {
   };
 }
 
+// 색 수학은 재수출한다 — 호출부가 어디서 오는지 신경 쓰지 않도록.
 module.exports = { build, buildMini, rgbToHsv, hsvToRgb, hslToRgb, polarOffset, SIZE };

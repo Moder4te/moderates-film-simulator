@@ -88,6 +88,8 @@ uxp service stop           # ⚠️ 반드시 끈다
 ```
 core/                  순수 계산. photoshop·uxp·DOM 접근 금지 (검사로 강제)
   color/               curve films film scanner lut colorspace simulate
+                       gamut     색역 판정·HSV — 컬러휠과 사진 분석이 공유
+                       analysis  색역별 누적·대표색 (순수. 노드에서 시험 가능)
   optics/              format          필름 포맷 → 입자 크기 물리
   io/                  cube xmp xmpcodec   직렬화만, 파일 쓰기는 앱이 한다
 host/                  UXP 경계. batchPlay 디스크립터는 여기서만
@@ -97,7 +99,7 @@ apps/
   engine/              필름 엔진 플러그인
     manifest.json  index.html
     src/               main params pipeline apply preview colorwheel
-                       photoanalysis presets
+                       photoanalysis(어댑터) presets
     lib/               ← sync-libs.js가 core/color·core/io·host·shared 복사
   finish/              마감 플러그인
     manifest.json  index.html
