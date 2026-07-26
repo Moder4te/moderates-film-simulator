@@ -51,7 +51,77 @@ function scurveAtPivot(v, a) {
   return Math.pow(scurve(Math.pow(v, PIVOT_IN), a), PIVOT_OUT);
 }
 
+/**
+ * 톤 가중치. 틴트 혼합 비율과 채도 연산의 기준점을 정한다.
+ *
+ * ⚠️ **이것은 광도(luminance)가 아니다.** 두 가지 이유로 그렇다.
+ *
+ * 1. 값이 Rec.709 계수인데 이 단계의 데이터는 **ProPhoto 원색**이다.
+ *    ProPhoto의 Y행은 `[0.2880, 0.7119, 0.0001]`이다(colorspace.js의
+ *    `PROPHOTO_TO_XYZ_D50` 참조). 청색 가중치가 특히 크게 다르다.
+ * 2. 더 근본적으로, 광도 계수는 **선형광**에 대해 정의된 것인데 여기서는
+ *    **인코딩된 값(γ1.8)** 에 곱한다. 어느 계수를 쓰든 광도가 되지 않는다.
+ *
+ * 즉 계수만 ProPhoto 값으로 바꾼다고 "올바른 광도"가 되지는 않는다. 선택지는
+ * 어느 근사를 쓰느냐이고, 인코딩 공간에서 다루는 것은 조율하기 쉬워 그레이딩
+ * 도구에서 흔히 하는 선택이다(이 파일 헤더 참조).
+ *
+ * **그대로 두는 이유** — 이 파일의 스캐너 파라미터는 이 수식 그대로 눈으로
+ * 튜닝한 값이다. 계수를 바꾸면 룩이 바뀌므로 재튜닝과 묶어야 한다. 실측상
+ * ProPhoto 계수로 바꿨을 때의 차이는 Ektar 100 기준 **최대 0.0155(≈4/255),
+ * 평균 0.0016** 이다. 지금 단독으로 고칠 이유가 되지 못한다.
+ *
+ * 실측 스캐너 데이터를 확보해 재튜닝할 때(TODO A1) 함께 정리한다.
+ */
 const LUM = [0.2126, 0.7152, 0.0722];
+
+/**
+ * 색상을 지키며 [0,1]에 맞춘다.
+ *
+ * 채널마다 따로 자르면 **RGB 비율이 깨져 색상 자체가 틀어진다.** 채도를 올린 뒤
+ * 한 채널만 1을 넘어 잘리면 그 색은 밝기만 바뀌는 게 아니라 다른 색이 된다.
+ *
+ * 대신 기준점(`t`) 쪽으로 세 채널을 **함께** 당겨 범위 안에 넣는다. 비율이
+ * 유지되므로 색상이 보존되고, 대신 채도가 준다 — 표현할 수 없는 채도를 포기하는
+ * 것이 색을 바꾸는 것보다 낫다.
+ *
+ * 실측 (frontier + Ektar 100, 33³ 중 클램프되는 7,284점):
+ *
+ *   하드 클리핑      색상 최대 1.7°, 870점이 1° 초과
+ *   이 방식          색상 최대 0.0°, 평균 채도손실은 0.0004만 더 든다
+ *
+ * 현재 채도가 1.03~1.04로 약해 하드 클리핑의 피해도 작다(1.7°는 변별 임계 아래).
+ * 그래도 고쳐 두는 이유는 **채도를 올리는 순간 바로 커지기 때문**이다. 스캐너
+ * 프로파일을 추가하거나 채도를 사용자에게 노출하면 그때 드러난다.
+ */
+function fitGamut(r, g, b, out) {
+  const hi = r > g ? (r > b ? r : b) : g > b ? g : b;
+  const lo = r < g ? (r < b ? r : b) : g < b ? g : b;
+
+  if (hi <= 1 && lo >= 0) {
+    out[0] = r;
+    out[1] = g;
+    out[2] = b;
+    return out;
+  }
+
+  // 당길 기준점. 이것도 범위 안에 있어야 맞춰 넣을 수 있다.
+  const t = LUM[0] * r + LUM[1] * g + LUM[2] * b;
+  const c = t < 0 ? 0 : t > 1 ? 1 : t;
+
+  let s = 1;
+  if (hi > 1 && hi > c) s = Math.min(s, (1 - c) / (hi - c));
+  if (lo < 0 && lo < c) s = Math.min(s, c / (c - lo));
+
+  // 부동소수 오차로 아주 미세하게 넘칠 수 있어 마지막에 한 번 더 조인다.
+  const fr = c + (r - c) * s;
+  const fg = c + (g - c) * s;
+  const fb = c + (b - c) * s;
+  out[0] = fr < 0 ? 0 : fr > 1 ? 1 : fr;
+  out[1] = fg < 0 ? 0 : fg > 1 ? 1 : fg;
+  out[2] = fb < 0 ? 0 : fb > 1 ? 1 : fb;
+  return out;
+}
 
 // 중간톤 틴트의 영향 폭과 최대 비중. 피벗에서 최대, PIVOT_WIDTH 밖에선 0.
 const PIVOT_WIDTH = 0.24;
@@ -144,6 +214,7 @@ function bake(table, scanner) {
   const st = scanner.shadowTint;
   const ht = scanner.highlightTint;
   const mt = scanner.midTint || null;
+  const fitted = [0, 0, 0]; // fitGamut 출력 버퍼. 격자점마다 새로 만들지 않는다.
 
   // 레벨의 피벗 복원 감마.
   //
@@ -165,6 +236,10 @@ function bake(table, scanner) {
       g = (g - bp) / span;
       b = (b - bp) / span;
     }
+    // 여기는 **의도적으로 채널별 하드 클램프**다. 블랙포인트는 원래 채널마다
+    // 자르는 조작이고(스캐너·Levels가 그렇게 동작한다), 그 아래를 검정으로
+    // 뭉개는 것이 목적이다. 색상을 지키려고 소프트 클립을 걸면 블랙포인트가
+    // 블랙포인트가 아니게 된다. 아래 pow가 음수에서 NaN이 되는 것도 막는다.
     r = r < 0 ? 0 : r > 1 ? 1 : r;
     g = g < 0 ? 0 : g > 1 ? 1 : g;
     b = b < 0 ? 0 : b > 1 ? 1 : b;
@@ -205,14 +280,16 @@ function bake(table, scanner) {
       b = l + (b - l) * sat;
     }
 
-    table[p] = r < 0 ? 0 : r > 1 ? 1 : r;
-    table[p + 1] = g < 0 ? 0 : g > 1 ? 1 : g;
-    table[p + 2] = b < 0 ? 0 : b > 1 ? 1 : b;
+    // 5. 색역 정합 — 채널마다 따로 자르면 색상이 틀어진다(fitGamut 참조).
+    fitGamut(r, g, b, fitted);
+    table[p] = fitted[0];
+    table[p + 1] = fitted[1];
+    table[p + 2] = fitted[2];
   }
   return table;
 }
 
-module.exports = { all, byId, bake, isNeutral, scurve, scurveAtPivot, PIVOT };
+module.exports = { all, byId, bake, isNeutral, scurve, scurveAtPivot, fitGamut, PIVOT, LUM };
 
 
 
