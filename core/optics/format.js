@@ -136,33 +136,33 @@ function grainSize(doc, medium, size) {
 }
 
 /**
- * 다이클라우드 기하 — 그레인 한 존이 쌓을 레이어의 반경·세기를 정한다.
+ * 다이클라우드 특성 — 그레인 한 존이 쌓을 레이어의 채널 진폭·클럼프.
  *
- * 균일 노이즈 + 단일 블러는 같은 크기의 둥근 점만 만든다. 실제 필름 입자는
- * 그렇지 않다.
+ * 균일 노이즈 + 단일 블러는 같은 크기의 둥근 점만 만든다. 실제 필름은 두 가지가
+ * 다르다.
  *
- *   1. **채널별 크기가 다르다.** 컬러 필름은 유제층이 3겹이고 청감층(맨 위)
- *      결정이 가장 크다. 그래서 청색 그레인이 가장 조대하다. R 미세 → B 조대.
- *   2. **밀도 요동이 광대역이다.** 미세한 해시 위에 큰 상관길이의 덩어리(클럼프)가
+ *   1. **채널별 노이즈 진폭이 다르다.** Vision3 500T 스캔 4장 실측 결과 채널차는
+ *      입자 **크기**가 아니라 **진폭**이었다 — 상관길이는 세 채널이 사실상 같고
+ *      (R 1.2 / G 0.8 / B 0.8 px), RMS가 R 1.23 · G 1.0 · **B 1.76**로 청색이
+ *      가장 시끄러웠다. 텅스텐 필름을 주광에서 찍어 청감층이 얇게 노광되고 반전
+ *      증폭돼 청색 노이즈가 커진 것이다. (처음엔 청색을 더 **조대**하게 만들었는데
+ *      실측이 지지하지 않았다 — 크기가 아니라 세기다.)
+ *   2. **밀도 요동이 광대역이다.** 미세 해시 위에 큰 상관길이의 덩어리(클럼프)가
  *      겹친다. 단일 주파수가 아니라 옥타브의 합이다.
  *
- * 두 가지를 실제 페인트로 재현할 수 없으니(median·threshold 디스크립터 미채록)
- * 채록된 op만으로 근사한다 — **컬러 노이즈에 채널별 블러**(층 분화)와 **큰 반경의
- * 저세기 클럼프 옥타브**(광대역 덩어리)다.
- *
- * @param {number} px      format.grainSize의 기준 입자 px
+ * @param {number} px      format.grainSize의 기준 입자 px (클럼프 반경에만 쓴다)
  * @param {object} grain   { dyeSpread, clump } 0~100
- * @returns {{ radii:{r,g,b}, clumpRadius:number, clumpScale:number }}
+ * @returns {{ amps:{r,g,b}, clumpRadius:number, clumpScale:number }}
  */
 function dyeClouds(px, grain) {
   const g = grain || {};
   const spread = clamp01((g.dyeSpread == null ? 0 : g.dyeSpread) / 100);
-  // R 0.8 · G 1.0 · B 1.35 를 spread로 항등(1.0)에서 보간. spread=0이면 채널 동일.
-  const chan = (f) => px * (1 + (f - 1) * spread);
-  const radii = { r: chan(0.8), g: chan(1.0), b: chan(1.35) };
+  // 실측 진폭비(spread 100): R 1.23 · G 1.0 · B 1.76. spread로 항등(1.0)에서 보간.
+  const amp = (f) => 1 + (f - 1) * spread;
+  const amps = { r: amp(1.23), g: 1.0, b: amp(1.76) };
 
   const clumpScale = clamp01((g.clump == null ? 0 : g.clump) / 100);
-  return { radii, clumpRadius: px * 2.6, clumpScale };
+  return { amps, clumpRadius: px * 2.6, clumpScale };
 }
 
 function clamp01(v) {

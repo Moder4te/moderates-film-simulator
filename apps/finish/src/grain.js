@@ -6,15 +6,19 @@
  *
  * 그리고 입자 자체가 균일한 둥근 점이 아니다. 두 가지를 더 재현한다(format.dyeClouds).
  *
- *   · **채널별 크기** — 컬러 필름 유제층 3겹, 청감층 결정이 가장 크다. 컬러
- *     노이즈에 채널별 블러를 걸어 청색 그레인을 조대하게 만든다.
+ *   · **채널별 진폭** — Vision3 500T 실측 4장에서 채널차는 크기가 아니라 세기였다
+ *     (청색 RMS가 녹색의 ~1.76배). 채널을 골라 각각 노이즈를 넣어 청색을 시끄럽게
+ *     한다. halation이 쓰는 채널 선택 패턴과 같다.
  *   · **클럼프 옥타브** — 미세 해시 위에 큰 상관길이의 덩어리를 겹친다. 실제
  *     그레인은 단일 주파수가 아니라 광대역 밀도 요동이다.
+ *
+ * 그리고 블러를 크게 걸면 입자가 뭉개져 안 보인다(실측 상관길이 ~1px = 크리스프).
+ * 블러 반경을 입자 px의 작은 분수로만 걸어 날카로움을 유지한다(GRAIN_BLUR).
  *
  * 구현: 50% 회색 + 노이즈 레이어를 Overlay로 올리고, Blend If(underlying)로
  * 하단 레이어의 휘도 구간을 지정한다. 마스크 채널 생성 없이 페더링까지 얻는다.
  * median·threshold 디스크립터가 미채록이라, 채록된 addNoise·gaussianBlur·
- * selectChannel만으로 근사한다(halation이 쓰는 것과 같은 채널 선택 패턴).
+ * selectChannel만으로 근사한다.
  */
 
 const ps = require("../lib/host/ps");
@@ -24,6 +28,8 @@ const format = require("../lib/core/optics/format");
 // Photoshop 채널 열거자. green은 "grain"이다(halation.js와 동일).
 const CHANNELS = [["red", "r"], ["grain", "g"], ["blue", "b"]];
 const MIN_BLUR = 0.15; // 이보다 작은 반경은 노이즈만 흐려 무의미하다.
+// 입자 px 대비 블러 반경 비율. 1:1로 걸면 뭉개진다. 작게 걸어 크리스프 유지.
+const GRAIN_BLUR = 0.4;
 
 /**
  * 강도(0~100) → Add Noise의 amount와 레이어 불투명도로 분배.
@@ -54,49 +60,46 @@ function blendRangeFor([lo, hi], feather) {
 }
 
 /**
- * 노이즈 레이어에 크기 특성(블러)을 입힌다.
+ * 노이즈 명령을 만든다.
  *
- * 컬러 모드 — 채널별 반경으로 유제층 분화를 만든다. 채널을 골라 그 채널만
- * 블러하는 것은 halation이 이미 쓰는 패턴이다. 끝에 RGB로 복원해 이후 blend·
- * range op이 합성 채널에서 동작하게 한다.
+ * 컬러 모드 — 채널을 골라 각각 노이즈를 넣는다. 채널별 진폭(청색 시끄럽게)을 주고,
+ * 동시에 채널이 독립이라 색 그레인이 된다. 끝에 RGB로 복원한다. Add Noise가 채널
+ * 선택을 존중하는 것은 halation의 채널별 블러와 같은 필터 서브시스템 동작이다.
  *
- * 모노 모드 — 채널이 동일하므로 채널별 블러가 무의미하다. 단일 블러만.
+ * 모노 모드 — 단일 노이즈.
  */
-function shapeCommands(cfg, sizing) {
+function noiseCommands(strength, cfg, sizing) {
+  const base = noiseAmountFor(strength, sizing.amountScale);
+  if (cfg.colorMode === "mono") return [ps.addNoise(base, true)];
+
+  const { amps } = format.dyeClouds(sizing.px, cfg);
   const out = [];
-  if (cfg.colorMode === "mono") {
-    if (!sizing.subPixel && sizing.px > MIN_BLUR) out.push(ps.gaussianBlur(sizing.px));
-    return out;
-  }
-  const { radii } = format.dyeClouds(sizing.px, cfg);
-  let touched = false;
   for (const [enumName, key] of CHANNELS) {
-    if (radii[key] > MIN_BLUR) {
-      out.push(ps.selectChannel(enumName), ps.gaussianBlur(radii[key]));
-      touched = true;
-    }
+    out.push(ps.selectChannel(enumName), ps.addNoise(Math.max(1, base * amps[key]), true));
   }
-  if (touched) out.push(ps.selectChannel("RGB"));
+  out.push(ps.selectChannel("RGB"));
   return out;
 }
 
 async function addZone(doc, label, strength, range, cfg, sizing, prefix) {
   if (strength <= 0) return;
 
-  const monochromatic = cfg.colorMode === "mono";
   const [bMin, bMax, wMin, wMax] = blendRangeFor(range, cfg.feather);
   const opacity = opacityFor(strength);
+  // 크리스프 유지 — 입자 px의 작은 분수만 블러. 서브픽셀이면 아예 안 건다.
+  const blurPx = sizing.subPixel ? 0 : sizing.px * GRAIN_BLUR;
 
-  // 1) 베이스 그레인 — 채널별(또는 단일) 크기.
-  await play([
+  // 1) 베이스 그레인 — 채널별 진폭(또는 단일) + 미세 블러.
+  const cmds = [
     ps.makePixelLayer(),
     ps.renameLayer(`${prefix} · Grain ${label}`),
     ps.fillLayer("gray"),
-    ps.addNoise(noiseAmountFor(strength, sizing.amountScale), monochromatic),
-    ...shapeCommands(cfg, sizing),
-    ps.setLayerBlend("overlay", opacity),
-    ps.setUnderlyingBlendRange(bMin, bMax, wMin, wMax),
-  ]);
+    ...noiseCommands(strength, cfg, sizing),
+  ];
+  if (blurPx > MIN_BLUR) cmds.push(ps.gaussianBlur(blurPx));
+  cmds.push(ps.setLayerBlend("overlay", opacity));
+  cmds.push(ps.setUnderlyingBlendRange(bMin, bMax, wMin, wMax));
+  await play(cmds);
 
   // 2) 클럼프 옥타브 — 큰 반경의 저세기 덩어리. 밀도 요동은 휘도라 모노.
   const { clumpRadius, clumpScale } = format.dyeClouds(sizing.px, cfg);
