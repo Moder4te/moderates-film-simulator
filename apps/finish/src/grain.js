@@ -8,9 +8,9 @@
  * 하단 레이어의 휘도 구간을 지정한다. 마스크 채널 생성 없이 페더링까지 얻는다.
  */
 
-const ps = require("./ps");
-const { play } = require("./ps");
-const format = require("./format");
+const ps = require("../lib/host/ps");
+const { play } = require("../lib/host/ps");
+const format = require("../lib/core/optics/format");
 
 /**
  * 강도(0~100) → Add Noise의 amount와 레이어 불투명도로 분배.
@@ -40,7 +40,7 @@ function blendRangeFor([lo, hi], feather) {
   return [blackMin, blackMax, whiteMin, whiteMax];
 }
 
-async function addZone(doc, label, strength, range, cfg, sizing) {
+async function addZone(doc, label, strength, range, cfg, sizing, prefix) {
   if (strength <= 0) return;
 
   const monochromatic = cfg.colorMode === "mono";
@@ -48,7 +48,7 @@ async function addZone(doc, label, strength, range, cfg, sizing) {
 
   const commands = [
     ps.makePixelLayer(),
-    ps.renameLayer(`FilmSim · Grain ${label}`),
+    ps.renameLayer(`${prefix} · Grain ${label}`),
     ps.fillLayer("gray"),
     ps.addNoise(noiseAmountFor(strength, sizing.amountScale), monochromatic),
   ];
@@ -65,7 +65,7 @@ async function addZone(doc, label, strength, range, cfg, sizing) {
   await play(commands);
 }
 
-async function apply(doc, grain, medium) {
+async function apply(doc, grain, medium, prefix) {
   if (!grain.enabled) return;
 
   // 입자 크기는 세 존이 공유한다 — 같은 필름의 같은 유제이므로 톤에 따라 크기가
@@ -75,9 +75,9 @@ async function apply(doc, grain, medium) {
 
   // 암부 → 중간톤 → 명부 순서로 쌓는다. 순서는 결과에 영향이 없지만
   // 레이어 패널에서 톤 순서대로 보이는 편이 읽기 쉽다.
-  await addZone(doc, "Shadow", grain.shadow, grain.shadowRange, grain, sizing);
-  await addZone(doc, "Midtone", grain.midtone, grain.midtoneRange, grain, sizing);
-  await addZone(doc, "Highlight", grain.highlight, grain.highlightRange, grain, sizing);
+  await addZone(doc, "Shadow", grain.shadow, grain.shadowRange, grain, sizing, prefix);
+  await addZone(doc, "Midtone", grain.midtone, grain.midtoneRange, grain, sizing, prefix);
+  await addZone(doc, "Highlight", grain.highlight, grain.highlightRange, grain, sizing, prefix);
 }
 
 module.exports = { apply, noiseAmountFor, blendRangeFor };

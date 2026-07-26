@@ -27,13 +27,11 @@
  * 남겨둔다.** 지우는 것은 그런 경로가 없다고 확인한 뒤에 한다.
  */
 
-const lut = require("./lut");
-const film = require("./film");
-const films = require("./films");
-const scanner = require("./scanner");
-const colorspace = require("./colorspace");
-const { storage } = require("uxp");
-const fs = storage.localFileSystem;
+const lut = require("../color/lut");
+const film = require("../color/film");
+const films = require("../color/films");
+const scanner = require("../color/scanner");
+const colorspace = require("../color/colorspace");
 
 /**
  * 내보낼 수 있는 색공간.
@@ -176,26 +174,6 @@ function build(params, opts) {
   return lut.toCube(table, size, title(params, opts), space.cubeNote);
 }
 
-/**
- * 사용자가 고른 위치에 .cube를 저장한다.
- * @returns {string|null} 저장한 파일 이름. 취소하면 null.
- */
-async function exportToFile(params, opts) {
-  // 굽기 전에 먼저 막는다. getFileForSaving은 파일을 만들어 버리므로, 대화상자
-  // 뒤에서 실패하면 0바이트 파일이 남는다.
-  if (!params.film || !params.film.enabled) {
-    throw new Error("필름 시뮬레이션이 꺼져 있습니다. 켜고 다시 시도하세요.");
-  }
-
-  const file = await fs.getFileForSaving(suggestName(params, opts), {
-    types: ["cube"],
-  });
-  if (!file) return null;
-
-  // 65격자는 27만 점이라 몇 초 걸린다. 취소 가능성을 없앤 뒤에 굽는다.
-  await file.write(build(params, opts));
-  return file.name;
-}
 
 module.exports = {
   SPACES,
@@ -205,5 +183,5 @@ module.exports = {
   suggestName,
   title,
   build,
-  exportToFile,
+
 };

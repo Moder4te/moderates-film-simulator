@@ -14,10 +14,9 @@
  */
 
 const { app, action, imaging } = require("photoshop");
-const ps = require("./ps");
-const lut = require("./lut");
+const ps = require("../lib/host/ps");
+const lut = require("../lib/core/color/lut");
 
-const LAYER_NAME = "FilmSim · Color";
 
 /**
  * 문서가 전제를 만족하는지 본다. 막지는 않고 경고만 돌려준다.
@@ -54,11 +53,12 @@ function validate(doc, params) {
  * @param {object} doc    활성 문서
  * @param {Float32Array} table  LUT (size³ × 3)
  * @param {number} size   격자 크기
+ * @param {string} prefix 레이어 이름 접두사 (파이프라인이 소유권을 표시한다)
  */
-async function applyLut(doc, table, size) {
+async function applyLut(doc, table, size, prefix) {
   // 레이어를 먼저 만든다. getPixels가 합성을 읽으므로, 빈 레이어가 위에 있어도
   // 읽는 내용은 달라지지 않는다.
-  await ps.play([ps.makePixelLayer(), ps.renameLayer(LAYER_NAME)]);
+  await ps.play([ps.makePixelLayer(), ps.renameLayer(`${prefix} · Color`)]);
   const layerId = app.activeDocument.activeLayers[0].id;
 
   const px = await imaging.getPixels({ documentID: doc.id, colorSpace: "RGB" });
@@ -91,4 +91,4 @@ async function applyLut(doc, table, size) {
   }
 }
 
-module.exports = { applyLut, validate, LAYER_NAME };
+module.exports = { applyLut, validate };

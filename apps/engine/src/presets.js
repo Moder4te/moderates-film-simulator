@@ -83,13 +83,20 @@ async function importFromFile() {
   return parsed;
 }
 
-/** 최초 실행 시 참고용 시작 프리셋을 심는다. */
+/**
+ * 최초 실행 시 참고용 시작 프리셋을 심는다.
+ *
+ * 엔진 프리셋이므로 **필름·스캐너·색 조정만** 담는다. 할레이션·그레인은 마감
+ * 플러그인의 소관이라 여기 스키마에 아예 없다.
+ */
 async function seedIfEmpty() {
   const existing = await list();
   if (existing.length > 0) return;
 
   const warm = defaultParams();
   warm.name = "Warm Portrait";
+  warm.film.id = "kodak-portra-400";
+  warm.film.scanner = "frontier";
   warm.category = "Starter";
   warm.grading.selectiveColor.reds = { c: -6, m: 3, y: 8, k: 0 };
   warm.grading.selectiveColor.yellows = { c: -4, m: 0, y: 10, k: 0 };
@@ -104,10 +111,8 @@ async function seedIfEmpty() {
   tungsten.grading.selectiveColor.blues = { c: 12, m: 2, y: -8, k: 0 };
   tungsten.grading.selectiveColor.neutrals = { c: 5, m: 0, y: -6, k: 0 };
   tungsten.grading.toe = 15;
-  tungsten.halation.strength = 70;
-  tungsten.halation.threshold = 190;
-  tungsten.halation.radius = 1.8;
-  tungsten.grain.midtone = 55;
+  tungsten.film.id = "kodak-portra-800";
+  tungsten.film.scanner = "noritsu";
 
   await save(warm);
   await save(tungsten);

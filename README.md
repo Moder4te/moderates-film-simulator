@@ -8,9 +8,26 @@
 
 기획 문서는 [SPEC.md](./SPEC.md), 설계 근거는 [v2plan.md](./v2plan.md) 참고.
 
-> **v1.5.0-beta** — 필름 엔진과 프로파일 생성은 실기 검증을 마쳤지만, 아직 필름
-> 8종에 스캐너 파라미터가 튜닝값이다. [현재 한계](#현재-한계-v14)와
-> [남은 작업](./TODO.md)을 먼저 읽을 것.
+> **v2.0.0-beta** — 플러그인이 **둘로 나뉘었다.** 색은 엔진이, 입자와 산란은
+> 마감이 담당한다. 스캐너 파라미터는 아직 튜닝값이다.
+> [현재 한계](#현재-한계-v14)와 [남은 작업](./TODO.md)을 먼저 읽을 것.
+
+## 두 개의 플러그인
+
+| | **Engine** `com.filmsim.photoshop` | **Finish** `com.filmsim.finish` |
+|---|---|---|
+| 하는 일 | 필름 · 스캐너 · 노광 · 색 조정 | 필름 포맷 · 할레이션 · 그레인 |
+| 산출 | 문서 적용 · `.cube` · Lightroom 프로파일 | 문서 적용 · 폴더 배치 |
+| 입력 | 16bit RGB (ProPhoto 권장) | **8bit JPEG이 정상 입력** |
+| 호스트 API | `imaging` (batchPlay 2줄) | `batchPlay` 전부 |
+
+같은 문서에 겹쳐 쓰는 것이 정상이다. 레이어 접두사가 `FilmSim Color` /
+`FilmSim Finish`로 갈려 서로의 결과를 지우지 않는다.
+
+**왜 나눴나.** 색은 순수 계산이고 마감은 Photoshop 액션이다. 섞여 있으면
+마감 쪽을 손보다 색이 망가질 수 있는데, 그 실수는 결과를 보기 전까지 드러나지
+않는다. 나눠 두면 마감 플러그인에 색 코드가 **아예 들어 있지 않아** 물리적으로
+불가능해진다.
 
 ## 설치 (일반 사용자 — 개발자 툴 불필요)
 
@@ -21,8 +38,11 @@
 3. `.ccx`를 더블클릭한다. Adobe 플러그인 설치 관리자(Creative Cloud와 함께 설치됨)가
    설치를 진행한다. "확인되지 않은 게시자" 경고가 나오면 설치를 허용한다(자체 서명).
 4. Photoshop을 재시작한다.
-5. `플러그인` 메뉴에 **Film Simulation**(메인)과 **Film Sim 미리보기**(별도 패널)가
-   나타난다. 미리보기 패널을 열어 메인 옆에 도킹하면 된다.
+5. `플러그인` 메뉴에 **Film Sim 엔진**·**Film Sim 미리보기**·**Film Sim 마감**이
+   나타난다. 미리보기 패널을 엔진 옆에 도킹하면 된다.
+
+두 플러그인은 독립이라 하나만 설치해도 동작한다. 색만 필요하면 엔진, 이미 현상된
+JPEG에 입자만 얹고 싶으면 마감.
 
 설치형(.ccx)은 UXP Developer Tool이 필요 없고 Photoshop 재시작 후에도 유지된다.
 
@@ -30,20 +50,23 @@
 
 1. [UXP Developer Tool](https://developer.adobe.com/photoshop/uxp/devtool/) 설치
 2. Photoshop 실행 (2023 / v24 이상)
-3. UDT에서 **Add Plugin** → 이 저장소의 `manifest.json` 선택 → **Load**
-4. 코드 수정 후 UDT **Reload**로 반영
+3. **`node tools/sync-libs.js`** — 공유 층을 각 앱의 `lib/`로 복사한다.
+   이걸 안 하면 앱이 `core`를 찾지 못해 로드에 실패한다
+4. UDT에서 **Add Plugin** → `apps/engine/manifest.json` 또는
+   `apps/finish/manifest.json` 선택 → **Load**. 둘 다 올려도 된다
+5. 코드 수정 후 UDT **Reload**. `core/`를 고쳤으면 **sync-libs를 먼저 돌린다**
 
-패키징(.ccx 생성):
+패키징(.ccx 두 개 생성):
 
 ```bash
 uxp service start          # 별도 터미널. 떠 있어야 packaging이 된다
-node tools/build-ccx.js
+node tools/build-ccx.js    # sync-libs를 자동으로 먼저 돌린다
 ```
 
-`uxp plugin package`를 저장소 루트에서 직접 돌리면 안 된다 — **manifest가 있는
-폴더를 통째로 담고 제외 옵션이 없어서 `.git`이 전부 실린다** (v1.2.0 배포판이
-실제로 그랬고 13.2MB 중 12.6MB가 `.git`이었다). `tools/build-ccx.js`가 런타임
-파일만 `build/`에 모아 거기서 패키징한다. 결과는 90KB.
+`uxp plugin package`를 앱 폴더에서 직접 돌리면 안 된다 — **manifest가 있는 폴더를
+통째로 담고 제외 옵션이 없다.** 저장소 루트에서 돌렸을 때 `.git`이 전부 실려
+13.2MB가 나온 적이 있다(v1.2.0 배포판). `tools/build-ccx.js`가 런타임 파일만
+`build/<app>/`에 모아 거기서 패키징한다. 결과는 engine 81KB / finish 26KB.
 
 ## 문서
 
@@ -58,41 +81,48 @@ node tools/build-ccx.js
 ## 파일 구조
 
 ```
-manifest.json          플러그인 매니페스트 (UXP manifest v5, 패널 2개)
-index.html             두 패널 UI(#mainPanel · #previewPanel) 마크업 + 스타일
-src/
-  main.js              부트스트랩, 멀티패널 setup, UI ↔ 모델 바인딩, 액션 배선
-  params.js            파라미터 스키마, 기본값, 구버전 프리셋 마이그레이션
-  ps.js                batchPlay 래퍼 및 저수준 액션 헬퍼
-
-  ── 필름 엔진 (v1.4) ──
-  curve.js             PCHIP 단조 보간 + PAVA 등장회귀 (TDS 곡선 이상치 방어)
-  films.js             필름 정의 8종 — 제조사 TDS에서 추출한 실제 특성곡선
-  film.js              센시토메트리 → 3D LUT (농도곡선 → 인화 → 인코딩)
-  scanner.js           스캐너·인화 단계 (레벨 · 3점 틴트 · 피벗 S커브 · 채도)
-  lut.js               사면체 보간, .cube 직렬화
-  colorspace.js        ProPhoto/AdobeRGB ↔ sRGB, 전달함수
-  format.js            필름 포맷·해상도 → 입자 크기 물리 계산 (그레인·할레이션 공용)
-  apply.js             getPixels → LUT → putPixels 적용 경로
-  cubeexport.js        .cube 내보내기 (33³/65³, ProPhoto γ1.8 · Camera Raw)
-  xmpcodec.js          md5 · zlib(stored) · Adobe Base85 — 외부 의존성 없음
-  xmpexport.js         Lightroom/ACR Look 프로파일(.xmp) 직접 생성
-
-  ── 레거시 그레이딩 (JPEG 후처리용) ──
-  grading.js           CMYK 그레이딩 (Curves + Crosstalk + Selective Color)
-  halation.js          할레이션 (하이라이트 추출 → 채널별 블러 → Screen)
-  grain.js             명암별 차등 그레인 (노이즈 + Blend If 존 마스킹)
-  simulate.js          그레이딩 JS 근사 시뮬레이션 (팔레트·컬러휠 미리보기용)
-
-  ── UI · 입출력 ──
-  colorwheel.js        컬러휠 색 이동 시각화 + 마커 편집 (DOM, translate 전용)
-  photoanalysis.js     사진 색역 분석 → 컬러휠 대표색 추출 (v1.2)
-  cslider.js           커스텀 슬라이더 (div + PointerEvent)
-  preview.js           미리보기 패널 렌더 (imaging → LUT 픽셀 → img)
-  pipeline.js          처리 순서 고정 및 히스토리 병합
-  presets.js           프리셋 저장/불러오기/가져오기/내보내기
-  batch.js             폴더 배치 적용
+core/                  순수 계산. photoshop·uxp·DOM 접근 금지 (검사로 강제)
+  color/               curve films film scanner lut colorspace simulate
+  optics/              format          필름 포맷 → 입자 크기 물리
+  io/                  cube xmp xmpcodec   직렬화만, 파일 쓰기는 앱이 한다
+host/                  UXP 경계. batchPlay 디스크립터는 여기서만
+  ps.js
+shared/ui/             cslider
+apps/
+  engine/              필름 엔진 플러그인
+    manifest.json  index.html
+    src/               main params pipeline apply preview colorwheel
+                       photoanalysis presets
+    lib/               ← sync-libs.js가 core/color·core/io·host·shared 복사
+  finish/              마감 플러그인
+    manifest.json  index.html
+    src/               main params pipeline halation grain batch presets
+    lib/               ← core/optics·host·shared 만. 색이 없다
+tools/
+  check.js             전체 검사 (문법·경계·로드·정합성)
+  sync-libs.js         공유 층을 각 앱 lib/로 복사
+  build-ccx.js         .ccx 두 개 패키징
+  extract_tds_curves.py
 ```
+
+`apps/*/lib/`는 산출물이다. `core/`가 원본이고, 거기를 직접 고치면 다음 sync에
+지워진다.
+
+## 개발 검사
+
+코드를 고쳤으면 실기에 올리기 전에 돌린다. 3초면 끝나고, 실기 진단은 오류
+메시지가 엉뚱해서 한 번에 30분씩 든다.
+
+```bash
+node tools/check.js
+```
+
+| 검사 | 보는 것 |
+|---|---|
+| 문법·BOM | 파싱되는가. manifest BOM은 플러그인을 아예 못 올린다 |
+| 경계 | core 순수 / batchPlay 격리 / 마감 앱에 색 없음 / 레이어 접두사 분리 |
+| 로드 | 두 앱이 예외 없이 뜨는가. 없는 id를 참조하지 않는가 |
+| 정합성 | 네 산출 경로(적용·`.cube`·`.xmp`·미리보기)가 같은 색을 내는가 |
 
 ## 핵심 구현 결정
 

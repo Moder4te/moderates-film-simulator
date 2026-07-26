@@ -126,9 +126,31 @@ function activeDocument() {
   return doc;
 }
 
+/**
+ * 활성 문서의 색 프로파일 이름. 읽지 못하면 null.
+ *
+ * 채록 — Photoshop에서 문서를 하나 열고 알림 리스너로 `get` 디스크립터를 덤프해
+ * 확인했다(2026-07-25). 반환 객체의 `profile` 필드가 프로파일 이름 문자열이다.
+ * 프로파일이 없는 문서에서는 필드 자체가 없어 undefined가 나오므로 null로 정규화한다.
+ *
+ * 표시용 색 변환기를 고르는 데 쓴다 — UXP는 `<img>`를 sRGB로 간주해 그리므로
+ * ProPhoto 문서를 그대로 넘기면 어둡게 보인다(UXP-NOTES 5.2).
+ */
+async function documentProfile() {
+  try {
+    const r = await play([
+      { _obj: "get", _target: [{ _ref: "document", _enum: "ordinal", _value: "targetEnum" }] },
+    ]);
+    return (r[0] && r[0].profile) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 module.exports = {
   play,
   modal,
+  documentProfile,
   TARGET_LAYER,
   renameLayer,
   setLayerBlend,

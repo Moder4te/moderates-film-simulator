@@ -15,7 +15,7 @@
  * 좌표계: 각도=색조(0°=우측, 반시계), 반경=채도. 중심 기준 translate 오프셋.
  */
 
-const simulate = require("./simulate");
+const simulate = require("../lib/core/color/simulate");
 
 function rgbToHsv(r, g, b) {
   r /= 255;

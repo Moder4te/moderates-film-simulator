@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      /* UXP 패널은 html/body에 명시적 높이가 없으면 세로 스크롤이 생기지 않는다.
+         100% 높이 + overflow-y:auto 조합으로 콘텐츠가 넘칠 때 스크롤되게 한다. */
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        padding: 10px 10px 24px;
+        font-size: 11px;
+        line-height: 1.4;
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+
+      /* 테마 중립: 반투명 회색으로 다크/라이트 PS 테마 양쪽에서 동작 */
+      .card {
+        background: rgba(128, 128, 128, 0.08);
+        border: 1px solid rgba(128, 128, 128, 0.18);
+        border-radius: 8px;
+        padding: 10px 11px;
+        margin-bottom: 10px;
+      }
+
+      .card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+      .card-title {
+        font-weight: 700;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        opacity: 0.72;
+      }
+      .sub-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 10px 0 4px;
+        padding-top: 8px;
+        border-top: 1px solid rgba(128, 128, 128, 0.14);
+      }
+      .sub-title {
+        font-weight: 600;
+        font-size: 9.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        opacity: 0.6;
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .row > sp-slider,
+      .row > sp-picker {
+        flex: 1;
+        min-width: 0;
+      }
+      .btn-row {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .btn-row > sp-button {
+        flex: 1;
+        min-width: 84px;
+      }
+
+      sp-slider {
+        width: 100%;
+      }
+      sp-picker,
+      sp-textfield {
+        width: 100%;
+      }
+
+      /* 컬러휠(DOM). canvas는 UXP 드래그 리페인트 때 검게 클리어되어 실시간
+         갱신 중 블랙아웃이 났다. DOM 요소는 클리어되지 않아 실시간에 견딘다. */
+      .wheel-wrap {
+        margin: 0 auto;
+      }
+      /* 미리보기 패널. pv-frame이 패널을 꽉 채워 고정 크기를 유지하므로,
+         img src가 교체되는 순간에도 레이아웃이 줄었다 늘었다 하지 않는다. */
+      #previewPanel {
+        height: 100%;
+      }
+      .pv-frame {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        min-height: 200px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.18);
+        overflow: hidden;
+      }
+      .pv-image {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+        display: block;
+      }
+      .pv-empty {
+        position: absolute;
+        font-size: 11px;
+        opacity: 0.5;
+      }
+      .wheel {
+        position: relative;
+        width: 240px;
+        height: 240px;
+        margin: 0 auto;
+        border-radius: 50%;
+        background: rgba(22, 22, 24, 0.9);
+        overflow: hidden;
+      }
+      .wheel-tabs {
+        display: flex;
+        gap: 3px;
+      }
+      .wtab {
+        padding: 2px 8px;
+        font-size: 10px;
+        border-radius: 4px;
+        background: rgba(128, 128, 128, 0.15);
+        cursor: pointer;
+        opacity: 0.65;
+        user-select: none;
+      }
+      .wtab.active {
+        background: rgba(140, 160, 225, 0.38);
+        opacity: 1;
+        font-weight: 600;
+      }
+      .wheel-achroma {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        padding: 8px 0;
+      }
+      .mini-col {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+      }
+      .mini-wheel {
+        position: relative;
+        width: 76px;
+        height: 76px;
+        border-radius: 50%;
+        background: rgba(22, 22, 24, 0.9);
+        overflow: hidden;
+      }
+      .mini-label {
+        font-size: 9.5px;
+        opacity: 0.7;
+      }
+
+      /* 색역 선택 칩 (sp-picker 대체) */
+      .range-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-bottom: 8px;
+      }
+      .chip-btn {
+        padding: 3px 8px;
+        font-size: 10px;
+        border-radius: 4px;
+        background: rgba(128, 128, 128, 0.15);
+        cursor: pointer;
+        opacity: 0.65;
+        user-select: none;
+      }
+      .chip-btn.active {
+        background: rgba(140, 160, 225, 0.38);
+        opacity: 1;
+        font-weight: 600;
+      }
+
+      .film-note {
+        margin-top: 6px;
+        font-size: 9px;
+        line-height: 1.5;
+        opacity: 0.6;
+      }
+
+      /* 커스텀 슬라이더 (div + pointer). native sp-slider 대체. */
+      .cs {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 7px 0;
+      }
+      .cs-label {
+        flex: 0 0 auto;
+        min-width: 68px;
+        font-size: 11px;
+        opacity: 0.85;
+      }
+      .cs-track {
+        flex: 1;
+        height: 14px; /* 히트 영역. 시각 바는 ::before로 얇게 */
+        position: relative;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+      }
+      .cs-track::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: rgba(128, 128, 128, 0.3);
+        border-radius: 2px;
+      }
+      .cs-fill {
+        position: absolute;
+        left: 0;
+        height: 4px;
+        background: rgba(140, 160, 225, 0.95);
+        border-radius: 2px;
+        pointer-events: none;
+      }
+      .cs-thumb {
+        position: absolute;
+        width: 12px;
+        height: 12px;
+        margin-left: -6px;
+        border-radius: 50%;
+        background: #dcdcdc;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+        pointer-events: none;
+      }
+      .cs-val {
+        flex: 0 0 auto;
+        min-width: 30px;
+        text-align: right;
+        font-size: 10.5px;
+        opacity: 0.7;
+      }
+
+      /* 색 팔레트 미리보기.
+         UXP 레이아웃 엔진은 CSS Grid와 aspect-ratio를 제대로 처리하지 못해
+         (컨테이너가 0x0으로 접힌다) flexbox + 고정 높이로 구성한다. */
+      .palette {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .swatch {
+        flex: 1 1 17%;
+        min-width: 28px;
+        height: 34px;
+        border-radius: 5px;
+        border: 1px solid rgba(128, 128, 128, 0.25);
+        position: relative;
+        overflow: hidden;
+      }
+      /* 대각 분할: 좌상 원본, 우하 적용색. 경계에 얇은 구분선 */
+      .swatch::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          118deg,
+          transparent 0 47%,
+          rgba(0, 0, 0, 0.28) 47% 48%,
+          rgba(255, 255, 255, 0.18) 52% 53%,
+          transparent 53%
+        );
+        pointer-events: none;
+      }
+      .palette-note {
+        margin-top: 7px;
+        font-size: 9.5px;
+        opacity: 0.5;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .chip {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border-radius: 2px;
+        border: 1px solid rgba(128, 128, 128, 0.35);
+        vertical-align: middle;
+      }
+
+      #status {
+        min-height: 15px;
+        margin-top: 8px;
+        font-size: 10.5px;
+        opacity: 0.7;
+        word-break: break-word;
+      }
+      #status.error {
+        color: #ec5b62;
+        opacity: 1;
+      }
+      #status.working {
+        opacity: 0.9;
+      }
+
+      /* 실행 버튼 카드는 조금 더 붙어있게 */
+      .exec .btn-row + .btn-row {
+        margin-top: 6px;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- 메인 패널 (filmsim.main) -->
+    <div id="mainPanel">
+    <!-- 프리셋 -->
+    <div class="card">
+      <div class="card-head"><span class="card-title">프리셋</span></div>
+      <sp-picker id="presetPicker" size="s" placeholder="프리셋 선택">
+        <sp-menu id="presetMenu" slot="options"></sp-menu>
+      </sp-picker>
+      <div style="height: 6px"></div>
+      <sp-textfield id="presetName" size="s" placeholder="프리셋 이름"></sp-textfield>
+      <div style="height: 6px"></div>
+      <div class="btn-row">
+        <sp-button id="btnSavePreset" size="s" variant="secondary">저장</sp-button>
+        <sp-button id="btnDeletePreset" size="s" variant="secondary">삭제</sp-button>
+      </div>
+      <div style="height: 6px"></div>
+      <div class="btn-row">
+        <sp-button id="btnImport" size="s" variant="secondary">가져오기</sp-button>
+        <sp-button id="btnExport" size="s" variant="secondary">내보내기</sp-button>
+      </div>
+    </div>
+
+    <!-- 매체 (포맷·해상도) — 그레인과 할레이션이 함께 쓴다 -->
+    <div class="card">
+      <div class="card-head"><span class="card-title">매체</span></div>
+      <div class="sub-head"><span class="sub-title">필름 포맷</span></div>
+      <div id="formatChips" class="btn-row"></div>
+      <div style="height: 6px"></div>
+      <div class="sub-head"><span class="sub-title">입자 크기 기준</span></div>
+      <div id="referenceChips" class="btn-row"></div>
+      <div id="mediumNote" class="film-note"></div>
+    </div>
+
+    <!-- 할레이션 -->
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">할레이션</span>
+        <sp-checkbox id="halationEnabled" size="s" checked></sp-checkbox>
+      </div>
+      <div class="cs" data-id="halThreshold" data-min="128" data-max="255" data-step="1" data-value="205">
+        <div class="cs-label">임계값</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">205</div>
+      </div>
+      <div class="cs" data-id="halStrength" data-min="0" data-max="100" data-step="1" data-value="45">
+        <div class="cs-label">강도</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">45</div>
+      </div>
+      <div class="cs" data-id="halRadius" data-min="0" data-max="6" data-step="0.1" data-value="1.2">
+        <div class="cs-label">반경 %</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">1.2</div>
+      </div>
+      <div class="cs" data-id="halHue" data-min="0" data-max="60" data-step="1" data-value="18">
+        <div class="cs-label">색조</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">18</div>
+      </div>
+      <div class="cs" data-id="halSat" data-min="0" data-max="100" data-step="1" data-value="65">
+        <div class="cs-label">채도</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">65</div>
+      </div>
+    </div>
+
+    <!-- 그레인 -->
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">그레인</span>
+        <sp-checkbox id="grainEnabled" size="s" checked></sp-checkbox>
+      </div>
+      <div class="cs" data-id="grainShadow" data-min="0" data-max="100" data-step="1" data-value="25">
+        <div class="cs-label">암부</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">25</div>
+      </div>
+      <div class="cs" data-id="grainMid" data-min="0" data-max="100" data-step="1" data-value="45">
+        <div class="cs-label">중간톤</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">45</div>
+      </div>
+      <div class="cs" data-id="grainHigh" data-min="0" data-max="100" data-step="1" data-value="15">
+        <div class="cs-label">명부</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">15</div>
+      </div>
+      <div class="cs" data-id="grainSize" data-min="0" data-max="100" data-step="1" data-value="20">
+        <div class="cs-label">입자 크기</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">20</div>
+      </div>
+      <div class="cs" data-id="grainFeather" data-min="0" data-max="120" data-step="1" data-value="40">
+        <div class="cs-label">존 페더</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">40</div>
+      </div>
+      <div style="height: 4px"></div>
+      <sp-checkbox id="grainColor" size="s">채널별 컬러 그레인</sp-checkbox>
+    </div>
+
+    <!-- 실행 -->
+    <div class="card exec">
+      <div class="card-head"><span class="card-title">실행</span></div>
+      <div class="btn-row">
+        <sp-button id="btnApply" size="s" variant="cta">현재 문서에 적용</sp-button>
+      </div>
+
+      <div class="sub-head"><span class="sub-title">배치</span></div>
+      <sp-checkbox id="batchRecursive" size="s">하위 폴더 포함</sp-checkbox>
+      <div style="height: 6px"></div>
+      <div class="row">
+        <sp-picker id="batchFormat" size="s" value="jpg">
+          <sp-menu slot="options">
+            <sp-menu-item value="jpg">JPEG</sp-menu-item>
+            <sp-menu-item value="png">PNG</sp-menu-item>
+            <sp-menu-item value="psd">PSD</sp-menu-item>
+          </sp-menu>
+        </sp-picker>
+        <sp-textfield id="batchSuffix" size="s" placeholder="접미사" value="_film"></sp-textfield>
+      </div>
+      <div style="height: 6px"></div>
+      <div class="btn-row">
+        <sp-button id="btnBatch" size="s" variant="secondary">폴더 배치 적용</sp-button>
+      </div>
+
+      <div id="status"></div>
+    </div>
+
+    </div><!-- /mainPanel -->
+
+    <script src="./src/main.js"></script>
+  </body>
+</html>

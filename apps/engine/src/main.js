@@ -13,22 +13,20 @@ const {
 } = require("./src/params");
 const pipeline = require("./src/pipeline");
 const presets = require("./src/presets");
-const batch = require("./src/batch");
 const preview = require("./src/preview");
-const simulate = require("./src/simulate");
+const simulate = require("./lib/core/color/simulate");
 const colorwheel = require("./src/colorwheel");
-const cslider = require("./src/cslider");
+const cslider = require("./lib/shared/ui/cslider");
 const photoanalysis = require("./src/photoanalysis");
-const films = require("./src/films");
-const scanner = require("./src/scanner");
-const film = require("./src/film");
-const lut = require("./src/lut");
-const colorspace = require("./src/colorspace");
-const cubeexport = require("./src/cubeexport");
-const format = require("./src/format");
-const xmpexport = require("./src/xmpexport");
+const films = require("./lib/core/color/films");
+const scanner = require("./lib/core/color/scanner");
+const film = require("./lib/core/color/film");
+const lut = require("./lib/core/color/lut");
+const colorspace = require("./lib/core/color/colorspace");
+const cubeexport = require("./lib/core/io/cube");
+const xmpexport = require("./lib/core/io/xmp");
 const apply = require("./src/apply");
-const ps = require("./src/ps");
+const ps = require("./lib/host/ps");
 const { entrypoints } = require("uxp");
 
 // 두 패널(메인/미리보기)을 등록한다. 같은 JS 컨텍스트를 공유하므로 main.js가
@@ -140,7 +138,6 @@ function onParamsChanged() {
   schedulePreviewRefresh();
   scheduleRender();
   syncCubeUI(); // 제안 파일명이 필름·스캐너·노광을 담고 있다
-  syncMediumUI(); // 입자 크기 표시가 grain.size에 따라 바뀐다
   syncFilmUI(); // 필름 on/off가 카드 설명(색 모드 ↔ 마감 모드)을 바꾼다
 }
 
@@ -449,7 +446,7 @@ function setStatus(message, isError = false) {
 
 function setBusy(value) {
   busy = value;
-  for (const id of ["btnApply", "btnBatch", "btnSavePreset", "btnDeletePreset"]) {
+  for (const id of ["btnApply", "btnSavePreset", "btnDeletePreset"]) {
     $(id).disabled = value;
   }
 }
@@ -566,80 +563,7 @@ function syncFilmUI() {
   }
 }
 
-/** 매체(포맷·기준 해상도) 칩. 필름 칩과 같은 이유로 sp-picker를 쓰지 않는다. */
-function buildMediumChips() {
-  const fHost = $("formatChips");
-  if (fHost) {
-    fHost.textContent = "";
-    for (const f of format.all()) {
-      const chip = document.createElement("div");
-      chip.className = "chip-btn";
-      chip.textContent = f.displayName;
-      chip.dataset.formatId = f.id;
-      chip.addEventListener("click", () => {
-        params.medium.format = f.id;
-        syncMediumUI();
-      });
-      fHost.appendChild(chip);
-    }
-  }
-  const rHost = $("referenceChips");
-  if (rHost) {
-    rHost.textContent = "";
-    for (const r of format.references()) {
-      const chip = document.createElement("div");
-      chip.className = "chip-btn";
-      chip.textContent = r.displayName;
-      chip.dataset.referenceId = r.id;
-      chip.addEventListener("click", () => {
-        params.medium.reference = r.id;
-        syncMediumUI();
-      });
-      rHost.appendChild(chip);
-    }
-  }
-}
 
-/**
- * 매체 카드 갱신. 선택 상태와 함께 **실제 입자 크기를 픽셀로 보여준다** —
- * 포맷을 바꿨을 때 무엇이 달라지는지가 숫자로 보이지 않으면 고를 근거가 없다.
- */
-function syncMediumUI() {
-  // 구버전 프리셋을 직접 밀어 넣은 경우를 대비한다. migrate가 채우지만
-  // 이 함수는 UI 경로 어디서든 불릴 수 있다.
-  if (!params.medium) params.medium = { format: "35mm", reference: "document" };
-  const m = params.medium;
-  for (const [id, key] of [["formatChips", "formatId"], ["referenceChips", "referenceId"]]) {
-    const host = $(id);
-    if (!host) continue;
-    const want = key === "formatId" ? m.format : m.reference;
-    for (const chip of host.querySelectorAll(".chip-btn")) {
-      chip.classList.toggle("active", chip.dataset[key] === want);
-    }
-  }
-
-  const note = $("mediumNote");
-  if (note) {
-    const parts = [format.byId(m.format).note];
-    // 문서가 있어야 픽셀 환산이 가능하다. 없으면 설명만 보여준다.
-    let doc = null;
-    try {
-      doc = require("photoshop").app.activeDocument;
-    } catch (e) {
-      doc = null;
-    }
-    if (doc) {
-      const s = format.grainSize(doc, m.format, params.grain.size, m.reference);
-      const px = s.px < 1 ? s.px.toFixed(2) : s.px.toFixed(1);
-      parts.push(
-        `입자 ${s.microns.toFixed(0)}µm → ${px}px` +
-          (s.subPixel ? " (1px 미만 — 블러 대신 강도로 환산)" : "")
-      );
-      parts.push(format.printSize(doc));
-    }
-    note.textContent = parts.join("  /  ");
-  }
-}
 
 /**
  * .cube 내보내기 설정.
@@ -739,13 +663,6 @@ function syncUI() {
   setSlider("shoulder", params.grading.shoulder);
   syncSelectiveColorSliders();
 
-  const h = params.halation;
-  $("halationEnabled").checked = h.enabled;
-  setSlider("halThreshold", h.threshold);
-  setSlider("halStrength", h.strength);
-  setSlider("halRadius", h.radius);
-  setSlider("halHue", h.tintHue);
-  setSlider("halSat", h.tintSaturation);
 
   const ct = params.grading.crosstalk;
   $("crosstalkEnabled").checked = ct.enabled;
@@ -753,16 +670,7 @@ function syncUI() {
   ct.amount = crosstalkAmountFromMatrix(ct.matrix);
   setSlider("crosstalkAmount", ct.amount);
 
-  const g = params.grain;
-  $("grainEnabled").checked = g.enabled;
-  setSlider("grainShadow", g.shadow);
-  setSlider("grainMid", g.midtone);
-  setSlider("grainHigh", g.highlight);
-  setSlider("grainSize", g.size);
-  setSlider("grainFeather", g.feather);
-  $("grainColor").checked = g.colorMode === "rgb";
 
-  syncMediumUI();
 }
 
 /** 커스텀 슬라이더 값을 프로그램적으로 설정한다 (통지 없음). */
@@ -863,41 +771,6 @@ async function onApply() {
   }
 }
 
-async function onBatch() {
-  if (busy) return;
-  setBusy(true);
-  setStatus("원본 폴더를 선택하세요…");
-  try {
-    const result = await batch.runBatch(
-      params,
-      {
-        recursive: $("batchRecursive").checked,
-        format: $("batchFormat").value || "jpg",
-        quality: 10,
-        suffix: $("batchSuffix").value || "",
-      },
-      (done, total, name) => {
-        setStatus(name ? `${done + 1}/${total} · ${name}` : `${total}장 처리 완료`);
-      }
-    );
-
-    if (!result) {
-      setStatus("취소됨");
-    } else if (result.failed.length > 0) {
-      setStatus(
-        `${result.succeeded}/${result.total} 성공, ${result.failed.length}장 실패 ` +
-          `(${result.failed.map((f) => f.file).join(", ")})`,
-        true
-      );
-    } else {
-      setStatus(`${result.succeeded}장 모두 완료`);
-    }
-  } catch (e) {
-    setStatus(e.message || String(e), true);
-  } finally {
-    setBusy(false);
-  }
-}
 
 async function onSavePreset() {
   const name = ($("presetName").value || "").trim();
@@ -972,22 +845,7 @@ function wire() {
     });
   }
 
-  bindSlider("halThreshold", "halation.threshold");
-  bindSlider("halStrength", "halation.strength");
-  bindSlider("halRadius", "halation.radius");
-  bindSlider("halHue", "halation.tintHue");
-  bindSlider("halSat", "halation.tintSaturation");
-  bindCheckbox("halationEnabled", "halation.enabled");
 
-  bindSlider("grainShadow", "grain.shadow");
-  bindSlider("grainMid", "grain.midtone");
-  bindSlider("grainHigh", "grain.highlight");
-  bindSlider("grainSize", "grain.size");
-  bindSlider("grainFeather", "grain.feather");
-  bindCheckbox("grainEnabled", "grain.enabled");
-  $("grainColor").addEventListener("change", () => {
-    params.grain.colorMode = $("grainColor").checked ? "rgb" : "mono";
-  });
 
   $("presetPicker").addEventListener("change", (e) => {
     loadPresetByIndex(Number(e.target.value));
@@ -1074,7 +932,6 @@ function wire() {
   bindSlider("filmExposure", "film.exposure");
 
   $("btnApply").addEventListener("click", onApply);
-  $("btnBatch").addEventListener("click", onBatch);
 
 }
 
@@ -1083,10 +940,8 @@ async function init() {
   buildFilmChips(); // syncUI가 칩 상태를 갱신하므로 먼저 만들어 둔다
   buildScannerChips();
   buildCubeChips();
-  buildMediumChips();
   syncUI();
   syncCubeUI();
-  syncMediumUI();
   wheelCtrl = colorwheel.build($("wheel"), {
     onMarkerDrag: handleMarkerDrag,
     onMarkerReset: handleMarkerReset,

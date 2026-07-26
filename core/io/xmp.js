@@ -24,12 +24,10 @@
  *   직접 생성:   엔진 → 32³                        (보간 0회)
  */
 
-const film = require("./film");
-const films = require("./films");
-const scanner = require("./scanner");
+const film = require("../color/film");
+const films = require("../color/films");
+const scanner = require("../color/scanner");
 const codec = require("./xmpcodec");
-const { storage } = require("uxp");
-const fs = storage.localFileSystem;
 
 /**
  * ACR이 프로파일 안에 담는 격자 크기. 더 크게 줘도 32로 줄어든다.
@@ -302,47 +300,7 @@ function defaultSet(params) {
   return out;
 }
 
-/** 현재 설정 하나만 저장. @returns {string|null} 파일 이름, 취소 시 null */
-async function exportOne(params, opts) {
-  if (!params.film || !params.film.enabled) {
-    throw new Error("필름 시뮬레이션이 꺼져 있습니다. 켜고 다시 시도하세요.");
-  }
-  const file = await fs.getFileForSaving(fileNameFor(params), { types: ["xmp"] });
-  if (!file) return null;
-  await file.write(buildXmp(params, opts));
-  return file.name;
-}
 
-/**
- * 세트를 폴더에 한 번에 쓴다.
- * @param {object[]} list  각각 완결된 params
- * @param {function} [onProgress]  (done, total, name) => void
- * @returns {{folder:string, written:string[], failed:Array}|null}
- */
-async function exportSet(list, opts, onProgress) {
-  const folder = await fs.getFolder();
-  if (!folder) return null;
-
-  const written = [];
-  const failed = [];
-  for (let i = 0; i < list.length; i++) {
-    const p = list[i];
-    const fname = fileNameFor(p);
-    if (onProgress) onProgress(i, list.length, fname);
-    try {
-      const entry = await folder.createFile(fname, { overwrite: true });
-      await entry.write(buildXmp(p, opts));
-      written.push(fname);
-    } catch (e) {
-      failed.push({ name: fname, error: (e && e.message) || String(e) });
-      // 첫 실패가 환경 문제(권한·API)면 나머지 15개도 같은 이유로 실패한다.
-      // 같은 에러를 16번 쌓는 대신 즉시 멈춰서 원인을 보여준다.
-      if (i === 0) break;
-    }
-  }
-  if (onProgress) onProgress(list.length, list.length, "");
-  return { folder: folder.nativePath, written, failed };
-}
 
 module.exports = {
   LUT_SIZE,
@@ -353,6 +311,6 @@ module.exports = {
   profileName,
   fileNameFor,
   defaultSet,
-  exportOne,
-  exportSet,
+
+
 };

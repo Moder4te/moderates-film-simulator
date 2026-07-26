@@ -16,12 +16,13 @@
  * 근사가 부정확하므로 미리보기에서 제외한다. 실제 결과는 [적용]으로 확인한다.
  */
 
-const { app, imaging, core, action } = require("photoshop");
-const simulate = require("./simulate");
-const lut = require("./lut");
-const film = require("./film");
-const films = require("./films");
-const colorspace = require("./colorspace");
+const { app, imaging, core } = require("photoshop");
+const simulate = require("../lib/core/color/simulate");
+const lut = require("../lib/core/color/lut");
+const film = require("../lib/core/color/film");
+const films = require("../lib/core/color/films");
+const colorspace = require("../lib/core/color/colorspace");
+const ps = require("../lib/host/ps");
 
 const PV_WIDTH = 300; // 썸네일 긴 축(가로) px
 let busy = false;
@@ -98,18 +99,10 @@ function renderPixels(data, comps, pixelCount, params, table, size, toDisplay) {
 
 /**
  * 문서의 색 프로파일 이름. 표시용 변환기를 고르는 데 쓴다.
- * 읽지 못하면 null — 그 경우 변환 없이 그대로 보여준다.
+ * 디스크립터는 host/ps.js가 소유한다 — batchPlay 호출을 한곳에 모아 둔다.
  */
 async function documentProfile() {
-  try {
-    const r = await action.batchPlay(
-      [{ _obj: "get", _target: [{ _ref: "document", _enum: "ordinal", _value: "targetEnum" }] }],
-      {}
-    );
-    return r[0] ? r[0].profile : null;
-  } catch (e) {
-    return null;
-  }
+  return ps.documentProfile();
 }
 
 async function renderOnce(params) {

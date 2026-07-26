@@ -1,0 +1,140 @@
+/**
+ * 필름 엔진 파라미터. 프리셋 JSON의 스키마이자 UI 상태의 단일 소스.
+ *
+ * **색만 다룬다.** 할레이션·그레인·포맷은 마감 플러그인(apps/finish)의 소관이고
+ * 이 스키마에 없다.
+ */
+
+const SELECTIVE_COLOR_RANGES = [
+  "reds",
+  "yellows",
+  "greens",
+  "cyans",
+  "blues",
+  "magentas",
+  "whites",
+  "neutrals",
+  "blacks",
+];
+
+function emptyCMYK() {
+  return { c: 0, m: 0, y: 0, k: 0 };
+}
+
+function defaultParams() {
+  const selectiveColor = {};
+  for (const range of SELECTIVE_COLOR_RANGES) {
+    selectiveColor[range] = emptyCMYK();
+  }
+
+  return {
+    version: "2.0",
+    kind: "engine",
+    name: "Untitled",
+    category: "",
+    tags: [],
+
+    film: {
+      enabled: true,
+      id: "kodak-portra-400",
+      exposure: 0, // 스톱. 필름 정의의 exposureRange 안이어야 한다.
+      scanner: "none", // "none" | "frontier" | "noritsu"
+      lutSize: 33, // 33 = 일반, 65 = 정밀
+    },
+
+    /**
+     * 사용자 색 조정. 필름 룩 위에 얹힌다.
+     *
+     * v1.5까지는 이것을 **두 가지로 구현**했다 — 필름을 켜면 JS 근사를 LUT에 굽고,
+     * 끄면 Photoshop 조정 레이어(grading.js)를 올렸다. 같은 슬라이더 값이 모드에
+     * 따라 다른 결과를 냈다. v2.0에서 조정 레이어 경로를 버리고 **JS 하나로
+     * 통일**했다. 화면·`.cube`·`.xmp`·적용이 전부 같은 수를 낸다.
+     */
+    grading: {
+      enabled: true,
+      // "relative"는 기존 염료 농도에 비례해 가감, "absolute"는 절대량 가감.
+      method: "relative",
+      selectiveColor,
+      // 채널별 게인. 1.0이 중립.
+      channelGain: { r: 1.0, g: 1.0, b: 1.0 },
+      // 특성곡선의 발끝/어깨. 0~100, 클수록 암부/명부가 눌린다.
+      toe: 0,
+      shoulder: 0,
+
+      // 크로스토크 매트릭스 (필름 유제층 간 색 유출 근사).
+      // 행 = 출력 채널(R,G,B), 열 = 소스 채널. 단위 %. 항등이 중립.
+      crosstalk: {
+        enabled: false,
+        amount: 0,
+        matrix: [
+          [100, 0, 0],
+          [0, 100, 0],
+          [0, 0, 100],
+        ],
+      },
+    },
+  };
+}
+
+/**
+ * 저장된 프리셋을 현재 스키마로 승격.
+ *
+ * v1.x 통합 프리셋에는 grain·halation·medium이 섞여 있다. **버리지 않고 그대로
+ * 실어 둔다** — 같은 파일을 마감 플러그인에서 열면 그쪽이 자기 부분을 읽는다.
+ * 한 파일을 두 플러그인이 각자 필요한 만큼만 읽는 구조라 사용자가 프리셋을
+ * 쪼갤 필요가 없다.
+ */
+function migrate(raw) {
+  const base = defaultParams();
+  if (!raw || typeof raw !== "object") return base;
+
+  const g = raw.grading || {};
+  return {
+    ...base,
+    ...raw,
+    kind: "engine",
+    film: { ...base.film, ...(raw.film || {}) },
+    grading: {
+      ...base.grading,
+      ...g,
+      selectiveColor: { ...base.grading.selectiveColor, ...(g.selectiveColor || {}) },
+      channelGain: { ...base.grading.channelGain, ...(g.channelGain || {}) },
+      crosstalk: { ...base.grading.crosstalk, ...(g.crosstalk || {}) },
+    },
+  };
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * 대칭 크로스토크 강도(%)로 3x3 매트릭스를 생성한다.
+ * 각 출력 채널이 이웃 두 채널로 amount%씩 유출되고, 대각선은 100 - 2*amount로
+ * 보정해 전체 밝기를 유지한다.
+ */
+function crosstalkMatrixFromAmount(amount) {
+  const a = clamp(amount, 0, 40);
+  const d = 100 - 2 * a;
+  return [
+    [d, a, a],
+    [a, d, a],
+    [a, a, d],
+  ];
+}
+
+/** 매트릭스에서 대표 대칭 강도를 역산한다 (off-diagonal 6개 평균). */
+function crosstalkAmountFromMatrix(m) {
+  if (!Array.isArray(m) || m.length !== 3) return 0;
+  const off = m[0][1] + m[0][2] + m[1][0] + m[1][2] + m[2][0] + m[2][1];
+  return Math.round((off / 6) * 10) / 10;
+}
+
+module.exports = {
+  defaultParams,
+  migrate,
+  clamp,
+  SELECTIVE_COLOR_RANGES,
+  crosstalkMatrixFromAmount,
+  crosstalkAmountFromMatrix,
+};
