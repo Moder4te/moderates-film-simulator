@@ -277,6 +277,43 @@ await play([
 전제를 호출자에게 맡기지 말고 **헬퍼 안에 넣는다.** 이 저장소는 `stampVisible()`이
 디스크립터 두 개를 배열로 내고, 펼치지 않고 쓰면 경계 검사가 잡는다.
 
+### 4.2.7 `get`으로 객체 전체를 읽으면 엉뚱한 부작용이 난다
+
+문서의 색 프로파일 이름 하나가 필요해서 이렇게 썼다.
+
+```js
+{ _obj: "get", _target: [{ _ref: "document", _enum: "ordinal", _value: "targetEnum" }] }
+```
+
+객체 참조만 주면 **디스크립터를 통째로** 가져온다. 그 과정에서 Photoshop이 문서의
+모든 속성을 평가하는데, 거기에 인쇄 설정이 들어 있어 프린터 서브시스템을 건드린다.
+결과는 **미리보기를 열 때마다 프린터 대화상자가 뜨는** 것이었다. 코드 어디에도
+`print`라는 낱말이 없는데 프린터 창이 나오니 원인을 짚기 어렵다.
+
+`_property`를 앞에 두어 **필요한 속성만** 요청한다.
+
+```js
+{
+  _obj: "get",
+  _target: [
+    { _property: "profile" },
+    { _ref: "document", _enum: "ordinal", _value: "targetEnum" },
+  ],
+}
+```
+
+전체를 읽는 것은 **디스크립터를 채록할 때만** 쓰고, 실제 코드에는 속성을 한정해
+남긴다. 빠르기도 하지만 이런 부작용을 피하는 것이 더 크다.
+
+**그리고 모든 명령에 대화상자 금지를 붙여 둔다.** 자동화 중에 대화상자가 뜨면
+사용자는 왜 나왔는지 알 수 없고, 미리보기처럼 자주 도는 경로에서는 작업이 막힌다.
+
+```js
+_options: { dialogOptions: "dontDisplay" }
+```
+
+이 저장소는 `host/ps.js`의 `play()`가 모든 명령에 자동으로 붙인다.
+
 ### 4.3 32bpc 제약
 
 32비트 문서에서는 **Color Lookup과 Selective Color가 비활성**이다. LUT 기반
@@ -329,6 +366,7 @@ chip.addEventListener("click", () => { params.film.id = f.id; syncUI(); });
 | `Devtools: Failed to load the devtools plugin.` | 개발자 모드를 실행 중에 켬 |
 | `Unexpected token ﻿ in JSON at position 0` | manifest BOM (그나마 정직한 편) |
 | 아무 메시지 없이 로드 실패 | 플러그인 ID 충돌 |
+| 미리보기에서 프린터 대화상자 | `get`이 문서 디스크립터 전체를 읽음 (4.2.7) |
 | 오류 없이 원본 사진이 사라짐 | `mergeVisible`이 빈 레이어 없이 실행됨 (4.2.5) |
 | `Cannot read property 'loadPlugin' of undefined` | CLI `uxp service`가 UDT의 포트를 점유 |
 

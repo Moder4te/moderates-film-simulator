@@ -5,8 +5,26 @@
 
 const { app, core, action } = require("photoshop");
 
+/**
+ * batchPlay 래퍼.
+ *
+ * **모든 명령에 "대화상자를 띄우지 말 것"을 붙인다.** 이 플러그인의 어떤 동작도
+ * Photoshop 대화상자를 띄워서는 안 된다 — 자동화 중에 떠 버리면 사용자는 왜
+ * 나왔는지 알 수 없고, 미리보기처럼 자주 도는 경로에서는 작업이 막힌다.
+ *
+ * 실제로 그런 일이 있었다. 문서 프로파일을 읽는 `get` 하나가 인쇄 설정까지
+ * 평가해 **미리보기를 열 때마다 프린터 대화상자가 떴다.** 근본 원인은 따로
+ * 고쳤지만(documentProfile 참조), 같은 일이 다른 디스크립터에서 또 일어나지
+ * 않도록 여기서 한 번에 막는다.
+ *
+ * 호출자가 `_options`를 직접 준 경우는 존중한다.
+ */
 async function play(commands) {
-  const list = Array.isArray(commands) ? commands : [commands];
+  const list = (Array.isArray(commands) ? commands : [commands]).map((cmd) =>
+    cmd && cmd._options
+      ? cmd
+      : Object.assign({}, cmd, { _options: { dialogOptions: "dontDisplay" } })
+  );
   const result = await action.batchPlay(list, { synchronousExecution: false });
   return result;
 }
@@ -156,8 +174,19 @@ function activeDocument() {
  */
 async function documentProfile() {
   try {
+    // **속성 하나만 요청한다.** `_target`에 객체 참조만 주면 문서 디스크립터를
+    // 통째로 가져오는데, 그 과정에서 Photoshop이 **인쇄 설정까지 평가해 프린터
+    // 대화상자가 뜬다.** 미리보기를 열 때마다 프린터 창이 나오던 원인이었다.
+    //
+    // `_property`를 앞에 두는 형태가 "이 객체의 이 속성만"을 뜻한다.
     const r = await play([
-      { _obj: "get", _target: [{ _ref: "document", _enum: "ordinal", _value: "targetEnum" }] },
+      {
+        _obj: "get",
+        _target: [
+          { _property: "profile" },
+          { _ref: "document", _enum: "ordinal", _value: "targetEnum" },
+        ],
+      },
     ]);
     return (r[0] && r[0].profile) || null;
   } catch (e) {
