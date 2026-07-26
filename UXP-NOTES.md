@@ -1,6 +1,6 @@
 # Photoshop UXP 플러그인 — 실측 지식 정리
 
-FilmSim(v1.0 → v1.4.0) 개발에서 **실제로 부딪혀 확인한 것만** 모았다. 추측은 넣지
+FilmSim(v1.0 → v2.0.0) 개발에서 **실제로 부딪혀 확인한 것만** 모았다. 추측은 넣지
 않았고, 확인하지 못한 것은 그렇다고 적었다.
 
 용도는 두 가지다. 이 저장소에서 이어서 작업하는 경우, 그리고 **다른 Photoshop UXP
@@ -20,6 +20,7 @@ FilmSim(v1.0 → v1.4.0) 개발에서 **실제로 부딪혀 확인한 것만** �
 | 16bit 문서에서 "스마트 오브젝트" 오류 | `getPixels`의 `componentSize: 8` | 3.2 |
 | 픽셀 값이 범위를 벗어난다 | Photoshop 16bit는 0~65535가 **아니다** | 3.1 |
 | 반복 작업이 "전부 실패" | 루프 안에서 같은 예외 — 첫 에러를 안 보여줌 | 6.2 |
+| UDT가 `loadPlugin of undefined` | `uxp service`가 포트 14001을 잡고 있음 | 1.2.5 |
 
 ---
 
@@ -59,6 +60,29 @@ JS 파일의 BOM은 엔진이 공백으로 넘겨 대개 조용히 지나가지�
 
 개발 중에는 설치판을 제거한다. 사용자 프리셋은 `PluginsStorage\...\PluginData\`에
 있으므로 제거 전에 복사해 둘 것.
+
+### 1.2.5 UDT가 `Cannot read property 'loadPlugin' of undefined`
+
+UXP Developer Service의 **포트 14001을 다른 프로세스가 잡고 있을 때** 난다.
+UDT GUI가 자기 서비스를 못 올려 내부 핸들이 `undefined`가 되고, 그 상태로
+플러그인을 올리려다 이 메시지를 뱉는다. 플러그인 코드와는 무관하다.
+
+가장 흔한 원인은 **패키징하려고 띄운 CLI 서비스를 안 끈 것**이다.
+
+```bash
+uxp service start        # 이게 떠 있으면 UDT GUI가 못 쓴다
+```
+
+`uxp plugin package`에는 이 서비스가 필요하지만 **UDT GUI와 공존하지 못한다.**
+패키징이 끝나면 반드시 끈다.
+
+```powershell
+Get-NetTCPConnection -LocalPort 14001 -State Listen |
+  ForEach-Object { Get-Process -Id $_.OwningProcess }
+Stop-Process -Id <PID> -Force
+```
+
+정리한 뒤 UDT를 재시작하면 자기 서비스를 다시 올린다.
 
 ### 1.3 개발자 모드는 Photoshop 시작 시점에 읽힌다
 
@@ -244,6 +268,7 @@ chip.addEventListener("click", () => { params.film.id = f.id; syncUI(); });
 | `Devtools: Failed to load the devtools plugin.` | 개발자 모드를 실행 중에 켬 |
 | `Unexpected token ﻿ in JSON at position 0` | manifest BOM (그나마 정직한 편) |
 | 아무 메시지 없이 로드 실패 | 플러그인 ID 충돌 |
+| `Cannot read property 'loadPlugin' of undefined` | CLI `uxp service`가 UDT의 포트를 점유 |
 
 메시지를 액면 그대로 따라가기 전에 **대조 실험**을 설계하는 편이 빠르다. 예를 들어
 "batchPlay로 LUT을 못 넣는다"를 확정할 때, Photoshop 자신의 내장 경로를 대조군으로

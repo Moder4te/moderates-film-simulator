@@ -61,7 +61,12 @@ JPEG에 입자만 얹고 싶으면 마감.
 ```bash
 uxp service start          # 별도 터미널. 떠 있어야 packaging이 된다
 node tools/build-ccx.js    # sync-libs를 자동으로 먼저 돌린다
+uxp service stop           # ⚠️ 반드시 끈다
 ```
+
+`uxp service`가 떠 있으면 **UDT GUI가 포트 14001을 못 잡아** 플러그인 로드가
+`Cannot read property 'loadPlugin' of undefined`로 실패한다. 패키징이 끝나면
+반드시 끈다(UXP-NOTES 1.2.5).
 
 `uxp plugin package`를 앱 폴더에서 직접 돌리면 안 된다 — **manifest가 있는 폴더를
 통째로 담고 제외 옵션이 없다.** 저장소 루트에서 돌렸을 때 `.git`이 전부 실려
