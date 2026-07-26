@@ -252,8 +252,9 @@ function buildXmp(params, opts) {
   const o = opts || {};
   const space = SPACES[o.space] || SPACES.prophoto;
 
-  if (!params.film || !params.film.enabled) {
-    throw new Error("필름 시뮬레이션이 꺼져 있습니다. 켜고 다시 시도하세요.");
+  // 필름이 꺼져 있어도 그레이딩만으로 유효한 프로파일이 된다.
+  if (!film.hasEffect(params)) {
+    throw new Error("필름과 색 조정이 모두 꺼져 있어 내보낼 것이 없습니다.");
   }
 
   // buildForParams가 유제 → 스캐너 → 사용자 조정까지 굽는다.

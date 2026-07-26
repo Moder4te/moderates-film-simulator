@@ -17,7 +17,6 @@
  */
 
 const { app, imaging, core } = require("photoshop");
-const simulate = require("../lib/core/color/simulate");
 const lut = require("../lib/core/color/lut");
 const film = require("../lib/core/color/film");
 const films = require("../lib/core/color/films");
@@ -62,34 +61,22 @@ function renderPixels(data, comps, pixelCount, params, table, size, toDisplay) {
 
   // 16bit 문서의 최대값은 32768이다(65535가 아니다). lut.js의 PS_MAX_16 참조.
   const maxV = lut.maxValueFor(data);
-  const is16 = data.BYTES_PER_ELEMENT === 2;
+
 
   // 색 단계는 문서 색공간에서 하고, 마지막에 표시용 sRGB로 옮긴다.
   // 순서가 중요하다 — LUT은 ProPhoto 기준으로 구워졌으므로 변환 전에 적용해야 한다.
   const disp = toDisplay || colorspace.passthrough;
   const shown = [0, 0, 0];
 
-  if (table) {
-    const inv = 1 / maxV;
-    const out = [0, 0, 0];
-    for (let p = 0, i = 0, j = 0; p < count; p++, i += comps, j += 3) {
-      lut.sample(table, size, data[i] * inv, data[i + gOff] * inv, data[i + bOff] * inv, out);
-      disp(out[0], out[1], out[2], shown);
-      rgb[j] = clamp255(shown[0] * 255);
-      rgb[j + 1] = clamp255(shown[1] * 255);
-      rgb[j + 2] = clamp255(shown[2] * 255);
-    }
-    return rgb;
-  }
-
-  // v1 경로 (film.enabled = false). 16bit 정규화만 더했다.
-  const n = is16 ? 255 / maxV : 1;
+  // **경로가 하나다.** 이전에는 필름이 꺼지면 `simulate.applyGrading`을 직접
+  // 부르는 별도 경로로 빠졌는데, 적용 쪽은 그때 아무것도 하지 않아서 미리보기와
+  // 결과가 어긋났다(실측 최대 14/255). 지금은 필름이 꺼져도 `buildForParams`가
+  // 항등에서 시작해 그레이딩만 구운 LUT을 주므로 여기서 나눌 이유가 없다.
+  const inv = 1 / maxV;
+  const out = [0, 0, 0];
   for (let p = 0, i = 0, j = 0; p < count; p++, i += comps, j += 3) {
-    const out = simulate.applyGrading(
-      [data[i] * n, data[i + gOff] * n, data[i + bOff] * n],
-      params.grading
-    );
-    disp(out[0] / 255, out[1] / 255, out[2] / 255, shown);
+    lut.sample(table, size, data[i] * inv, data[i + gOff] * inv, data[i + bOff] * inv, out);
+    disp(out[0], out[1], out[2], shown);
     rgb[j] = clamp255(shown[0] * 255);
     rgb[j + 1] = clamp255(shown[1] * 255);
     rgb[j + 2] = clamp255(shown[2] * 255);
@@ -119,14 +106,15 @@ async function renderOnce(params) {
   // 필름 엔진이 켜져 있으면 LUT을 굽는다(색 조정까지 구워 넣은 최종본).
   // 33³ 생성이 1ms라 매 렌더마다 새로 구워도 부담이 없다 — 캐시가 필요 없는
   // 이유다(v2plan.md 4.1).
+  // 필름이 꺼져 있어도 굽는다 — 그때는 항등 + 그레이딩이 나온다.
+  // 실패하면 렌더를 건너뛴다. 옛 값으로 그리면 사용자가 잘못된 상태를 본다.
   let table = null;
   const size = 33;
-  if (params.film && params.film.enabled) {
-    try {
-      table = film.buildForParams(params, size);
-    } catch (e) {
-      console.error("LUT 생성 실패", e);
-    }
+  try {
+    table = film.buildForParams(params, size);
+  } catch (e) {
+    console.error("LUT 생성 실패", e);
+    return;
   }
 
   // 표시용 변환기. 문서가 ProPhoto면 sRGB로 옮겨야 어둡게 보이지 않는다.

@@ -43,10 +43,12 @@ async function clearOwnLayers(doc) {
 async function run(doc, params) {
   await clearOwnLayers(doc);
 
-  const f = params.film;
-  if (!f || !f.enabled) return; // 색을 건드리지 않는 상태. 마감만 쓰겠다는 뜻이다
+  // **필름이 아니라 "색이 바뀌는가"로 판단한다.** 필름을 꺼도 그레이딩이 살아
+  // 있으면 적용할 것이 있다. 이전에는 film.enabled만 보고 빠져나가서, 미리보기는
+  // 그레이딩을 보여주는데 적용은 아무것도 하지 않았다.
+  if (!film.hasEffect(params)) return;
 
-  const size = f.lutSize || 33;
+  const size = (params.film && params.film.lutSize) || 33;
   const table = film.buildForParams(params, size);
   await apply.applyLut(doc, table, size, PREFIX);
 }

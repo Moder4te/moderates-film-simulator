@@ -162,8 +162,10 @@ function build(params, opts) {
   const size = SIZES.includes(o.size) ? o.size : SIZES[0];
   const space = spaceById(o.space);
 
-  if (!params.film || !params.film.enabled) {
-    throw new Error("필름 시뮬레이션이 꺼져 있습니다. 켜고 다시 시도하세요.");
+  // 필름이 꺼져 있어도 그레이딩만으로 유효한 LUT이 된다. 막을 것은 "필름이
+  // 꺼진 상태"가 아니라 **항등 LUT**이다 — 내보내 봐야 아무 일도 하지 않는다.
+  if (!film.hasEffect(params)) {
+    throw new Error("필름과 색 조정이 모두 꺼져 있어 내보낼 것이 없습니다.");
   }
 
   // buildForParams가 유제 → 스캐너 → 사용자 조정까지 다 굽는다.

@@ -224,5 +224,74 @@ const ref = PROBES.map((p) => {
     `이동 ${moved} / ${off.length}, 최대 ${max.toExponential(2)}`);
 }
 
+// ── 7. 필름·그레이딩 on/off 전 조합에서 경로가 갈라지지 않는가 ───────
+//
+// 여기서 실제 버그가 났었다. `film.enabled`를 호출자마다 따로 검사해서,
+// 미리보기는 그레이딩을 보여주는데 적용은 아무것도 하지 않고(최대 14/255 차이)
+// 내보내기는 에러를 던졌다. 팔레트·컬러휠은 스캐너 단계를 빠뜨렸다.
+//
+// **6번까지의 검사는 필름이 켜진 상태만 봐서 이걸 놓쳤다.** 상태 조합을 도는 것이
+// 이 검사의 핵심이다.
+{
+  const STATES = [
+    ["필름ON  그레이딩ON", true, true, false],
+    ["필름ON  그레이딩OFF", true, false, false],
+    ["필름OFF 그레이딩ON", false, true, false],
+    ["필름OFF 그레이딩ON(중립)", false, true, true],
+    ["필름OFF 그레이딩OFF", false, false, false],
+  ];
+  const mk = (filmOn, gradOn, neutral) => {
+    const p = defaultParams();
+    p.film.enabled = filmOn;
+    p.film.id = "kodak-portra-400";
+    p.film.scanner = "frontier";
+    p.grading.enabled = gradOn;
+    if (gradOn && !neutral) {
+      p.grading.toe = 25;
+      p.grading.selectiveColor.reds = { c: -6, m: 3, y: 8, k: 0 };
+    }
+    return p;
+  };
+
+  let bad = [];
+  for (const [name, fo, go, nu] of STATES) {
+    const p = mk(fo, go, nu);
+    const effect = film.hasEffect(p);
+    const table = film.buildForParams(p, 17);
+
+    // 효과가 없다고 판정했으면 LUT이 실제로 항등이어야 한다. 반대도 마찬가지다.
+    const ident = lut.identity(17);
+    let max = 0;
+    for (let i = 0; i < table.length; i++) max = Math.max(max, Math.abs(table[i] - ident[i]));
+    const isIdentity = max < 1e-6;
+    if (effect === isIdentity) {
+      bad.push(`${name}: hasEffect=${effect} 인데 LUT은 ${isIdentity ? "항등" : "항등 아님"}`);
+    }
+
+    // 내보내기는 효과가 있을 때만 성공해야 한다 (성공/실패가 판정과 일치)
+    for (const [label, fn] of [
+      [".cube", () => cube.build(p, { size: 33, space: "prophoto" })],
+      [".xmp", () => xmp.buildXmp(p, { space: "prophoto" })],
+    ]) {
+      let okd = true;
+      try { fn(); } catch (e) { okd = false; }
+      if (okd !== effect) bad.push(`${name}: ${label} ${okd ? "성공" : "실패"} 인데 hasEffect=${effect}`);
+    }
+  }
+  ok("필름·그레이딩 5개 상태에서 판정과 결과가 일치", bad.length === 0, bad.join(" / "));
+
+  // 미리보기가 별도 경로를 쓰지 않는가 — 소스에서 확인한다.
+  // 값 비교로는 못 잡는다. 미리보기는 호스트 API가 필요해 여기서 못 돌린다.
+  const fs = require("fs");
+  const pv = fs.readFileSync(path.join(ROOT, "apps/engine/src/preview.js"), "utf8");
+  ok("미리보기가 simulate를 직접 부르지 않는다", !/simulate\.applyGrading\(/.test(pv),
+    "그레이딩을 따로 계산하면 적용 결과와 갈라진다");
+
+  const mn = fs.readFileSync(path.join(ROOT, "apps/engine/src/main.js"), "utf8");
+  ok("팔레트·컬러휠이 합성을 직접 조합하지 않는다",
+    !/film\.buildLut\(/.test(mn) && !/film\.bakeGrading\(/.test(mn),
+    "buildForParams를 쓰지 않으면 스캐너 단계가 빠진다");
+}
+
 console.log(fails ? `\n정합성 실패 ${fails}건` : "\n정합성 통과 — 모든 산출 경로가 같은 색을 낸다");
 process.exit(fails ? 1 : 0);

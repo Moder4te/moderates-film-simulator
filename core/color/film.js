@@ -30,6 +30,7 @@ const films = require("./films");
 const simulate = require("./simulate");
 const colorspace = require("./colorspace");
 const scanner = require("./scanner");
+const lut = require("./lut");
 
 const WORKING_GAMMA = 1.8; // ProPhoto RGB
 const ANCHOR = 0.18; // 18% 그레이
@@ -502,18 +503,42 @@ function bakeGrading(table, grading) {
  * 세 곳이 각자 LUT을 구우면 조건이 어긋나 서로 다른 결과를 보여주게 된다.
  */
 function buildForParams(params, size) {
-  const table = buildLut(films.byId(params.film.id), {
-    size,
-    exposure: params.film.exposure || 0,
-  });
+  const f = params.film || {};
+  const filmOn = f.enabled !== false;
+
+  // **필름과 그레이딩은 독립이다.** 필름을 끄면 유제·스캐너만 빠지고, 사용자
+  // 색 조정은 그대로 남는다 — 항등에서 시작해 그레이딩만 굽는다.
+  //
+  // 이전에는 이 함수가 `enabled`를 **아예 보지 않고** 항상 필름을 구웠고,
+  // 호출자(파이프라인·미리보기·내보내기)가 각자 검사했다. 그래서 검사 방식이
+  // 서로 달라졌다 — 미리보기는 그레이딩을 보여주는데 적용은 아무것도 하지 않고,
+  // 내보내기는 에러를 던졌다. 판단을 여기 한 곳으로 모은다.
+  const table = filmOn
+    ? buildLut(films.byId(f.id), { size, exposure: f.exposure || 0 })
+    : lut.identity(size);
 
   // 유제 → 스캐너 → 사용자 조정 순서다.
   // 스캐너는 인화·스캔 장비의 특성이므로 필름 바로 다음에 와야 하고,
   // 사용자 조정은 완성된 룩 위에 얹는 것이므로 맨 마지막이다.
-  scanner.bake(table, scanner.byId(params.film.scanner));
+  //
+  // 필름이 꺼져 있으면 스캐너도 걸지 않는다. 스캔할 필름이 없기 때문이다.
+  if (filmOn) scanner.bake(table, scanner.byId(f.scanner));
 
   if (gradingIsActive(params.grading)) bakeGrading(table, params.grading);
   return table;
+}
+
+/**
+ * 이 파라미터가 색을 실제로 바꾸는가.
+ *
+ * 둘 다 꺼져 있으면(또는 그레이딩이 중립이면) LUT이 항등이라 적용·내보내기가
+ * 의미 없다. **호출자는 `film.enabled`를 직접 보지 말고 이 함수를 쓴다** —
+ * 조건을 각자 쓰기 시작하면 또 어긋난다.
+ */
+function hasEffect(params) {
+  if (!params) return false;
+  const f = params.film || {};
+  return f.enabled !== false || gradingIsActive(params.grading);
 }
 
 /**
@@ -547,6 +572,7 @@ function lutTitle(film, exposure) {
 module.exports = {
   buildLut,
   buildForParams,
+  hasEffect,
   bakeGrading,
   gradingIsActive,
   describe,

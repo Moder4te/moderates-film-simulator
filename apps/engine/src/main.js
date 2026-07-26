@@ -348,8 +348,12 @@ const PALETTE_LUT_SIZE = 33;
 
 /**
  * 시각화용 LUT 두 벌.
- *   film — 필름만. 컬러휠의 **기준색**을 만든다 (휠은 그 위에서 grading 이동을 그린다)
- *   full — 필름 + 색 조정. 팔레트의 **최종색**을 만든다 (적용 결과와 같다)
+ *   film — 색 조정 **전**. 컬러휠의 기준색을 만든다 (휠은 그 위에서 이동을 그린다)
+ *   full — 색 조정까지. 팔레트의 최종색을 만든다 (적용 결과와 같다)
+ *
+ * **둘 다 `buildForParams`로 만든다.** 이전에는 여기서 `buildLut` + `bakeGrading`을
+ * 직접 조합했는데, 그 바람에 **스캐너 단계가 빠져** 팔레트·컬러휠이 실제 적용
+ * 결과와 다른 색을 보여줬다. 합성 순서를 아는 곳은 엔진 하나여야 한다.
  *
  * 팔레트·큰휠·세부휠이 한 프레임에 함께 갱신되므로 매번 새로 구우면 낭비다.
  * 파라미터가 그대로면 재사용한다.
@@ -357,19 +361,19 @@ const PALETTE_LUT_SIZE = 33;
 let lutCache = { key: null, film: null, full: null };
 
 function visualTables() {
-  const f = params.film;
-  if (!f || !f.enabled) return { film: null, full: null };
+  const f = params.film || {};
 
-  const key = `${f.id}|${f.exposure}|${JSON.stringify(params.grading)}`;
+  // ⚠️ 캐시 키에는 결과를 바꾸는 것이 **전부** 들어가야 한다. 이전 키에는
+  // 스캐너와 enabled가 빠져 있어서, 스캐너를 바꿔도 팔레트가 갱신되지 않았다.
+  const key = JSON.stringify([f.enabled, f.id, f.exposure, f.scanner, params.grading]);
   if (lutCache.key === key) return lutCache;
 
   try {
-    const base = film.buildLut(films.byId(f.id), {
-      size: PALETTE_LUT_SIZE,
-      exposure: f.exposure || 0,
-    });
+    // 기준색 — 같은 파라미터에서 색 조정만 끈 상태. 필름과 스캐너는 그대로다.
+    const noGrading = { ...params, grading: { ...params.grading, enabled: false } };
+    const base = film.buildForParams(noGrading, PALETTE_LUT_SIZE);
     const full = film.gradingIsActive(params.grading)
-      ? film.bakeGrading(Float32Array.from(base), params.grading)
+      ? film.buildForParams(params, PALETTE_LUT_SIZE)
       : base;
     lutCache = { key, film: base, full };
   } catch (e) {
