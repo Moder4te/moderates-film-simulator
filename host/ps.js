@@ -24,19 +24,6 @@ async function play(commands) {
   return result;
 }
 
-/**
- * 끝나지 않을 수 있는 조회를 감싼다.
- *
- * batchPlay가 응답하지 않으면 호출자가 그대로 멈춘다. 미리보기처럼 **없어도
- * 되는 정보**를 읽을 때는 기다리다 포기하고 진행하는 편이 낫다 — 색이 조금
- * 어긋나는 것이 화면이 갱신되지 않는 것보다 낫다.
- */
-function withTimeout(promise, ms, fallback) {
-  return Promise.race([
-    promise,
-    new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
-  ]);
-}
 
 /**
  * 모달 실행 래퍼. 중첩 호출을 피하기 위해 파이프라인 최상단에서 한 번만 감싼다.
@@ -174,36 +161,38 @@ function activeDocument() {
 /**
  * 활성 문서의 색 프로파일 이름. 읽지 못하면 null.
  *
- * 채록 — Photoshop에서 문서를 하나 열고 알림 리스너로 `get` 디스크립터를 덤프해
- * 확인했다(2026-07-25). 반환 객체의 `profile` 필드가 프로파일 이름 문자열이다.
- * 프로파일이 없는 문서에서는 필드 자체가 없어 undefined가 나오므로 null로 정규화한다.
- *
  * 표시용 색 변환기를 고르는 데 쓴다 — UXP는 `<img>`를 sRGB로 간주해 그리므로
  * ProPhoto 문서를 그대로 넘기면 어둡게 보인다(UXP-NOTES 5.2).
+ *
+ * ── batchPlay를 쓰지 않는다 ─────────────────────────────────────────────
+ *
+ * 이 값 하나 때문에 두 번 사고가 났다.
+ *
+ *   1. `get`에 객체 참조만 줘서 문서 디스크립터를 통째로 읽었다. Photoshop이 인쇄
+ *      설정까지 평가해 **미리보기를 열 때마다 프린터 대화상자가 떴다.**
+ *   2. 고치려고 `_property`로 한정하고 `_options`를 붙였더니 **미리보기가 아예
+ *      멈췄다.** batchPlay가 반환하지 않아 호출자의 잠금이 풀리지 않았다.
+ *
+ * batchPlay 디스크립터는 문서화가 부실해 추측이 통하지 않는다(UXP-NOTES 4).
+ * **DOM 속성으로 읽으면 그 위험이 통째로 사라진다.** 문서 객체는 이미 `width`·
+ * `resolution`·`bitsPerChannel` 같은 속성을 노출하고 있고, 프로파일 이름도 그중
+ * 하나다. 호출도 동기라 멈출 여지가 없다.
+ *
+ * UXP 버전에 따라 속성 이름이 다를 수 있어 후보를 순서대로 본다. 전부 없으면
+ * null을 돌려주고, 그러면 색 변환을 건너뛴다 — 미리보기가 조금 어긋날 뿐
+ * 멈추지는 않는다.
  */
-async function documentProfile() {
+const PROFILE_KEYS = ["colorProfileName", "colorProfile", "profile"];
+
+function documentProfile() {
   try {
-    // **속성 하나만 요청한다.** `_target`에 객체 참조만 주면 문서 디스크립터를
-    // 통째로 가져오는데, 그 과정에서 Photoshop이 **인쇄 설정까지 평가해 프린터
-    // 대화상자가 뜬다.** 미리보기를 열 때마다 프린터 창이 나오던 원인이었다.
-    //
-    // `_property`를 앞에 두는 형태가 "이 객체의 이 속성만"을 뜻한다.
-    // 응답이 없으면 포기하고 진행한다. 이 값이 없으면 색 변환을 건너뛸 뿐이지만,
-    // 여기서 멈추면 미리보기 전체가 갱신되지 않는다.
-    const r = await withTimeout(
-      play([
-        {
-          _obj: "get",
-          _target: [
-            { _property: "profile" },
-            { _ref: "document", _enum: "ordinal", _value: "targetEnum" },
-          ],
-        },
-      ]),
-      2000,
-      null
-    );
-    return (r && r[0] && r[0].profile) || null;
+    const doc = app.activeDocument;
+    if (!doc) return null;
+    for (const key of PROFILE_KEYS) {
+      const v = doc[key];
+      if (typeof v === "string" && v) return v;
+    }
+    return null;
   } catch (e) {
     return null;
   }
