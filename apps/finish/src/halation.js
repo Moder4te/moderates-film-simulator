@@ -58,9 +58,12 @@ async function apply(doc, halation, formatId, prefix) {
     ps.percentToPixels(doc, halation.radius) * format.relativeScale(formatId);
   const spread = halation.channelSpread;
 
-  // 스탬프 + 하이라이트 추출
+  // 스탬프 + 하이라이트 추출.
+  //
+  // stampVisible은 디스크립터를 **두 개** 돌려준다(빈 레이어 생성 + 병합).
+  // 병합만 내면 결과가 활성 레이어 안으로 들어가 배경 원본을 덮는다 — ps.js 참조.
   await play([
-    ps.stampVisible(),
+    ...ps.stampVisible(),
     ps.renameLayer(`${prefix} · Halation`),
     extractHighlights(halation.threshold),
   ]);

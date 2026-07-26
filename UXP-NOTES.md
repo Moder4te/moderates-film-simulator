@@ -216,6 +216,36 @@ action.addNotificationListener([{ event: "all" }], (event, descriptor) => {
 문서 전환 감지에도 같은 걸 쓴다(`select` / `open` / `newDocument` / `close`).
 `select`가 자주 오므로 문서 id로 걸러 실제 전환일 때만 처리한다.
 
+### 4.2.5 `mergeVisible + duplicate`만으로는 새 레이어가 안 생긴다
+
+"보이는 레이어 스탬프"(`Ctrl+Alt+Shift+E`)를 이 디스크립터 하나로 낸다.
+
+```js
+{ _obj: "mergeVisible", duplicate: true }   // ⚠️ 이것만으로는 부족하다
+```
+
+Photoshop에서도 그 단축키는 **빈 레이어를 먼저 만들어 둔 상태**를 전제한다.
+그러지 않으면 병합 결과가 **활성 레이어 안으로 들어간다.** 활성 레이어가 배경이면
+배경이 스탬프로 바뀌고, 이어지는 조정이 그 위에서 돌아 **원본이 사라진다.**
+
+```js
+await play([
+  { _obj: "make", _target: [{ _ref: "layer" }] },   // 빈 레이어 먼저
+  { _obj: "mergeVisible", duplicate: true },
+]);
+```
+
+**왜 늦게 발견되나.** 앞 단계가 픽셀 레이어를 만들어 두면 결함이 가려진다. 이
+프로젝트에서는 색 단계가 항상 레이어를 만들었기 때문에 1년 가까이 드러나지 않다가,
+그 단계를 다른 플러그인으로 분리하자 배경만 있는 JPEG에서 원본이 지워졌다.
+
+> **구조를 바꾸면 잠복 버그가 드러난다.** 분리·리팩터링 뒤에 "원래 되던 게 안 된다"가
+> 나오면 새로 만든 결함인지 **가려져 있던 결함인지**를 먼저 가른다. 후자면 이전
+> 버전도 특정 조건에서 이미 틀렸던 것이다.
+
+전제를 호출자에게 맡기지 말고 **헬퍼 안에 넣는다.** 이 저장소는 `stampVisible()`이
+디스크립터 두 개를 배열로 내고, 펼치지 않고 쓰면 경계 검사가 잡는다.
+
 ### 4.3 32bpc 제약
 
 32비트 문서에서는 **Color Lookup과 Selective Color가 비활성**이다. LUT 기반
@@ -268,6 +298,7 @@ chip.addEventListener("click", () => { params.film.id = f.id; syncUI(); });
 | `Devtools: Failed to load the devtools plugin.` | 개발자 모드를 실행 중에 켬 |
 | `Unexpected token ﻿ in JSON at position 0` | manifest BOM (그나마 정직한 편) |
 | 아무 메시지 없이 로드 실패 | 플러그인 ID 충돌 |
+| 오류 없이 원본 사진이 사라짐 | `mergeVisible`이 빈 레이어 없이 실행됨 (4.2.5) |
 | `Cannot read property 'loadPlugin' of undefined` | CLI `uxp service`가 UDT의 포트를 점유 |
 
 메시지를 액면 그대로 따라가기 전에 **대조 실험**을 설계하는 편이 빠르다. 예를 들어

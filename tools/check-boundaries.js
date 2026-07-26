@@ -59,6 +59,29 @@ walk(path.join(ROOT, "apps"), (p) => {
   }
 });
 
+// ── 2.5 디스크립터 여러 개를 내는 헬퍼는 반드시 펼쳐 쓴다 ───────────────
+//
+// `ps.stampVisible()`은 "빈 레이어 생성 + 병합" 두 개를 배열로 낸다. 펼치지 않고
+// 그대로 넣으면 `play`에 배열이 하나 들어가 병합만 실행되거나 조용히 무시되고,
+// 결과가 활성 레이어(배경) 안으로 들어가 **원본이 지워진다.** 실제로 그 일이 있었다.
+//
+// 새로 이런 헬퍼를 만들면 이 목록에 추가할 것.
+const MULTI = ["stampVisible"];
+walk(path.join(ROOT, "apps"), (p) => {
+  if (rel(p).includes("/lib/")) return;
+  const s = fs.readFileSync(p, "utf8");
+  for (const fn of MULTI) {
+    // 앞에 스프레드가 없는 호출을 찾는다
+    const re = new RegExp(`(^|[^.])(\\bps\\.${fn}\\s*\\()`, "g");
+    for (const m of s.matchAll(re)) {
+      const before = s.slice(Math.max(0, m.index - 3), m.index + m[1].length);
+      if (!before.endsWith("...")) {
+        problems.push(`${rel(p)} — ps.${fn}()은 디스크립터를 여러 개 낸다. \`...\`로 펼칠 것.`);
+      }
+    }
+  }
+});
+
 // ── 3. 마감 앱은 색을 몰라야 한다 ───────────────────────────────────────
 //
 // 두 플러그인으로 나눈 이유가 이것이다. 마감 쪽에 색 로직이 없으면 그쪽을

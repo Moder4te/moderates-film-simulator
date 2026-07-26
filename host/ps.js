@@ -109,9 +109,27 @@ function selectChannel(channel) {
   };
 }
 
-/** 보이는 레이어를 병합해 새 레이어로 스탬프한다 (Ctrl+Alt+Shift+E). */
+/**
+ * 보이는 레이어를 병합해 **새 레이어로** 스탬프한다 (Ctrl+Alt+Shift+E).
+ *
+ * **디스크립터 두 개를 배열로 돌려준다.** 호출자는 펼쳐서 쓴다.
+ *
+ *     await play([...ps.stampVisible(), ps.renameLayer("...")]);
+ *
+ * ⚠️ `mergeVisible + duplicate` **하나만으로는 새 레이어가 생기지 않는다.**
+ * 그 조작은 Photoshop에서도 "빈 레이어를 먼저 만들어 둔 상태"를 전제하고,
+ * 그러지 않으면 병합 결과가 **활성 레이어 안으로 들어간다.** 활성 레이어가
+ * 배경이면 배경이 스탬프로 바뀌고 원본이 사라진다.
+ *
+ * 실제로 그 일이 있었다. v1.x에서는 색 단계가 항상 픽셀 레이어를 먼저 만들어
+ * 활성 상태로 남겼기 때문에 결함이 가려져 있었고, 마감 플러그인을 분리해 색
+ * 단계가 빠지자 배경만 있는 JPEG에서 원본이 지워졌다.
+ *
+ * 그래서 "빈 레이어 생성"을 이 함수 안으로 넣었다. **호출자가 전제를 기억해야
+ * 하는 API는 언젠가 또 틀린다.**
+ */
 function stampVisible() {
-  return { _obj: "mergeVisible", duplicate: true };
+  return [makePixelLayer(), { _obj: "mergeVisible", duplicate: true }];
 }
 
 /** 이미지 긴 변 대비 비율(%)을 픽셀로 변환. 해상도 독립성 확보용. */
