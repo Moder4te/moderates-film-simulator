@@ -82,6 +82,39 @@ walk(path.join(ROOT, "apps"), (p) => {
   }
 });
 
+// ── 2.7 getPixels로 읽은 값은 정규화하고 색공간을 옮겨야 한다 ───────────
+//
+// 같은 버그가 세 번 났다. 16bit 문서에서 getPixels는 **0~32768**을 주는데(255가
+// 아니다) 8bit로 가정하면 조용히 틀린다. 게다가 문서가 ProPhoto면 그 값을 sRGB로
+// 옮기지 않고 쓰면 색이 어긋난다.
+//
+//   미리보기   16bit 문서에서 화면이 하얗게 날아갔다
+//   미리보기   ProPhoto를 그대로 표시해 2/3스톱 어두웠다
+//   사진 분석  두 가지를 다 빠뜨려 컬러휠 마커 6개가 한 점으로 뭉쳤다
+//
+// 8bit sRGB 문서로만 시험하면 셋 다 드러나지 않는다.
+// 읽어서 되쓰는 **왕복** 경로는 예외다. 같은 공간·심도로 돌려주므로 표시 변환이
+// 필요 없고, 심도는 lut.applyToBuffer 안에서 처리된다. 문제가 되는 것은 픽셀을
+// **밖으로 내보내거나 판정에 쓰는** 경로다.
+walk(path.join(ROOT, "apps"), (p) => {
+  if (rel(p).includes("/lib/")) return;
+  const s = fs.readFileSync(p, "utf8");
+  if (!/imaging\.getPixels\s*\(/.test(s)) return;
+
+  if (!/colorSpace:\s*"RGB"/.test(s)) {
+    problems.push(`${rel(p)} — getPixels에 colorSpace: "RGB"가 없다. 그레이스케일·CMYK 문서에서 채널 수가 달라진다.`);
+  }
+
+  if (/imaging\.putPixels\s*\(/.test(s)) return; // 왕복 경로
+
+  if (!/maxValueFor\s*\(/.test(s)) {
+    problems.push(`${rel(p)} — getPixels 값을 쓰는데 심도 정규화가 없다. 16bit는 0~32768이다. lut.maxValueFor 참조.`);
+  }
+  if (!/displayConverter\s*\(/.test(s)) {
+    problems.push(`${rel(p)} — 문서 색공간 변환이 없다. ProPhoto 값을 sRGB로 옮기지 않으면 색이 어긋난다.`);
+  }
+});
+
 // ── 3. 마감 앱은 색을 몰라야 한다 ───────────────────────────────────────
 //
 // 두 플러그인으로 나눈 이유가 이것이다. 마감 쪽에 색 로직이 없으면 그쪽을

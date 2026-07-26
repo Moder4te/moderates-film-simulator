@@ -11,10 +11,29 @@
  * 세부 휠용으로 각 색역을 밝기 4구간으로도 세분해 대표를 낸다.
  *
  * 비용: 픽셀 1회 순회(누적 평균). k-means 같은 반복 없이 가볍다.
+ *
+ * ── 대표색은 sRGB 0~255다 ───────────────────────────────────────────────
+ *
+ * 이 함수가 내는 값을 소비하는 쪽(색역 분류 임계값, 폴백 대표색, 컬러휠의
+ * `throughLut`)이 전부 **sRGB 0~255**를 전제한다. 그래서 문서에서 읽은 픽셀을
+ * 여기서 그 형태로 맞춰 내보낸다. 두 가지를 해야 한다.
+ *
+ *   1. **심도 정규화** — 16bit 문서에서 getPixels는 0~32768을 준다(255가 아니다).
+ *   2. **색공간 변환** — 문서가 ProPhoto면 그 값을 sRGB로 옮긴다.
+ *
+ * 둘 다 빠뜨렸었고, 그래서 16bit ProPhoto 문서에서 **컬러휠 마커 6개가 전부 같은
+ * 색으로 뭉쳤다.** `throughLut`이 `rgb/255`를 하는데 값이 32768까지 올라가 전부
+ * 1.0을 넘어 클램프됐기 때문이다. 무채색 분류도 무너져 어두운 회색까지 whites로
+ * 들어갔다(v 기준이 0~1인데 실제 v가 100을 넘었다).
+ *
+ * 8bit sRGB 문서로만 시험하면 드러나지 않는다 — v1.2 검증이 그랬다.
  */
 
 const { app, imaging, core } = require("photoshop");
 const colorwheel = require("./colorwheel");
+const lut = require("../lib/core/color/lut");
+const colorspace = require("../lib/core/color/colorspace");
+const ps = require("../lib/host/ps");
 
 const SAMPLE_WIDTH = 200; // 분석용 썸네일 가로 px
 const TONE_BINS = 4; // 밝기 세분 구간 수
@@ -85,11 +104,16 @@ async function analyze() {
   const doc = app.activeDocument;
   let result = null;
 
+  // 문서 색공간 → sRGB 변환기. 모달 밖에서 구한다(preview.js와 같은 이유).
+  const toSrgb = colorspace.displayConverter(await ps.documentProfile());
+
   await core.executeAsModal(
     async () => {
+      // colorSpace를 RGB로 고정해 그레이스케일·CMYK 문서에서도 RGB로 받는다.
       const px = await imaging.getPixels({
         documentID: doc.id,
         targetSize: { width: SAMPLE_WIDTH },
+        colorSpace: "RGB",
       });
       const w = px.imageData.width;
       const h = px.imageData.height;
@@ -100,10 +124,17 @@ async function analyze() {
       for (const r of ALL_RANGES) bins[r] = newBin();
       let total = 0;
 
+      // 16bit 문서는 0~32768이다. 0~1로 정규화한 뒤 sRGB로 옮긴다.
+      const inv = 1 / lut.maxValueFor(data);
+      const gOff = comps > 1 ? 1 : 0;
+      const bOff = comps > 2 ? 2 : 0;
+      const srgb = [0, 0, 0];
+
       for (let i = 0; i < data.length; i += comps) {
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
+        toSrgb(data[i] * inv, data[i + gOff] * inv, data[i + bOff] * inv, srgb);
+        const r = srgb[0] * 255;
+        const g = srgb[1] * 255;
+        const b = srgb[2] * 255;
         const hsv = colorwheel.rgbToHsv(r, g, b);
         const range = classify(hsv.h, hsv.s, hsv.v);
         // 유채 색역은 채도 가중(선명한 픽셀 우선), 무채 색역은 균등.

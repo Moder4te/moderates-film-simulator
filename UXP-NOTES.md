@@ -154,6 +154,37 @@ const maxV = data.BYTES_PER_ELEMENT === 2 ? PS_MAX_16 : 255;
 > 출력이 입력 범위를 절대 넘지 않는 변환이라 그렇다. 범위 검증에는
 > **값을 키우는 변환**을 써야 한다.
 
+### 3.1.5 읽은 픽셀은 **정규화하고 색공간을 옮긴 뒤** 쓴다
+
+같은 버그가 이 프로젝트에서 세 번 났다.
+
+| 어디서 | 증상 |
+|---|---|
+| 미리보기 | 16bit 문서에서 화면이 하얗게 날아감 |
+| 미리보기 | ProPhoto를 그대로 표시해 약 2/3스톱 어두움 |
+| 사진 분석 | 둘 다 빠뜨려 컬러휠 대표색 6개가 한 점으로 뭉침 |
+
+`getPixels`가 주는 값을 쓰기 전에 두 가지를 해야 한다.
+
+```js
+const px = await imaging.getPixels({ documentID, targetSize, colorSpace: "RGB" });
+const data = await px.imageData.getData({ chunky: true });
+
+const inv = 1 / lut.maxValueFor(data);        // 16bit면 32768, 8bit면 255
+const toSrgb = colorspace.displayConverter(await documentProfile());
+toSrgb(data[i] * inv, data[i + 1] * inv, data[i + 2] * inv, out);
+```
+
+**읽어서 되쓰는 왕복 경로는 예외다.** 같은 공간·심도로 돌려주므로 표시 변환이
+필요 없다. 문제가 되는 것은 픽셀을 **화면에 내보내거나 판정에 쓰는** 경로다.
+
+> **왜 반복되나** — 8bit sRGB 문서로 시험하면 셋 다 통과한다. 두 전제(심도·색공간)가
+> 동시에 참인 조건에서만 개발하면 전제가 있다는 사실 자체를 잊는다. 그리고
+> 색상각은 스케일 불변이라 **값이 128배 커져도 색상은 멀쩡해 보인다** — 겉으로
+> 드러나는 증상이 원인과 멀어 진단이 늦는다.
+
+이 저장소는 경계 검사로 강제한다(`tools/check-boundaries.js` 2.7).
+
 ### 3.2 `componentSize: 8`을 쓰지 마라
 
 16bit 문서에서 `getPixels`에 이 옵션을 주면 실패하는데, 오류 메시지가
