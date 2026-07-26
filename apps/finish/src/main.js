@@ -170,6 +170,8 @@ function syncUI() {
   setSlider("grainMid", g.midtone);
   setSlider("grainHigh", g.highlight);
   setSlider("grainSize", g.size);
+  setSlider("grainClump", g.clump);
+  setSlider("grainDyeSpread", g.dyeSpread);
   setSlider("grainFeather", g.feather);
   $("grainColor").checked = g.colorMode === "rgb";
 
@@ -287,6 +289,8 @@ function wire() {
   bindSlider("grainMid", "grain.midtone");
   bindSlider("grainHigh", "grain.highlight");
   bindSlider("grainSize", "grain.size");
+  bindSlider("grainClump", "grain.clump");
+  bindSlider("grainDyeSpread", "grain.dyeSpread");
   bindSlider("grainFeather", "grain.feather");
   bindCheckbox("grainEnabled", "grain.enabled");
   $("grainColor").addEventListener("change", () => {

@@ -136,6 +136,40 @@ function grainSize(doc, medium, size) {
 }
 
 /**
+ * 다이클라우드 기하 — 그레인 한 존이 쌓을 레이어의 반경·세기를 정한다.
+ *
+ * 균일 노이즈 + 단일 블러는 같은 크기의 둥근 점만 만든다. 실제 필름 입자는
+ * 그렇지 않다.
+ *
+ *   1. **채널별 크기가 다르다.** 컬러 필름은 유제층이 3겹이고 청감층(맨 위)
+ *      결정이 가장 크다. 그래서 청색 그레인이 가장 조대하다. R 미세 → B 조대.
+ *   2. **밀도 요동이 광대역이다.** 미세한 해시 위에 큰 상관길이의 덩어리(클럼프)가
+ *      겹친다. 단일 주파수가 아니라 옥타브의 합이다.
+ *
+ * 두 가지를 실제 페인트로 재현할 수 없으니(median·threshold 디스크립터 미채록)
+ * 채록된 op만으로 근사한다 — **컬러 노이즈에 채널별 블러**(층 분화)와 **큰 반경의
+ * 저세기 클럼프 옥타브**(광대역 덩어리)다.
+ *
+ * @param {number} px      format.grainSize의 기준 입자 px
+ * @param {object} grain   { dyeSpread, clump } 0~100
+ * @returns {{ radii:{r,g,b}, clumpRadius:number, clumpScale:number }}
+ */
+function dyeClouds(px, grain) {
+  const g = grain || {};
+  const spread = clamp01((g.dyeSpread == null ? 0 : g.dyeSpread) / 100);
+  // R 0.8 · G 1.0 · B 1.35 를 spread로 항등(1.0)에서 보간. spread=0이면 채널 동일.
+  const chan = (f) => px * (1 + (f - 1) * spread);
+  const radii = { r: chan(0.8), g: chan(1.0), b: chan(1.35) };
+
+  const clumpScale = clamp01((g.clump == null ? 0 : g.clump) / 100);
+  return { radii, clumpRadius: px * 2.6, clumpScale };
+}
+
+function clamp01(v) {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+/**
  * 35mm를 1.0으로 놓은 포맷 배율.
  *
  * 할레이션에 쓴다. 할레이션도 그레인과 같은 물리다 — 빛이 유제와 베이스에서
@@ -174,6 +208,7 @@ module.exports = {
   micronsFor,
   longEdgeFor,
   grainSize,
+  dyeClouds,
   relativeScale,
   printSize,
 };
