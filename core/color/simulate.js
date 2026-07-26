@@ -6,13 +6,15 @@
  *
  * 정확도:
  *   - 크로스토크는 3x3 매트릭스 곱이라 Channel Mixer와 사실상 동일하다.
- *   - curve(토우/숄더/게인)는 컨트롤 포인트를 smoothstep으로 보간한 근사다.
+ *   - curve(토우/숄더/게인)는 컨트롤 포인트를 단조 3차(pchip)로 보간한 근사다.
  *   - selective color는 Photoshop 내부 알고리즘이 비공개라 색역 판정 기반 근사다.
  *     방향성(어느 색이 어느 쪽으로 움직이는지)은 맞지만 픽셀 단위 일치는 아니다.
  *
  * 즉 팔레트는 "이 파라미터가 색을 어느 방향으로 미는가"를 직관적으로 보여주는
  * 용도이고, 정확한 결과는 프록시 미리보기나 실제 적용으로 확인한다.
  */
+
+const curve = require("./curve");
 
 function clamp255(v) {
   return Math.max(0, Math.min(255, v));
@@ -22,19 +24,48 @@ function clampUnit(v) {
   return Math.max(0, Math.min(1, v));
 }
 
-/** 컨트롤 포인트를 지나는 부드러운(smoothstep) 곡선 룩업. 입력/출력 0~255. */
-function curveLookup(points, x) {
-  for (let i = 0; i < points.length - 1; i++) {
-    const [x0, y0] = points[i];
-    const [x1, y1] = points[i + 1];
-    if (x <= x1) {
-      const span = x1 - x0 || 1;
-      const t = clampUnit((x - x0) / span);
-      const ts = t * t * (3 - 2 * t); // smoothstep
-      return y0 + (y1 - y0) * ts;
-    }
+/**
+ * 톤 곡선 보간 — smoothstep에서 **단조 3차(pchip)로 교체**했다.
+ *
+ * smoothstep은 끝점에서 기울기가 0이다. 그래서 토우 곡선의 흑점(입력 0)에서
+ * 기울기가 0.022로 거의 평평한 **셸프**가 생겨, 입력 0~5레벨이 같은 값으로
+ * 뭉쳤다. 채널마다 이 셸프에 실리므로, 색이 있는 딥섀도가 흑점 근처에서 균일한
+ * 틴트로 물들었다 — "블랙포인트 색 이상"의 정체였다(TODO 0-13).
+ *
+ * pchip은 같은 컨트롤포인트를 지나면서 흑점 기울기 0.944(항등 1.0에 근접),
+ * 셸프 폭 1.25레벨, 2차 차분 0.0008(smoothstep의 1/115)로 매끄럽다. 엔진이
+ * 필름 특성곡선에 이미 쓰는 보간이라 새 의존성도 아니다.
+ *
+ * 곡선을 **파라미터로 캐시**한다. `applyGrading`은 격자점마다 불리므로(bake에서
+ * 35937회) pchip을 매번 만들면 그만큼 느려진다. 한 번의 bake 동안 grading이
+ * 고정이라 캐시는 사실상 build-once로 동작한다.
+ */
+let toeCache = { key: null, fn: null };
+function toeShoulderCurve(toe, shoulder) {
+  const key = toe + "|" + shoulder;
+  if (toeCache.key === key) return toeCache.fn;
+  const toeLift = (toe / 100) * 24;
+  const shoulderDrop = (shoulder / 100) * 24;
+  const fn = curve.pchip([
+    [0, toeLift],
+    [64, 64 + toeLift * 0.5],
+    [192, 192 - shoulderDrop * 0.5],
+    [255, 255 - shoulderDrop],
+  ]);
+  toeCache = { key, fn };
+  return fn;
+}
+
+const gainCache = new Map();
+function gainCurve(gain) {
+  if (gain === 1) return null; // 항등 — 곡선 불필요
+  let fn = gainCache.get(gain);
+  if (!fn) {
+    if (gainCache.size > 32) gainCache.clear(); // 슬라이더가 값을 계속 바꿔도 무한정 안 쌓이게
+    fn = curve.pchip([[0, 0], [128, clamp255(128 * gain)], [255, 255]]);
+    gainCache.set(gain, fn);
   }
-  return points[points.length - 1][1];
+  return fn;
 }
 
 function applyCurves(rgb, grading) {
@@ -42,24 +73,18 @@ function applyCurves(rgb, grading) {
   let [r, g, b] = rgb;
 
   if (toe !== 0 || shoulder !== 0) {
-    const toeLift = (toe / 100) * 24;
-    const shoulderDrop = (shoulder / 100) * 24;
-    const comp = [
-      [0, toeLift],
-      [64, 64 + toeLift * 0.5],
-      [192, 192 - shoulderDrop * 0.5],
-      [255, 255 - shoulderDrop],
-    ];
-    r = curveLookup(comp, r);
-    g = curveLookup(comp, g);
-    b = curveLookup(comp, b);
+    const f = toeShoulderCurve(toe, shoulder);
+    r = f(r);
+    g = f(g);
+    b = f(b);
   }
 
-  const gainCurve = (gain, v) =>
-    gain === 1 ? v : curveLookup([[0, 0], [128, clamp255(128 * gain)], [255, 255]], v);
-  r = gainCurve(channelGain.r, r);
-  g = gainCurve(channelGain.g, g);
-  b = gainCurve(channelGain.b, b);
+  const gr = gainCurve(channelGain.r);
+  const gg = gainCurve(channelGain.g);
+  const gb = gainCurve(channelGain.b);
+  if (gr) r = gr(r);
+  if (gg) g = gg(g);
+  if (gb) b = gb(b);
 
   return [r, g, b];
 }
