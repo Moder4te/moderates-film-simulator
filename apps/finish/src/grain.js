@@ -21,9 +21,11 @@
  * selectChannel만으로 근사한다.
  */
 
+const { app, imaging } = require("photoshop");
 const ps = require("../lib/host/ps");
 const { play } = require("../lib/host/ps");
 const format = require("../lib/core/optics/format");
+const displace = require("../lib/core/optics/displace");
 
 // Photoshop 채널 열거자. green은 "grain"이다(halation.js와 동일).
 const CHANNELS = [["red", "r"], ["grain", "g"], ["blue", "b"]];
@@ -153,6 +155,55 @@ async function applyDiffusion(doc, grain, sizing, prefix) {
   ]);
 }
 
+/**
+ * 변위 디퓨전 — 블러 대신 픽셀을 입자 스케일로 이동시켜 서브입자 디테일을 부순다.
+ *
+ * 블러는 미세 선을 **흐리게** 남긴다(머리카락이 살아남는 이유). 변위는 픽셀을
+ * 옮겨 그 선을 입자 스케일로 **조각낸다** — 에너지를 없애지 않고 흐트러뜨린다.
+ * 필름이 미세 디테일을 확률적으로 기록/누락하는 거동에 더 가깝다(displace.js).
+ *
+ * batchPlay의 Diffuse 디스크립터가 미채록이라 imaging으로 직접 한다. 엔진의
+ * applyLut과 같은 검증된 픽셀 왕복 패턴이다(빈 레이어 → 합성 읽기 → 변위 → 되쓰기).
+ */
+async function applyDisplaceDiffusion(doc, grain, sizing, prefix) {
+  const amt = grain.diffusion || 0;
+  if (amt <= 0) return;
+
+  await play([ps.makePixelLayer(), ps.renameLayer(`${prefix} · Diffusion`)]);
+  const layerId = app.activeDocument.activeLayers[0].id;
+
+  const px = await imaging.getPixels({ documentID: doc.id, colorSpace: "RGB" });
+  let outImage = null;
+  try {
+    const width = px.imageData.width;
+    const height = px.imageData.height;
+    const comps = px.imageData.components;
+    const data = await px.imageData.getData({ chunky: true });
+
+    // 진폭 = 입자 스케일 × 강도. 상관길이 = 입자. 균일난수라 RMS ≈ amp/√3.
+    const ampPx = Math.max(0.3, sizing.px * (amt / 100) * 1.2);
+    const corrPx = Math.max(1, sizing.px);
+    const out = displace.displaceBuffer(data, width, height, comps, { ampPx, corrPx });
+
+    outImage = await imaging.createImageDataFromBuffer(out, {
+      width,
+      height,
+      components: comps,
+      componentSize: data.BYTES_PER_ELEMENT === 2 ? 16 : 8,
+      colorSpace: "RGB",
+    });
+    await imaging.putPixels({
+      documentID: doc.id,
+      layerID: layerId,
+      targetBounds: { left: 0, top: 0, width, height },
+      imageData: outImage,
+    });
+  } finally {
+    if (outImage) outImage.dispose();
+    px.imageData.dispose();
+  }
+}
+
 async function apply(doc, grain, medium, prefix) {
   if (!grain.enabled) return;
 
@@ -162,7 +213,9 @@ async function apply(doc, grain, medium, prefix) {
   const sizing = format.grainSize(doc, m, grain.size);
 
   // 디퓨전이 먼저다 — 그레인은 부드러워진 이미지 위에 얹혀야 한다.
-  await applyDiffusion(doc, grain, sizing, prefix);
+  // 두 방식: 블러(기본, 검증됨) vs 변위(실험, 미세 디테일을 더 잘 부순다).
+  if (grain.diffuseDisplace) await applyDisplaceDiffusion(doc, grain, sizing, prefix);
+  else await applyDiffusion(doc, grain, sizing, prefix);
 
   // 암부 → 중간톤 → 명부 순서로 쌓는다. 순서는 결과에 영향이 없지만
   // 레이어 패널에서 톤 순서대로 보이는 편이 읽기 쉽다.

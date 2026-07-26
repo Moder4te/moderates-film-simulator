@@ -175,6 +175,7 @@ function syncUI() {
   setSlider("grainDyeSpread", g.dyeSpread);
   setSlider("grainFeather", g.feather);
   $("grainColor").checked = g.colorMode === "rgb";
+  $("grainDisplace").checked = !!g.diffuseDisplace;
 
   syncMediumUI();
 }
@@ -295,6 +296,10 @@ function wire() {
   bindSlider("grainDyeSpread", "grain.dyeSpread");
   bindSlider("grainFeather", "grain.feather");
   bindCheckbox("grainEnabled", "grain.enabled");
+  $("grainDisplace").addEventListener("change", () => {
+    params.grain.diffuseDisplace = $("grainDisplace").checked;
+    onParamsChanged();
+  });
   $("grainColor").addEventListener("change", () => {
     params.grain.colorMode = $("grainColor").checked ? "rgb" : "mono";
     onParamsChanged();
