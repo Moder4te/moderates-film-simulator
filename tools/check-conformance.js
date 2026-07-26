@@ -121,10 +121,14 @@ const ref = PROBES.map((p) => {
         const idx = [r, g, b];
         for (let c = 0; c < 3; c++) {
           // 잔차는 **부호 있는 수가 아니라 modulo 1 값**이다. 큰 양수 잔차가
-          // 32768을 넘는 것은 정상이므로 부호로 해석하면 안 된다. 값이 [0,1]
-          // 안에 있다는 것을 알고 있으므로 mod 1로 대표값을 고른다.
+          // 32768을 넘는 것은 정상이므로 부호로 해석하면 안 된다.
+          //
+          // 다만 `mod 1`을 무조건 걸어도 안 된다. `v = 1.0`이고 i가 마지막 격자면
+          // 잔차가 0이 되는데, mod를 걸면 0.0으로 접혀 **정확히 1.0만큼 어긋난다.**
+          // 합이 [0,2)에 들어오므로 **1을 넘을 때만** 빼면 모호함이 없다.
           const s = bin.readUInt16LE(off + c * 2);
-          const dec = ((s / 65536 + idx[c] / (n - 1)) % 1 + 1) % 1;
+          let dec = s / 65536 + idx[c] / (n - 1);
+          if (dec > 1) dec -= 1; // 음의 잔차가 감긴 경우
           const want = Math.max(0, Math.min(1, engine32[((b * n + g) * n + r) * 3 + c]));
           max = Math.max(max, Math.abs(dec - want));
         }
@@ -190,6 +194,34 @@ const ref = PROBES.map((p) => {
   }
   ok(`필름 ${films.all().length} × 스캐너 ${scanner.all().length} 전 조합`, worst < 2e-6,
     `최대차 ${worst.toExponential(2)}${where ? " @ " + where : ""}`);
+}
+
+// ── 6. 그레이딩이 색역을 좁히지 않는가 ───────────────────────────────
+//
+// 이전 구현은 ProPhoto → sRGB → 그레이딩 → ProPhoto로 왕복하며 클램프해서
+// **손대지 않은 색까지** sRGB 색역으로 잘라냈다(33³의 82.5%가 이동). 지금은
+// 판정만 클램프한 대리색으로 하고 조정량을 선형광에 실어 옮긴다.
+//
+// 중립에 가까운 그레이딩을 켰을 때 색이 움직이면 그 회귀가 돌아온 것이다.
+{
+  const p = defaultParams();
+  p.film.id = "kodak-ektar-100";
+  p.film.scanner = "frontier"; // 채도가 높아 색역 밖이 많다
+  const off = film.buildForParams(p, 33);
+
+  const on = JSON.parse(JSON.stringify(p));
+  on.grading.enabled = true;
+  on.grading.selectiveColor.reds = { c: 0, m: 0, y: 0, k: 1e-9 }; // 켜기만 한다
+  const table = film.buildForParams(on, 33);
+
+  let moved = 0, max = 0;
+  for (let i = 0; i < off.length; i++) {
+    const d = Math.abs(table[i] - off[i]);
+    if (d > 1 / 255) moved++;
+    if (d > max) max = d;
+  }
+  ok("중립 그레이딩이 색을 옮기지 않는다", moved === 0 && max < 1e-4,
+    `이동 ${moved} / ${off.length}, 최대 ${max.toExponential(2)}`);
 }
 
 console.log(fails ? `\n정합성 실패 ${fails}건` : "\n정합성 통과 — 모든 산출 경로가 같은 색을 낸다");

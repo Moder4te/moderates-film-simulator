@@ -410,29 +410,89 @@ function gradingIsActive(g) {
 /**
  * 완성된 필름 LUT 위에 사용자 색 조정을 구워 넣는다.
  *
- * 왜 sRGB에서 하는가 — `simulate`의 색역 판정(레드/옐로/…)은 sRGB 원색을 전제로
- * 맞춰져 있다. ProPhoto 원색은 훨씬 넓어(일부는 가상색) 같은 인코딩 값이라도
- * 색상이 다르게 잡힌다. 컬러휠에 보이는 대로 동작하게 하려면 sRGB에서 판정하고
- * 적용해야 한다.
+ * ── 왜 판정과 적용을 나누는가 ────────────────────────────────────────────
  *
- * 대가는 이 단계에서 sRGB 색역 밖이 잘린다는 것이다. 그래서 **조정이 중립이면
- * 이 함수를 아예 부르지 않는다**(gradingIsActive) — 색 UI를 쓰지 않는 사용자는
- * ProPhoto 정밀도를 그대로 유지한다.
+ * `simulate`의 색역 판정(레드/옐로/…)과 커브는 **sRGB 0~255를 전제로** 맞춰져
+ * 있다. 컬러휠에 보이는 대로 동작하려면 그 공간에서 판정해야 한다.
  *
- * v1 대비 달라지는 점: v1은 실제 Selective Color 레이어를 쓰고 `simulate`가 그걸
- * 근사해 미리보기를 그렸기에 둘이 어긋났다. 이제 `simulate`의 수식이 곧 결과의
- * 정의가 되므로 미리보기·팔레트·적용이 정확히 일치한다.
+ * 그런데 이전 구현은 판정만이 아니라 **적용까지 sRGB에서 하고 되돌렸다.**
+ *
+ *     ProPhoto → sRGB → 그레이딩 → ProPhoto
+ *
+ * 변환이 [0,1]로 클램프하므로 **sRGB 색역 밖 색이 그 자리에서 잘렸다.** 손대지
+ * 않은 색까지 전부 왕복하므로 피해가 넓었다 — 실측에서 33³ 격자점의 82.5%가
+ * 1/255 이상 이동했고 최대 이동이 0.658이었다. 포화 적색의 채도가 무너졌다.
+ * ProPhoto로 작업하는 의미가 그레이딩을 켜는 순간 사라진 셈이다.
+ *
+ * 그렇다고 클램프만 풀 수도 없다. `simulate`의 커브는 0~255 컨트롤 포인트를
+ * 룩업하므로 범위 밖 입력을 양 끝으로 눌러 버린다. 즉 **그레이딩 수식 자체가
+ * 유한 범위를 전제한다.**
+ *
+ * 그래서 이렇게 한다.
+ *
+ *   1. 클램프한 sRGB **대리색**으로 그레이딩을 돌린다 (기존 경로 그대로)
+ *   2. 그 결과에서 **채널별 조정량**을 뽑는다
+ *   3. 조정량을 **클램프하지 않은 선형광**에 적용한다
+ *
+ * 색역 안에서는 대리색이 곧 원래 색이므로 **결과가 이전과 완전히 같다.**
+ * 색역 밖에서는 조정량만 옮겨 실려 색이 잘리지 않는다.
+ *
+ * ── 조정량을 곱으로 볼 것인가 합으로 볼 것인가 ────────────────────────
+ *
+ * 밝은 쪽은 비율이 맞다(노출을 반으로 줄이면 모든 값이 반이 된다). 어두운 쪽은
+ * 합이 맞다 — 대리색이 0인데 결과가 0이 아니면(발끝 리프트 등) 비율이 무한대가
+ * 된다. 그래서 대리색 밝기로 둘을 섞는다.
+ *
+ * **색역 안에서는 두 방식이 같은 값을 낸다**(대리색 = 원래 색이므로 곱하든 더하든
+ * 결과가 `after`가 된다). 그래서 섞는 비율이 무엇이든 회귀가 없다.
  */
+
+/** 곱 ↔ 합 전환 구간 (선형광). 이 아래는 합, 위는 비율. */
+const GAIN_FLOOR = 0.01;
+
+function mul3v(m, v, out) {
+  out[0] = m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2];
+  out[1] = m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2];
+  out[2] = m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2];
+}
+
 function bakeGrading(table, grading) {
-  const srgb = [0, 0, 0];
-  const back = [0, 0, 0];
+  const M_TO = colorspace.M_PROPHOTO_TO_SRGB;
+  const M_BACK = colorspace.M_SRGB_TO_PROPHOTO;
+
+  const linWork = [0, 0, 0]; // ProPhoto 원색 선형광
+  const linSrgb = [0, 0, 0]; // sRGB 원색 선형광 — 색역 밖이면 음수가 된다
+  const proxy = [0, 0, 0]; // 클램프한 sRGB 인코딩 대리색 (0~255)
+  const out = [0, 0, 0];
+
   for (let p = 0; p < table.length; p += 3) {
-    colorspace.proPhotoToSrgb(table[p], table[p + 1], table[p + 2], srgb);
-    const g = simulate.applyGrading([srgb[0] * 255, srgb[1] * 255, srgb[2] * 255], grading);
-    colorspace.srgbToProPhoto(g[0] / 255, g[1] / 255, g[2] / 255, back);
-    table[p] = back[0];
-    table[p + 1] = back[1];
-    table[p + 2] = back[2];
+    linWork[0] = colorspace.prophotoDecode(table[p]);
+    linWork[1] = colorspace.prophotoDecode(table[p + 1]);
+    linWork[2] = colorspace.prophotoDecode(table[p + 2]);
+
+    // 클램프하지 않는다. 여기서 자르면 지금 고치려는 문제가 그대로 남는다.
+    mul3v(M_TO, linWork, linSrgb);
+
+    // 대리색 — srgbEncode가 [0,1]로 자른다. **여기서만 자르는 것이 의도다.**
+    proxy[0] = colorspace.srgbEncode(linSrgb[0]) * 255;
+    proxy[1] = colorspace.srgbEncode(linSrgb[1]) * 255;
+    proxy[2] = colorspace.srgbEncode(linSrgb[2]) * 255;
+
+    const graded = simulate.applyGrading(proxy, grading);
+
+    for (let c = 0; c < 3; c++) {
+      const before = colorspace.srgbDecode(proxy[c] / 255);
+      const after = colorspace.srgbDecode(graded[c] / 255);
+      const w = before >= GAIN_FLOOR ? 1 : before / GAIN_FLOOR;
+      const ratio = before > 0 ? linSrgb[c] * (after / before) : 0;
+      const delta = linSrgb[c] + (after - before);
+      out[c] = w * ratio + (1 - w) * delta;
+    }
+
+    mul3v(M_BACK, out, linWork);
+    table[p] = colorspace.prophotoEncode(linWork[0]);
+    table[p + 1] = colorspace.prophotoEncode(linWork[1]);
+    table[p + 2] = colorspace.prophotoEncode(linWork[2]);
   }
   return table;
 }
