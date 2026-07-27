@@ -218,6 +218,7 @@ async function refreshForActiveDoc(force) {
   // 미리보기도 새 문서로 다시 그린다. 이게 빠지면 문서를 바꿔도 파라미터를
   // 건드리기 전까지 이전 사진이 그대로 남는다.
   await preview.render(params);
+  renderScope(); // 격자는 렌더 루프에서 채워지므로 그 뒤에 그린다
 }
 
 /**
@@ -328,9 +329,126 @@ function handleAchromaReset(range) {
 function switchWheelView(view) {
   $("wheel").style.display = view === "color" ? "block" : "none";
   $("wheelAchroma").style.display = view === "achroma" ? "flex" : "none";
+  const sc = $("scope");
+  if (sc) sc.style.display = view === "scope" ? "block" : "none";
+  const scNote = $("scopeNote");
+  if (scNote) scNote.style.display = view === "scope" ? "block" : "none";
   document.querySelectorAll(".wtab").forEach((t) => {
     t.className = t.dataset.view === view ? "wtab active" : "wtab";
   });
+  if (view === "scope") renderScope();
+}
+
+/**
+ * 벡터스코프 — 밀도 격자.
+ *
+ * 격자는 `preview.js`가 자기 픽셀 루프에서 이미 채워 뒀다(추가 순회 없음).
+ * 여기서는 그리기만 한다.
+ *
+ * ── 왜 격자이고, 왜 미리 만들어 두는가 ──────────────────────────────────
+ *
+ * UXP는 canvas가 드래그 중 검게 클리어되고 SVG·rotate도 못 써 **DOM + translate만**
+ * 가능하다. 픽셀마다 점을 찍는 것은 불가능하다.
+ *
+ * 그리고 UXP는 DOM을 native UI로 매핑하는 비용이 커서, 갱신마다 수백 개를 만들었다
+ * 지우면 렌더 파이프가 밀린다(팔레트 div 15개도 그랬다). 그래서 **칸을 한 번만 만들고
+ * 이후에는 불투명도만 바꾼다** — 팔레트가 쓰는 것과 같은 패턴이다.
+ *
+ * 칸의 **색은 위치로 정해져 변하지 않는다**(그 자리의 색상각·채도). 그래서 색까지
+ * 생성 시점에 굽고, 매 갱신에는 밀도만 반영한다.
+ */
+let scopeCells = null; // [{ el, i }] — i는 격자 인덱스
+
+function buildScope() {
+  const host = $("scope");
+  if (!host || scopeCells) return;
+  host.innerHTML = "";
+  scopeCells = [];
+
+  const n = preview.GRID_N;
+  const size = colorwheel.SIZE;
+  const pad = 10;
+  const R = size / 2 - pad;
+  const cx = size / 2;
+  const cy = size / 2;
+
+  // 채도 눈금 — 동심원 2개. border-radius로만 그린다(rotate·SVG 불가).
+  for (const f of [0.5, 1]) {
+    const ring = document.createElement("div");
+    ring.className = "sc-ring";
+    const r = R * f;
+    ring.style.left = cx - r + "px";
+    ring.style.top = cy - r + "px";
+    ring.style.width = r * 2 + "px";
+    ring.style.height = r * 2 + "px";
+    host.appendChild(ring);
+  }
+
+  // 색상 기준 방향. 컬러휠과 같은 각도 규약이라 위치가 그대로 대응한다.
+  for (const [label, hue] of [["R", 0], ["Y", 60], ["G", 120], ["C", 180], ["B", 240], ["M", 300]]) {
+    const [ox, oy] = colorwheel.polarOffset(hue, 1, R + 2);
+    const t = document.createElement("div");
+    t.className = "sc-axis";
+    t.textContent = label;
+    t.style.left = cx + ox - 3 + "px";
+    t.style.top = cy + oy - 6 + "px";
+    host.appendChild(t);
+  }
+
+  const step = (R * 2) / n;
+  const side = Math.ceil(step) + 1; // 칸 사이가 벌어지지 않게 살짝 크게
+  for (let gy = 0; gy < n; gy++) {
+    for (let gx = 0; gx < n; gx++) {
+      // 격자 중심을 [-1,1] 평면으로
+      const nx = ((gx + 0.5) / n) * 2 - 1;
+      const ny = ((gy + 0.5) / n) * 2 - 1;
+      if (nx * nx + ny * ny > 1.02) continue; // 원 밖은 아예 만들지 않는다
+
+      const hue = (Math.atan2(-ny, nx) * 180) / Math.PI;
+      const sat = Math.min(1, Math.hypot(nx, ny));
+      const rgb = colorwheel.hsvToRgb(hue, sat, 1); // 0~255를 돌려준다
+
+      const d = document.createElement("div");
+      d.className = "sc-cell";
+      d.style.left = cx + nx * R - side / 2 + "px";
+      d.style.top = cy + ny * R - side / 2 + "px";
+      d.style.width = side + "px";
+      d.style.height = side + "px";
+      d.style.background =
+        "rgb(" + Math.round(rgb[0]) + "," + Math.round(rgb[1]) + "," + Math.round(rgb[2]) + ")";
+      d.style.opacity = "0";
+      host.appendChild(d);
+      scopeCells.push({ el: d, i: gy * n + gx });
+    }
+  }
+}
+
+function renderScope() {
+  buildScope();
+  if (!scopeCells) return;
+  const data = preview.scope();
+
+  // 격자 인덱스 → 밀도. 칸 수가 1024 이하라 맵이 가볍다.
+  const dens = new Map();
+  const n = preview.GRID_N;
+  for (const c of data.cells) {
+    const gx = Math.min(n - 1, (c.x * n) | 0);
+    const gy = Math.min(n - 1, (c.y * n) | 0);
+    dens.set(gy * n + gx, c.d);
+  }
+
+  for (const cell of scopeCells) {
+    const d = dens.get(cell.i);
+    // 최저 0.12는 둬야 희소한 칸이 아예 안 보이지 않는다.
+    cell.el.style.opacity = d === undefined ? "0" : String(0.12 + d * 0.88);
+  }
+
+  const note = $("scopeNote");
+  if (note) {
+    note.textContent = data.total
+      ? "적용 결과 기준 · 무채색 제외 · 밀도는 로그 스케일 (계측기가 아니라 분포 모양을 보는 용도)"
+      : "문서를 열면 분포가 표시됩니다";
+  }
 }
 
 /** 팔레트 스와치 div를 최초 1회 생성한다. 이후엔 style만 갱신한다. */
@@ -438,7 +556,8 @@ function schedulePreviewRefresh() {
   if (previewTimer) clearTimeout(previewTimer);
   previewTimer = setTimeout(() => {
     previewTimer = null;
-    preview.render(params);
+    // 벡터스코프 격자가 이 렌더 안에서 채워진다. 끝난 뒤에 다시 그린다.
+    preview.render(params).then(renderScope, renderScope);
   }, 250);
 }
 

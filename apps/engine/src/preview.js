@@ -22,8 +22,25 @@ const film = require("../lib/core/color/film");
 const films = require("../lib/core/color/films");
 const colorspace = require("../lib/core/color/colorspace");
 const ps = require("../lib/host/ps");
+const vectorscope = require("../lib/core/color/vectorscope");
 
 const PV_WIDTH = 300; // 썸네일 긴 축(가로) px
+/**
+ * 벡터스코프 격자 한 변.
+ *
+ * 64로 잡았다가 낮췄다 — **야경 네온에서 셀이 2153개**까지 나왔다. UXP는 DOM을
+ * native UI로 매핑하는 비용이 커서(팔레트 div 15개도 드래그 중 렌더 파이프를
+ * 오버로드한 적이 있다) 그 규모는 위험하다. 32면 같은 장면이 652개고 240px 휠에서
+ * 셀이 6.9px라 읽기에도 충분하다. 격자 크기가 곧 셀 수의 **상한**이라 병리적 입력에도
+ * 1024개를 넘지 않는다.
+ */
+const GRID_N = 32;
+
+/**
+ * 마지막 렌더의 벡터스코프 격자. 픽셀 루프에서 함께 채워진다.
+ * **적용 결과 기준**이다 — 조정이 색을 어디로 밀었는지 보는 것이 목적이라서.
+ */
+let lastScope = { cells: [], total: 0, peak: 0 };
 let busy = false;
 let busySince = 0;
 let pendingParams = null;
@@ -88,13 +105,18 @@ function renderPixels(data, comps, pixelCount, params, table, size, toDisplay) {
   // 항등에서 시작해 그레이딩만 구운 LUT을 주므로 여기서 나눌 이유가 없다.
   const inv = 1 / maxV;
   const out = [0, 0, 0];
+  // 벡터스코프 격자를 **이 루프에 얹는다.** 이미 전 픽셀을 돌고 있으므로 추가 순회가
+  // 없다 — 따로 돌면 파라미터를 만질 때마다 프록시를 한 번 더 훑게 된다.
+  const grid = vectorscope.createGrid(GRID_N);
   for (let p = 0, i = 0, j = 0; p < count; p++, i += comps, j += 3) {
     lut.sample(table, size, data[i] * inv, data[i + gOff] * inv, data[i + bOff] * inv, out);
     disp(out[0], out[1], out[2], shown);
     rgb[j] = clamp255(shown[0] * 255);
     rgb[j + 1] = clamp255(shown[1] * 255);
     rgb[j + 2] = clamp255(shown[2] * 255);
+    grid.add(shown[0], shown[1], shown[2]); // 적용 결과 기준
   }
+  lastScope = grid.cells();
   return rgb;
 }
 
@@ -241,4 +263,9 @@ async function render(params) {
   }
 }
 
-module.exports = { render };
+/** 마지막 렌더의 벡터스코프 격자. 렌더 전이면 빈 결과. */
+function scope() {
+  return lastScope;
+}
+
+module.exports = { render, scope, GRID_N };

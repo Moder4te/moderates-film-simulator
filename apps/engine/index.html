@@ -125,6 +125,25 @@
         background: rgba(22, 22, 24, 0.9);
         overflow: hidden;
       }
+      /* 벡터스코프 격자 칸. translate만 쓴다(UXP는 canvas·rotate 불가). */
+      .sc-cell {
+        position: absolute;
+        border-radius: 1px;
+        pointer-events: none;
+      }
+      /* 채도 눈금 — 동심원. border-radius로만 그린다 */
+      .sc-ring {
+        position: absolute;
+        border: 1px solid rgba(255, 255, 255, 0.13);
+        border-radius: 50%;
+        pointer-events: none;
+      }
+      .sc-axis {
+        position: absolute;
+        font-size: 8.5px;
+        opacity: 0.5;
+        pointer-events: none;
+      }
       .wheel-tabs {
         display: flex;
         gap: 3px;
@@ -382,6 +401,7 @@
         <div class="wheel-tabs">
           <div class="wtab active" data-view="color">컬러</div>
           <div class="wtab" data-view="achroma">무채색</div>
+          <div class="wtab" data-view="scope">분포</div>
         </div>
       </div>
       <div class="wheel-wrap">
@@ -400,8 +420,11 @@
             <div class="mini-label">블랙</div>
           </div>
         </div>
+        <!-- 벡터스코프. 각도 규약은 컬러휠과 같다(core/color/vectorscope.js) -->
+        <div id="scope" class="wheel" style="display: none"></div>
       </div>
       <div class="palette-note">○ 원본 → ● 적용 · 마커를 끌어 색역 조절</div>
+      <div id="scopeNote" class="film-note" style="display: none"></div>
 
       <div class="sub-head"><span class="sub-title" id="detailLabel">색역 세부 — 레드</span></div>
       <div class="wheel-wrap">
