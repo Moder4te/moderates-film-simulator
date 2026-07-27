@@ -72,23 +72,31 @@ function referenceById(id) {
   return REF_BY_ID.get(id) || REF_BY_ID.get("document");
 }
 
-/** 입자 크기 슬라이더 상한. 이보다 굵은 그레인은 크기가 아니라 해상도로 낸다. */
-const MAX_GRAIN_SIZE = 10;
+/** 감도 슬라이더 범위 (ISO). 로그(스톱) 스케일. */
+const MIN_ISO = 50;
+const MAX_ISO = 3200;
 
 /**
- * 사용자 슬라이더(0~10) → 필름면 유효 입자 지름 (µm). 범위 2~6µm.
+ * 필름 감도(ISO) → 필름면 유효 입자 지름 (µm). 범위 4~25µm.
  *
- * **상한을 10(=6µm)으로 둔다.** 그 위로 올리면 입자 텍스처와 흩어짐이 여러 px로
- * 커져 블록지고 부자연스럽다. 실제로 그레인은 필름 고유 크기(µm)로 고정이고,
- * "굵은 그레인"은 크기가 아니라 **확대율(해상도)**의 문제다 — 같은 입자를 더
- * 키워 인화하면 굵어 보인다. 그래서 더 굵은 룩은 이 슬라이더가 아니라
- * "입자 크기 기준"을 실제 문서보다 높게(또는 문서를 축소) 잡아서 낸다.
+ * 입자 크기는 곧 감도다 — 빠른 필름일수록 은염 결정이 굵다. 그래서 추상적인
+ * "크기 0~10" 대신 사진가에게 익숙한 ISO로 받는다(todo 0-4). 멱법칙으로 맞춘다:
  *
- * 기울기 0.4µm/단위는 예전과 같아, 낮은 값의 감각(2 → 2.8µm)이 유지된다.
+ *     ISO   50 → 4µm      400 → 10µm (기본)     3200 → 25µm
+ *          100 → 6µm      800 → 14µm
+ *
+ * `10·(ISO/400)^0.44`가 이 앵커들을 통과한다(50→3.98, 100→5.4, 800→13.6, 3200→25).
+ *
+ * ⚠️ **추정값이다.** 현행 Kodak TDS는 입자 지표로 PGI를 쓰고 구형 RMS
+ * granularity와 변환 관계가 없다고 명시돼 있어(v2plan 4.2) 공개 자료에서 µm를
+ * 곧바로 얻을 수 없다. 감성 근사다(C3).
+ *
+ * 예전엔 크기 0~10을 블러 반경으로 썼고 mush 회피로 6µm에 상한을 뒀는데, 그레인을
+ * 값 노이즈로 생성하면서(grainfield) 큰 blob이 대비를 유지해 상한이 불필요해졌다.
  */
-function micronsFor(size) {
-  const s = size <= 0 ? 0 : size >= MAX_GRAIN_SIZE ? MAX_GRAIN_SIZE : size;
-  return 2 + s * 0.4;
+function micronsForIso(iso) {
+  const i = iso < MIN_ISO ? MIN_ISO : iso > MAX_ISO ? MAX_ISO : iso;
+  return 10 * Math.pow(i / 400, 0.44);
 }
 
 /**
@@ -116,16 +124,16 @@ function longEdgeFor(doc, referenceId, customLongEdge) {
  *
  * @param {object} doc     활성 문서 (width/height)
  * @param {object} medium  { format, reference, customLongEdge }
- * @param {number} size    그레인 크기 슬라이더 0~100
+ * @param {number} iso     필름 감도 (ISO 50~3200)
  * @returns {{px:number, pxPerMm:number, microns:number, subPixel:boolean, amountScale:number}}
  *   px          가우시안 블러 반경으로 쓸 값
  *   subPixel    1px 미만 — 블러로 표현할 수 없다
  *   amountScale 서브픽셀일 때 노이즈 amount에 곱할 계수 (0~1)
  */
-function grainSize(doc, medium, size) {
+function grainSize(doc, medium, iso) {
   const m = medium || {};
   const fmt = byId(m.format);
-  const microns = micronsFor(size);
+  const microns = micronsForIso(iso);
   const longEdge = longEdgeFor(doc, m.reference, m.customLongEdge);
   const pxPerMm = longEdge / fmt.longEdgeMm;
   const px = (microns / 1000) * pxPerMm;
@@ -213,8 +221,9 @@ module.exports = {
   byId,
   references,
   referenceById,
-  MAX_GRAIN_SIZE,
-  micronsFor,
+  MIN_ISO,
+  MAX_ISO,
+  micronsForIso,
   longEdgeFor,
   grainSize,
   dyeClouds,

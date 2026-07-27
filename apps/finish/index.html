@@ -415,10 +415,10 @@
         <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
         <div class="cs-val">15</div>
       </div>
-      <div class="cs" data-id="grainSize" data-min="0" data-max="10" data-step="0.5" data-value="6">
-        <div class="cs-label">입자 크기</div>
+      <div class="cs" data-id="grainSize" data-min="50" data-max="3200" data-step="1" data-value="400" data-log="1" data-fmt="iso">
+        <div class="cs-label">필름 감도</div>
         <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
-        <div class="cs-val">20</div>
+        <div class="cs-val">ISO 400</div>
       </div>
       <div class="cs" data-id="grainDiffusion" data-min="0" data-max="100" data-step="1" data-value="85">
         <div class="cs-label">번짐</div>
@@ -442,7 +442,7 @@
       </div>
       <div style="height: 4px"></div>
       <sp-checkbox id="grainColor" size="s">채널별 컬러 그레인</sp-checkbox>
-      <sp-checkbox id="grainDisplace" size="s">번짐: 변위 방식 (실험)</sp-checkbox>
+      <sp-checkbox id="grainDisplace" size="s" checked>번짐: 변위 방식</sp-checkbox>
     </div>
 
     <!-- 실행 -->

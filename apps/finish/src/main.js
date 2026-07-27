@@ -118,10 +118,10 @@ function syncMediumUI() {
     doc = null;
   }
   if (doc) {
-    const s = format.grainSize(doc, m, params.grain.size);
+    const s = format.grainSize(doc, m, params.grain.iso);
     const px = s.px < 1 ? s.px.toFixed(2) : s.px.toFixed(1);
     parts.push(
-      `입자 ${s.microns.toFixed(0)}µm → ${px}px` +
+      `ISO ${params.grain.iso} · 입자 ~${s.microns.toFixed(0)}µm → ${px}px` +
         (s.subPixel ? " (1px 미만 — 블러 대신 강도로 환산)" : "")
     );
     parts.push(format.printSize(doc));
@@ -169,7 +169,7 @@ function syncUI() {
   setSlider("grainShadow", g.shadow);
   setSlider("grainMid", g.midtone);
   setSlider("grainHigh", g.highlight);
-  setSlider("grainSize", g.size);
+  setSlider("grainSize", g.iso);
   setSlider("grainDiffusion", g.diffusion);
   setSlider("grainClump", g.clump);
   setSlider("grainDyeSpread", g.dyeSpread);
@@ -290,7 +290,7 @@ function wire() {
   bindSlider("grainShadow", "grain.shadow");
   bindSlider("grainMid", "grain.midtone");
   bindSlider("grainHigh", "grain.highlight");
-  bindSlider("grainSize", "grain.size");
+  bindSlider("grainSize", "grain.iso");
   bindSlider("grainDiffusion", "grain.diffusion");
   bindSlider("grainClump", "grain.clump");
   bindSlider("grainDyeSpread", "grain.dyeSpread");

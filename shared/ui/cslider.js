@@ -11,16 +11,23 @@
  *     <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
  *     <div class="cs-val"></div>
  *   </div>
+ *
+ * 옵션(하위호환 — 없으면 기존 선형 동작 그대로):
+ *   data-log="1"   로그(스톱) 스케일. min>0 필수. step은 **스톱 단위**로 해석한다
+ *                  (예: min=50 max=3200 step=1 → 50·100·…·3200 한 스톱 간격).
+ *                  ISO·감도처럼 곱셈적으로 변하는 값에 쓴다.
+ *   data-fmt="iso" cs-val 표시를 "ISO 400"처럼 포맷한다.
  */
 
-function fmt(value, step) {
-  return step < 1 ? value.toFixed(step < 0.1 ? 2 : 1) : String(Math.round(value));
-}
+// cs-val 표시 포맷터. data-fmt로 고른다. 없으면 기본(step 기반).
+const FORMATTERS = {
+  iso: (v) => "ISO " + Math.round(v),
+};
 
-function quantize(value, min, max, step) {
-  let v = Math.max(min, Math.min(max, value));
-  v = Math.round((v - min) / step) * step + min;
-  return Math.round(v * 1000) / 1000;
+function fmt(value, step, fmtName) {
+  const f = fmtName && FORMATTERS[fmtName];
+  if (f) return f(value);
+  return step < 1 ? value.toFixed(step < 0.1 ? 2 : 1) : String(Math.round(value));
 }
 
 /** 하나의 .cs 요소를 슬라이더로 초기화한다. 컨트롤러 객체를 반환한다. */
@@ -28,25 +35,51 @@ function init(el) {
   const min = parseFloat(el.dataset.min);
   const max = parseFloat(el.dataset.max);
   const step = parseFloat(el.dataset.step) || 1;
+  const log = el.dataset.log === "1"; // 로그(스톱) 스케일
+  const fmtName = el.dataset.fmt || "";
   const track = el.querySelector(".cs-track");
   const fill = el.querySelector(".cs-fill");
   const thumb = el.querySelector(".cs-thumb");
   const valEl = el.querySelector(".cs-val");
 
-  let value = quantize(parseFloat(el.dataset.value) || 0, min, max, step);
+  const round3 = (v) => Math.round(v * 1000) / 1000;
+  const totalStops = log ? Math.log2(max / min) : 0;
+
+  // 값 스냅. 선형은 step 간격, 로그는 min 기준 step 스톱 간격.
+  function quantize(v) {
+    if (log) {
+      let s = Math.max(0, Math.min(totalStops, Math.log2(v / min)));
+      s = Math.round(s / step) * step;
+      return round3(min * Math.pow(2, s));
+    }
+    let x = Math.max(min, Math.min(max, v));
+    x = Math.round((x - min) / step) * step + min;
+    return round3(x);
+  }
+
+  // 트랙 위치(0~1) ↔ 값.
+  function posOf(v) {
+    if (log) return totalStops ? Math.log2(v / min) / totalStops : 0;
+    return max === min ? 0 : (v - min) / (max - min);
+  }
+  function valueOf(pct) {
+    if (log) return quantize(min * Math.pow(2, pct * totalStops));
+    return min + pct * (max - min);
+  }
+
+  let value = quantize(parseFloat(el.dataset.value) || (log ? min : 0));
   const defaultValue = value; // data-value 초기값. 더블탭 리셋 대상.
   const listeners = [];
 
   function render() {
-    const pct = max === min ? 0 : (value - min) / (max - min);
-    const p = (pct * 100).toFixed(2) + "%";
+    const p = (Math.max(0, Math.min(1, posOf(value))) * 100).toFixed(2) + "%";
     fill.style.width = p;
     thumb.style.left = p;
-    if (valEl) valEl.textContent = fmt(value, step);
+    if (valEl) valEl.textContent = fmt(value, step, fmtName);
   }
 
   function setValue(v, notify) {
-    const q = quantize(v, min, max, step);
+    const q = quantize(v);
     if (q === value && notify !== "force") {
       if (notify) return; // 값 동일 + 알림 요청 → 중복 통지 안 함
     }
@@ -69,7 +102,7 @@ function init(el) {
     const pct = dragRect.width
       ? Math.max(0, Math.min(1, (clientX - dragRect.left) / dragRect.width))
       : 0;
-    setValue(min + pct * (max - min), true);
+    setValue(valueOf(pct), true);
   }
 
   // pointermove는 좌표만 저장하고, rAF로 프레임당 한 번만 실제 반영한다.

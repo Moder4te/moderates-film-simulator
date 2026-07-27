@@ -164,7 +164,7 @@ async function applyDisplaceDiffusion(doc, grain, sizing, prefix) {
  */
 async function applyDiffusion(doc, grain, medium, prefix) {
   if (!grain.enabled) return;
-  const sizing = format.grainSize(doc, medium || {}, grain.size);
+  const sizing = format.grainSize(doc, medium || {}, grain.iso);
   if (grain.diffuseDisplace) await applyDisplaceDiffusion(doc, grain, sizing, prefix);
   else await blurDiffusion(doc, grain, sizing, prefix);
 }
@@ -175,7 +175,7 @@ async function applyDiffusion(doc, grain, medium, prefix) {
  */
 async function applyGrain(doc, grain, medium, prefix) {
   if (!grain.enabled) return;
-  const sizing = format.grainSize(doc, medium || {}, grain.size);
+  const sizing = format.grainSize(doc, medium || {}, grain.iso);
 
   const width = doc.width;
   const height = doc.height;
