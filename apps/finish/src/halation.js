@@ -53,13 +53,17 @@ async function buildRedSource(doc, threshold, prefix) {
     const bytes = data.BYTES_PER_ELEMENT;
     const maxV = bytes === 2 ? 32768 : 255; // PS 16bit는 0~32768
     const t = (threshold / 255) * maxV;
-    const span = maxV - t;
+    // **완만한 knee.** 임계에서 max까지 다 올라가야 최대면(smoothstep(t,max)) 중간
+    // 밝기 붉은 소스(네온 R 중앙 ~0.69)가 잡혀도 거의 안 블룸한다. 실측에서
+    // 붉은 링이 작례의 절반이었던 원인. 임계 위 절반 지점에서 full에 도달시켜
+    // 중간밝기 붉은 소스도 확실히 블룸하게 한다.
+    const knee = Math.max(1, (maxV - t) * 0.5);
 
     const out = new data.constructor(w * h * comps);
     for (let p = 0; p < w * h; p++) {
       const o = p * comps;
-      // R 기반 smoothstep 강도. 채널 순서는 RGB(getPixels colorSpace:"RGB").
-      let s = span > 0 ? (data[o] - t) / span : 0;
+      // R 기반 강도(완만 knee + smoothstep). 채널 순서 RGB(getPixels colorSpace:"RGB").
+      let s = (data[o] - t) / knee;
       s = s < 0 ? 0 : s > 1 ? 1 : s;
       s = s * s * (3 - 2 * s);
       const v = s * maxV;

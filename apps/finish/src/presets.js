@@ -125,7 +125,7 @@ async function seedIfEmpty() {
   cine.name = "CineStill 800T";
   cine.category = "Film";
   cine.grain.iso = 800; // ISO 800
-  cine.halation.threshold = 185; // 네온까지 할레이션이 걸리게 임계 낮춤
+  cine.halation.threshold = 155; // 붉은 네온 R 중앙값(~177)까지 걸리게 낮춤(실측)
   cine.halation.strength = 80;
   cine.halation.radius = 1.4; // bleed ×4 → ~5.6% 확산, 실측 범위와 일치
   cine.halation.core = 70;
