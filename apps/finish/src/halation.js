@@ -142,6 +142,9 @@ function selectLayer(id) {
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
+/** 원반화 상한. 그 위는 소프트 엣지가 얇아져 인공적으로 보인다(실기 확인). */
+const MAX_DISK = 70;
+
 async function apply(doc, halation, formatId, prefix) {
   if (!halation.enabled || halation.strength <= 0) return;
 
@@ -233,7 +236,9 @@ async function apply(doc, halation, formatId, prefix) {
     // 원반이 훨씬 커져 **룩이 바뀐다.** 성능 개선은 결과를 바꾸지 않아야 한다 — 바뀌면
     // 속도가 깨뜨린 것인지 의도된 차이인지 구분할 수 없다. (상한을 풀고 싶으면
     // 그것은 별도의 의도적 변경으로 다룬다.)
-    const diskFrac = clamp((halation.disk == null ? 0 : halation.disk) / 100, 0, 1);
+    // 상한 70 — 그 위로 올리면 소프트 엣지가 너무 얇아져 원반이 인공적으로 보인다.
+    // 슬라이더 최대와 같은 값이라, 구 프리셋에 70을 넘는 값이 들어 있어도 여기서 잘린다.
+    const diskFrac = clamp((halation.disk == null ? 0 : halation.disk) / 100, 0, MAX_DISK / 100);
     const diskCap = 100 / shrink; // 원본 기준 100px에 해당하는 축소본 반경
     for (const [channel, factor] of channels) {
       const radius = (baseRadius * sc.mul * factor) / shrink;
