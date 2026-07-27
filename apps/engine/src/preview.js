@@ -40,7 +40,35 @@ const GRID_N = 32;
  * 마지막 렌더의 벡터스코프 격자. 픽셀 루프에서 함께 채워진다.
  * **적용 결과 기준**이다 — 조정이 색을 어디로 밀었는지 보는 것이 목적이라서.
  */
-let lastScope = { cells: [], total: 0, peak: 0 };
+const EMPTY_SCOPE = { cells: [], total: 0, peak: 0 };
+let lastScope = EMPTY_SCOPE;
+let scopeListener = null;
+
+/**
+ * 격자가 갱신될 때 호출될 함수를 등록한다.
+ *
+ * ⚠️ **promise로는 갱신 시점을 못 잡는다.** `render()`는 이미 렌더 중이면 요청만
+ * 남기고 **즉시 반환**하는데(코얼레싱), 그때 호출자의 `.then`은 **낡은 격자**로
+ * 실행된다. 이어서 진행 중이던 렌더가 끝나고 밀린 요청까지 처리하며 격자를 다시
+ * 채우지만, 그 시점에 다시 그리라고 알려 줄 방법이 없었다. 그래서 화면이 과거
+ * 프레임에 멈춰 **이전 색이 사라지지 않는 것처럼 보였다.**
+ *
+ * 데이터가 실제로 바뀌는 자리에서 직접 알린다.
+ */
+function onScopeUpdate(fn) {
+  scopeListener = fn;
+}
+
+function publishScope(next) {
+  lastScope = next;
+  if (scopeListener) {
+    try {
+      scopeListener(lastScope);
+    } catch (e) {
+      console.error("분포 갱신 실패", e);
+    }
+  }
+}
 let busy = false;
 let busySince = 0;
 let pendingParams = null;
@@ -116,7 +144,7 @@ function renderPixels(data, comps, pixelCount, params, table, size, toDisplay) {
     rgb[j + 2] = clamp255(shown[2] * 255);
     grid.add(shown[0], shown[1], shown[2]); // 적용 결과 기준
   }
-  lastScope = grid.cells();
+  publishScope(grid.cells());
   return rgb;
 }
 
@@ -135,6 +163,8 @@ async function renderOnce(params) {
   if (!app.documents.length) {
     img.style.display = "none";
     if (empty) empty.style.display = "block";
+    // 문서를 닫으면 분포도 비운다. 안 그러면 닫힌 문서의 격자가 그대로 남는다.
+    publishScope(EMPTY_SCOPE);
     return;
   }
   const docId = app.activeDocument.id;
@@ -268,4 +298,4 @@ function scope() {
   return lastScope;
 }
 
-module.exports = { render, scope, GRID_N };
+module.exports = { render, scope, onScopeUpdate, GRID_N };

@@ -226,7 +226,6 @@ async function refreshForActiveDoc(force) {
   // 미리보기도 새 문서로 다시 그린다. 이게 빠지면 문서를 바꿔도 파라미터를
   // 건드리기 전까지 이전 사진이 그대로 남는다.
   await preview.render(params);
-  renderScope(); // 격자는 렌더 루프에서 채워지므로 그 뒤에 그린다
 }
 
 /**
@@ -429,7 +428,16 @@ function buildScope() {
 function renderScope() {
   buildScope();
   if (!scopeCells) return;
+
+  // 데이터가 없으면(문서를 닫았거나 렌더 실패) **전부 지운다.** 남겨 두면 이전
+  // 사진의 분포가 그대로 보인다.
   const data = preview.scope();
+  if (!data || !data.cells || !data.cells.length) {
+    clearScopeCells();
+    const emptyNote = $("scopeNote");
+    if (emptyNote) emptyNote.textContent = "문서를 열면 분포가 표시됩니다";
+    return;
+  }
 
   // 격자 인덱스 → 밀도. 칸 수가 1024 이하라 맵이 가볍다.
   const dens = new Map();
@@ -449,10 +457,15 @@ function renderScope() {
 
   const note = $("scopeNote");
   if (note) {
-    note.textContent = data.total
-      ? "적용 결과 기준 · 무채색 제외 · 밀도는 로그 스케일 (계측기가 아니라 분포 모양을 보는 용도)"
-      : "문서를 열면 분포가 표시됩니다";
+    note.textContent =
+      "적용 결과 기준 · 무채색 제외 · 밀도는 상위 분위 기준 (계측기가 아니라 분포 모양을 보는 용도)";
   }
+}
+
+/** 모든 칸을 투명하게. 데이터가 없을 때 이전 분포가 남지 않게 한다. */
+function clearScopeCells() {
+  if (!scopeCells) return;
+  for (const cell of scopeCells) cell.el.style.opacity = "0";
 }
 
 /** 팔레트 스와치 div를 최초 1회 생성한다. 이후엔 style만 갱신한다. */
@@ -560,8 +573,9 @@ function schedulePreviewRefresh() {
   if (previewTimer) clearTimeout(previewTimer);
   previewTimer = setTimeout(() => {
     previewTimer = null;
-    // 벡터스코프 격자가 이 렌더 안에서 채워진다. 끝난 뒤에 다시 그린다.
-    preview.render(params).then(renderScope, renderScope);
+    // 격자 갱신은 preview.onScopeUpdate 구독으로 받는다 — promise로는 코얼레싱된
+    // 렌더의 갱신 시점을 놓친다(preview.js의 onScopeUpdate 주석 참조).
+    preview.render(params);
   }, 250);
 }
 
@@ -986,6 +1000,10 @@ async function onDeletePreset() {
 function wire() {
   // 모든 커스텀 슬라이더를 먼저 초기화한다. 이후 bindSlider들이 sliders[id]를 참조한다.
   sliders = cslider.initAll(document);
+
+  // 분포 격자는 **데이터가 실제로 바뀔 때** 다시 그린다. promise로 잡으면 코얼레싱된
+  // 렌더의 갱신을 놓쳐 화면이 과거 프레임에 멈춘다(preview.js onScopeUpdate 주석).
+  preview.onScopeUpdate(renderScope);
 
   // 색역 칩 선택 → 색역 전환. click은 UXP div에서 불안정하므로 pointerdown을 쓴다
   // (슬라이더·마커에서 검증된 이벤트). 클릭된 요소는 currentTarget에서 읽는다.
