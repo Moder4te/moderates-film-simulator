@@ -160,13 +160,14 @@ async function apply(doc, halation, formatId, prefix) {
   //   · **Core**  — 타이트(×0.3), **Color Dodge**. 실제 할레이션의 코어는 뜨거운
   //     흰색으로 날아간다. 소스는 오렌지-레드라 여기만 colorize로 채도를 죽여
   //     흰색에 가깝게 만든다(whitenSat). 붉은 색은 주변 헤일로가 담당.
-  //   · **Mid**   — ×1.3, **Screen**. colorize 안 한다 — 소스 색(오렌지-레드) +
-  //     채널 확산차가 만든 링을 그대로 살린다.
-  //   · **Bleed** — ×4.0, **Linear Dodge(Add)**. Screen은 겹칠수록 붉은색을 살몬으로
-  //     희석하지만 Add는 에너지 합산이라 암부·중간톤 위로 채도 높은 붉은빛을 유지.
+  //   · **Mid**   — ×1.1, **Linear Dodge(Add)**. 붉은 링의 본체다. Screen이면
+  //     압축돼 경계가 뭉개지고 살몬으로 희석되므로 Add로 진하게, 반경을 좁혀
+  //     경계를 세운다. colorize 안 한다 — 채널 확산차가 만든 링을 그대로 살린다.
+  //   · **Bleed** — ×4.0, **Linear Dodge(Add)**. 넓은 헤일로. Add로 암부·중간톤
+  //     위 채도 높은 붉은빛을 유지(Screen은 살몬으로 희석).
   const scales = [
     { name: "Core", mul: 0.3, w: core / 100, blend: "colorDodge", whitenSat: halation.tintSaturation * 0.1 },
-    { name: "Mid", mul: 1.3, w: (core + bleed) / 200, blend: "screen", whitenSat: null },
+    { name: "Mid", mul: 1.1, w: (core + bleed) / 180, blend: "linearDodge", whitenSat: null },
     { name: "Bleed", mul: 4.0, w: bleed / 100, blend: "linearDodge", whitenSat: null },
   ];
 
