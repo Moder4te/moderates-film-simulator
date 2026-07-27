@@ -31,19 +31,19 @@ function defaultParams() {
       enabled: true,
       // 할레이션이 발생하는 최소 휘도 0~255
       threshold: 205,
-      // 합성 불투명도 0~100
-      strength: 45,
+      // 마스터 강도 0~100 (각 스케일 불투명도에 곱해진다)
+      strength: 70,
       // 확산 반경. 이미지 긴 변 대비 비율(%). 포맷 배율·스케일 배율이 곱해진다.
       radius: 1.2,
-      // 다중스케일 블룸 프로파일 0~100. core=타이트 핫코어, bleed=광역 블리딩.
-      // 단일 가우시안은 둘을 동시에 못 내므로 여러 반경을 Screen으로 누적한다.
-      core: 60,
-      bleed: 50,
+      // 다중스케일 블룸 프로파일 0~100. core=타이트 핫코어(Color Dodge),
+      // bleed=광역 블리딩(Screen). 단일 가우시안은 둘을 동시에 못 낸다.
+      core: 80,
+      bleed: 60,
       // 채널별 반경 배율. 레드가 가장 넓게 퍼지는 것이 할레이션의 핵심 특징.
       channelSpread: { r: 1.0, g: 0.55, b: 0.3 },
       // 틴트 (HSL colorize)
       tintHue: 18,
-      tintSaturation: 65,
+      tintSaturation: 80,
     },
 
     grain: {

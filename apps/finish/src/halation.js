@@ -81,12 +81,16 @@ async function apply(doc, halation, formatId, prefix) {
   const core = halation.core == null ? 60 : halation.core;
   const bleed = halation.bleed == null ? 50 : halation.bleed;
 
-  // 스케일 = { 반경 배율, 가중(0~1) }. 가중은 strength에 다시 곱해진다.
+  // 스케일 = { 반경 배율, 가중(0~1), 블렌드 }. 가중은 strength에 다시 곱해진다.
   // 중간은 코어·블리딩을 이어 주는 다리라 둘의 평균으로 자동 산출한다.
+  //
+  // 핫코어는 **Color Dodge**다(사용자 실측 — Screen보다 자연스럽다). 닷지는 코어를
+  // 더 세게 태워 광원에 밀착한 밝은 번짐을 만든다. 넓은 스케일은 Screen이라야
+  // 부드럽게 쌓인다(닷지로 넓게 태우면 하이라이트가 뭉텅 날아간다).
   const scales = [
-    { name: "Core", mul: 0.4, w: core / 100 },
-    { name: "Mid", mul: 1.3, w: (core + bleed) / 200 },
-    { name: "Bleed", mul: 4.0, w: bleed / 100 },
+    { name: "Core", mul: 0.4, w: core / 100, blend: "colorDodge" },
+    { name: "Mid", mul: 1.3, w: (core + bleed) / 200, blend: "screen" },
+    { name: "Bleed", mul: 4.0, w: bleed / 100, blend: "screen" },
   ];
 
   // 하이라이트 추출본 한 장. 각 스케일이 여기서 복제돼 나간다.
@@ -126,7 +130,7 @@ async function apply(doc, halation, formatId, prefix) {
     await play([
       ps.selectChannel("RGB"),
       colorize(halation.tintHue, halation.tintSaturation),
-      ps.setLayerBlend("screen", clamp(opacity, 1, 100)),
+      ps.setLayerBlend(sc.blend, clamp(opacity, 1, 100)),
     ]);
   }
 
