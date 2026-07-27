@@ -440,6 +440,21 @@
         <div class="chip-btn" data-range="whites">화이트</div>
         <div class="chip-btn" data-range="neutrals">중간톤</div>
         <div class="chip-btn" data-range="blacks">블랙</div>
+        <div class="chip-btn" data-range="skin">피부</div>
+      </div>
+
+      <!-- 피부 색역일 때만 보이는 설정. 대역 정의는 core/color/gamut.js -->
+      <div id="skinOpts" style="display: none">
+        <div class="cs" data-id="skinRange" data-min="0" data-max="100" data-step="1" data-value="30">
+          <div class="cs-label">대역 폭</div>
+          <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+          <div class="cs-val">30</div>
+        </div>
+        <div class="row" style="margin: 4px 0">
+          <sp-button id="btnPickSkin" size="s" variant="secondary">전경색에서 피부색 집기</sp-button>
+        </div>
+        <sp-checkbox id="protectSkin" size="s">피부 보호 (레드·옐로가 피부를 비켜 감)</sp-checkbox>
+        <div id="skinNote" class="film-note"></div>
       </div>
 
       <div class="cs" data-id="scC" data-min="-100" data-max="100" data-step="1" data-value="0">

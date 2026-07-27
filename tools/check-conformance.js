@@ -80,6 +80,9 @@ params.film.scanner = "frontier";
 params.grading.enabled = true;
 params.grading.toe = 25;
 params.grading.selectiveColor.reds = { c: -6, m: 3, y: 8, k: 0 };
+// 피부 의사 색역도 함께 건다 — 켜 두지 않으면 네 경로 중 하나만 고쳐도 검사가 통과한다.
+params.grading.selectiveColor.skin = { c: 4, m: -5, y: 6, k: 0 };
+params.grading.protectSkin = true;
 
 console.log("색 경로 정합성 (필름 + 스캐너 + 그레이딩이 모두 켜진 상태)");
 

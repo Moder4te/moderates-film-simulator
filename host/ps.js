@@ -222,6 +222,26 @@ function activeDocument() {
  */
 const PROFILE_KEYS = ["colorProfileName", "colorProfile", "profile"];
 
+/**
+ * Photoshop 전경색을 [r,g,b] 0~255로 읽는다. 없으면 null.
+ *
+ * 스포이드 대용이다 — **UXP 패널은 문서 캔버스 클릭을 받지 못한다.** 패널 안
+ * `<img>`에서 좌표를 잡는 방법도 있으나 표시 영역과 이미지 좌표가 어긋나는지
+ * 확인되지 않았다. 사용자가 Photoshop 스포이드로 찍고 이 값을 가져오는 쪽이
+ * 좌표 문제가 아예 없고 캔버스에서 직접 찍을 수 있다.
+ */
+function foregroundRgb() {
+  try {
+    const c = app.foregroundColor;
+    if (!c || !c.rgb) return null;
+    const { red, green, blue } = c.rgb;
+    if (typeof red !== "number") return null;
+    return [red, green, blue];
+  } catch (e) {
+    return null;
+  }
+}
+
 function documentProfile() {
   try {
     const doc = app.activeDocument;
@@ -240,6 +260,7 @@ module.exports = {
   play,
   modal,
   documentProfile,
+  foregroundRgb,
   TARGET_LAYER,
   renameLayer,
   setLayerBlend,

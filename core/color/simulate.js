@@ -15,6 +15,7 @@
  */
 
 const curve = require("./curve");
+const gamut = require("./gamut");
 
 function clamp255(v) {
   return Math.max(0, Math.min(255, v));
@@ -146,16 +147,33 @@ function applySelectiveColor(rgb, grading) {
   let dm = 0;
   let dy = 0;
 
+  // 피부톤 의사 색역. 고정 6색역과 달리 색상각 + 채도 창으로 판정한다(gamut.skinWeight).
+  // 대역이 reds·yellows와 겹치므로 **더하기**로 쌓는다 — 그 둘을 0으로 두고 피부만
+  // 만지면 피부만 바뀌고, 기존 프리셋은 그대로 재현된다.
+  const skinW = sc.skin ? gamut.skinWeight(h, sat, lum, grading.skinHue, grading.skinRange) : 0;
+
   // 유채색 색역: 인접 두 밴드에 hue 거리로 가중, 채도에 비례.
   for (const band of CHROMA_BANDS) {
     const dist = hueDist(h, band.hue);
     if (dist >= 60) continue;
-    const w = (1 - dist / 60) * sat;
+    let w = (1 - dist / 60) * sat;
+    // **피부 보호** — reds·yellows 조정이 피부를 비켜 가게 한다. 붉은 옷만 만지고
+    // 피부는 지키는 식이 가능해진다. 켜지 않으면 종전대로 피부에도 걸린다.
+    if (grading.protectSkin && skinW > 0 && (band.name === "reds" || band.name === "yellows")) {
+      w *= 1 - skinW;
+    }
     if (w <= 0) continue;
     const adj = sc[band.name];
     dc += (adj.c + adj.k) * w;
     dm += (adj.m + adj.k) * w;
     dy += (adj.y + adj.k) * w;
+  }
+
+  if (skinW > 0) {
+    const adj = sc.skin;
+    dc += (adj.c + adj.k) * skinW;
+    dm += (adj.m + adj.k) * skinW;
+    dy += (adj.y + adj.k) * skinW;
   }
 
   // 무채색 색역: 채도가 낮을수록 강하게, 밝기로 blacks/neutrals/whites 배분.

@@ -23,6 +23,7 @@ const scanner = require("./lib/core/color/scanner");
 const film = require("./lib/core/color/film");
 const lut = require("./lib/core/color/lut");
 const colorspace = require("./lib/core/color/colorspace");
+const gamut = require("./lib/core/color/gamut");
 const cubeexport = require("./lib/core/io/cube");
 const xmpexport = require("./lib/core/io/xmp");
 const apply = require("./src/apply");
@@ -695,7 +696,32 @@ function setRange(range) {
   currentRangeVal = range;
   updateRangeChips();
   syncSelectiveColorSliders();
+  syncSkinUI(); // 피부 색역일 때만 대역 설정을 보여준다
   renderDetail(); // 세부 휠을 새 색역으로 갱신
+}
+
+/**
+ * 피부 색역 설정의 표시·값 갱신.
+ *
+ * 피부는 고정 6색역과 달리 **대역 자체를 조절**할 수 있어(색상각·폭) 전용 UI가
+ * 붙는다. 다른 색역을 보고 있을 때는 감춘다 — 항상 띄우면 어느 색역에 딸린
+ * 설정인지 헷갈린다.
+ */
+function syncSkinUI() {
+  const box = $("skinOpts");
+  if (!box) return;
+  const on = currentRangeVal === "skin";
+  box.style.display = on ? "block" : "none";
+  if (!on) return;
+  setSlider("skinRange", params.grading.skinRange);
+  const cb = $("protectSkin");
+  if (cb) cb.checked = !!params.grading.protectSkin;
+  const note = $("skinNote");
+  if (note) {
+    note.textContent =
+      `대역 중심 ${Number(params.grading.skinHue).toFixed(1)}° · ` +
+      "폭을 넓히면 어두운 피부까지 잡히지만 나무·낙엽처럼 실제로 피부색인 물체도 딸려온다.";
+  }
 }
 
 function updateRangeChips() {
@@ -704,6 +730,29 @@ function updateRangeChips() {
     // classList가 UXP에서 불안정할 수 있어 className을 직접 세팅한다.
     c.className = c.dataset.range === currentRangeVal ? "chip-btn active" : "chip-btn";
   }
+}
+
+/**
+ * 전경색을 피부 대역 중심으로 삼는다.
+ *
+ * 사용자가 Photoshop 스포이드로 피부를 찍고 이 버튼을 누른다. **패널에서 캔버스를
+ * 직접 클릭할 수는 없다**(UXP 제약) — 전경색을 경유하는 쪽이 좌표 환산 문제가
+ * 아예 없다(host/ps.js의 foregroundRgb 주석 참조).
+ *
+ * 색상각만 가져오고 채도·밝기는 쓰지 않는다. 한 점의 채도는 조명·노출에 따라 크게
+ * 흔들리는데 대역 폭은 슬라이더가 담당하기 때문이다.
+ */
+function onPickSkin() {
+  const rgb = ps.foregroundRgb();
+  if (!rgb) return setStatus("전경색을 읽지 못했습니다.", true);
+  const hsv = gamut.rgbToHsv(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255);
+  if (hsv.s < 0.05) {
+    return setStatus("전경색이 무채색이라 피부 색상각을 정할 수 없습니다.", true);
+  }
+  params.grading.skinHue = Math.round(hsv.h * 10) / 10;
+  syncSkinUI();
+  onParamsChanged();
+  setStatus(`피부 대역 중심을 ${params.grading.skinHue.toFixed(1)}°로 맞췄습니다.`);
 }
 
 function syncSelectiveColorSliders() {
@@ -830,6 +879,12 @@ function wire() {
   bindSelectiveColorSlider("scM", "m");
   bindSelectiveColorSlider("scY", "y");
   bindSelectiveColorSlider("scK", "k");
+
+  // 피부 색역 전용 설정
+  bindSlider("skinRange", "grading.skinRange");
+  bindCheckbox("protectSkin", "grading.protectSkin");
+  const pick = $("btnPickSkin");
+  if (pick) pick.addEventListener("click", onPickSkin);
 
   bindSlider("toe", "grading.toe");
   bindSlider("shoulder", "grading.shoulder");
