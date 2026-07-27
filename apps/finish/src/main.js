@@ -156,6 +156,18 @@ function bindCheckbox(id, path) {
 function syncUI() {
   $("presetName").value = params.name === "Untitled" ? "" : params.name;
 
+  const t = params.tone;
+  $("toneEnabled").checked = t.enabled;
+  setSlider("toneExposure", t.exposure);
+  setSlider("toneContrast", t.contrast);
+  setSlider("toneShadows", t.shadows);
+  setSlider("toneHighlights", t.highlights);
+  setSlider("toneBlack", t.black);
+  setSlider("toneTemp", t.temp);
+  setSlider("toneTint", t.tint);
+  setSlider("toneSaturation", t.saturation);
+  setSlider("toneVibrance", t.vibrance);
+
   const h = params.halation;
   $("halationEnabled").checked = h.enabled;
   setSlider("halThreshold", h.threshold);
@@ -283,6 +295,17 @@ async function onBatch() {
 function wire() {
   // 슬라이더는 DOM에서 한 번에 초기화한다 (.cs 요소 스캔)
   sliders = cslider.initAll(document);
+
+  bindSlider("toneExposure", "tone.exposure");
+  bindSlider("toneContrast", "tone.contrast");
+  bindSlider("toneShadows", "tone.shadows");
+  bindSlider("toneHighlights", "tone.highlights");
+  bindSlider("toneBlack", "tone.black");
+  bindSlider("toneTemp", "tone.temp");
+  bindSlider("toneTint", "tone.tint");
+  bindSlider("toneSaturation", "tone.saturation");
+  bindSlider("toneVibrance", "tone.vibrance");
+  bindCheckbox("toneEnabled", "tone.enabled");
 
   bindSlider("halThreshold", "halation.threshold");
   bindSlider("halStrength", "halation.strength");

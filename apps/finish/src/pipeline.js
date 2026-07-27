@@ -3,6 +3,8 @@
  *
  * 순서는 결과에 직접 영향을 준다.
  *
+ *   → 그레이딩   톤·색 미세 조정. **제일 앞**이다 — 색을 확정하고 광학을 얹는다.
+ *                할레이션이 조정된 하이라이트에서 발생해야 자연스럽다.
  *   → 디퓨전     해상도를 입자에 묶는 베이스 처리. **할레이션보다 먼저** 돌려야
  *                한다 — stampVisible/getPixels가 합성본을 잡아, 할레이션이 이미
  *                있으면 디퓨전 레이어에 구워져 할레이션을 끌 수 없다(토글 불가 버그).
@@ -22,6 +24,7 @@
  */
 
 const ps = require("../lib/host/ps");
+const grading = require("./grading");
 const halation = require("./halation");
 const grain = require("./grain");
 
@@ -57,8 +60,9 @@ async function groupOwnLayers(doc) {
 async function run(doc, params) {
   const medium = params.medium || { format: "35mm", reference: "document" };
   await clearOwnLayers(doc);
-  // 디퓨전 → 할레이션 → 그레인. 디퓨전이 할레이션보다 먼저여야 할레이션이 독립
-  // 레이어로 남아 토글 가능하다(grain.applyDiffusion 주석 참조).
+  // 그레이딩 → 디퓨전 → 할레이션 → 그레인. 디퓨전이 할레이션보다 먼저여야 할레이션이
+  // 독립 레이어로 남아 토글 가능하다(grain.applyDiffusion 주석 참조).
+  await grading.apply(doc, params.tone, PREFIX);
   await grain.applyDiffusion(doc, params.grain, medium, PREFIX);
   await halation.apply(doc, params.halation, medium.format, PREFIX);
   await grain.applyGrain(doc, params.grain, medium, PREFIX);

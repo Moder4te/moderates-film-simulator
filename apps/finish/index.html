@@ -361,6 +361,62 @@
       <div id="mediumNote" class="film-note"></div>
     </div>
 
+    <!-- 그레이딩 (톤·색 미세 조정) — 파이프라인 제일 앞에서 적용된다 -->
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">그레이딩</span>
+        <sp-checkbox id="toneEnabled" size="s" checked></sp-checkbox>
+      </div>
+      <div class="sub-head"><span class="sub-title">톤</span></div>
+      <div class="cs" data-id="toneExposure" data-min="-2" data-max="2" data-step="0.05" data-value="0">
+        <div class="cs-label">노출</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">0.00</div>
+      </div>
+      <div class="cs" data-id="toneContrast" data-min="-50" data-max="50" data-step="1" data-value="0">
+        <div class="cs-label">대비</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">0</div>
+      </div>
+      <div class="cs" data-id="toneShadows" data-min="-100" data-max="100" data-step="1" data-value="0">
+        <div class="cs-label">암부</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">0</div>
+      </div>
+      <div class="cs" data-id="toneHighlights" data-min="-100" data-max="100" data-step="1" data-value="0">
+        <div class="cs-label">명부</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">0</div>
+      </div>
+      <div class="cs" data-id="toneBlack" data-min="0" data-max="50" data-step="1" data-value="0">
+        <div class="cs-label">흑점</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">0</div>
+      </div>
+      <div style="height: 4px"></div>
+      <div class="sub-head"><span class="sub-title">색</span></div>
+      <div class="cs" data-id="toneTemp" data-min="-100" data-max="100" data-step="1" data-value="0">
+        <div class="cs-label">색온도</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">0</div>
+      </div>
+      <div class="cs" data-id="toneTint" data-min="-100" data-max="100" data-step="1" data-value="0">
+        <div class="cs-label">틴트</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">0</div>
+      </div>
+      <div class="cs" data-id="toneSaturation" data-min="-100" data-max="100" data-step="1" data-value="0">
+        <div class="cs-label">채도</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">0</div>
+      </div>
+      <div class="cs" data-id="toneVibrance" data-min="-100" data-max="100" data-step="1" data-value="0">
+        <div class="cs-label">바이브런스</div>
+        <div class="cs-track"><div class="cs-fill"></div><div class="cs-thumb"></div></div>
+        <div class="cs-val">0</div>
+      </div>
+    </div>
+
     <!-- 할레이션 -->
     <div class="card">
       <div class="card-head">

@@ -27,6 +27,32 @@ function defaultParams() {
       customLongEdge: 2048,
     },
 
+    /**
+     * 그레이딩 — 이미 현상된 파일에 얹는 **미세 조정**이다.
+     *
+     * 색역별 CMY 같은 정밀 조작은 엔진 소관이라 여기 없다. 상한은 8bit에서 디더로도
+     * 복구 못 하는 영역 직전에서 끊었다(core/optics/tone.js의 coefficients 참조).
+     * 파이프라인 **제일 앞**에서 적용된다 — 색을 정하고 광학을 얹는 순서.
+     *
+     * ⚠️ 키 이름이 `grading`이 아니라 `tone`인 이유 — v1.x 통합 프리셋의 `grading`은
+     * **엔진 스키마**(selectiveColor·crosstalk 등)이고 migrate가 그것을 일부러 통과
+     * 시킨다(같은 파일을 엔진에서 열 때 읽으라고). 같은 이름을 쓰면 두 스키마가 섞인다.
+     */
+    tone: {
+      enabled: true,
+      // 톤
+      exposure: 0, // ±2 스톱 (선형광에서 곱한다)
+      contrast: 0, // ±50
+      shadows: 0, // ±100 암부 리프트
+      highlights: 0, // ±100 명부
+      black: 0, // 0~50 흑점
+      // 색
+      temp: 0, // ±100 색온도 (웜↔쿨)
+      tint: 0, // ±100 틴트 (녹↔마젠타)
+      saturation: 0, // ±100
+      vibrance: 0, // ±100 (이미 포화한 색은 덜 건드린다)
+    },
+
     halation: {
       enabled: true,
       // 할레이션이 발생하는 최소 휘도 0~255
@@ -98,6 +124,8 @@ function migrate(raw) {
     ...raw,
     kind: "finish",
     medium: { ...base.medium, ...(raw.medium || {}) },
+    // raw.tone이 없으면(구 프리셋) 기본값 0 — 그레이딩이 조용히 걸리지 않는다.
+    tone: { ...base.tone, ...(raw.tone || {}) },
     halation: {
       ...base.halation,
       ...h,
