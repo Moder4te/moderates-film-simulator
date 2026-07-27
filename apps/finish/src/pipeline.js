@@ -3,8 +3,12 @@
  *
  * 순서는 결과에 직접 영향을 준다.
  *
- *   → 할레이션   하이라이트에서 번진다. 그레인보다 먼저여야 노이즈가 번지지 않는다
- *   → 그레인     매체 특성이므로 최상단
+ *   → 디퓨전     해상도를 입자에 묶는 베이스 처리. **할레이션보다 먼저** 돌려야
+ *                한다 — stampVisible/getPixels가 합성본을 잡아, 할레이션이 이미
+ *                있으면 디퓨전 레이어에 구워져 할레이션을 끌 수 없다(토글 불가 버그).
+ *   → 할레이션   하이라이트에서 번진다. 디퓨전 위, 그레인 아래의 독립 screen
+ *                레이어로 남아 나중에 켜고 끌 수 있다.
+ *   → 그레인     매체 특성이므로 최상단. 노이즈가 할레이션에 번지지 않는다.
  *
  * **색은 건드리지 않는다.** 색이 필요하면 엔진 플러그인을 먼저 적용하거나,
  * 이미 현상된 파일(Lightroom 프로파일을 거친 JPEG 등)을 입력으로 쓴다.
@@ -53,8 +57,11 @@ async function groupOwnLayers(doc) {
 async function run(doc, params) {
   const medium = params.medium || { format: "35mm", reference: "document" };
   await clearOwnLayers(doc);
+  // 디퓨전 → 할레이션 → 그레인. 디퓨전이 할레이션보다 먼저여야 할레이션이 독립
+  // 레이어로 남아 토글 가능하다(grain.applyDiffusion 주석 참조).
+  await grain.applyDiffusion(doc, params.grain, medium, PREFIX);
   await halation.apply(doc, params.halation, medium.format, PREFIX);
-  await grain.apply(doc, params.grain, medium, PREFIX);
+  await grain.applyGrain(doc, params.grain, medium, PREFIX);
   await groupOwnLayers(doc);
 }
 

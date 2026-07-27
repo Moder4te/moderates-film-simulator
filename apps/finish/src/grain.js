@@ -103,7 +103,7 @@ async function addZone(doc, label, strength, range, feather, grainBuf, dims, pre
  * 디테일을 지운다. 반경 = 입자 크기, 강도가 높아야(85%+) 실제로 지워진다.
  * stampVisible은 디스크립터 두 개다 — 펼치지 않으면 배경을 덮는다(ps.js).
  */
-async function applyDiffusion(doc, grain, sizing, prefix) {
+async function blurDiffusion(doc, grain, sizing, prefix) {
   const amt = grain.diffusion || 0;
   if (amt <= 0) return;
   const radius = Math.max(0.6, sizing.px * 1.3);
@@ -156,17 +156,27 @@ async function applyDisplaceDiffusion(doc, grain, sizing, prefix) {
   }
 }
 
-async function apply(doc, grain, medium, prefix) {
+/**
+ * 디퓨전만 — 해상도를 입자 크기에 묶는 베이스 처리. **할레이션보다 먼저** 돌려야
+ * 한다. stampVisible/getPixels가 합성본을 잡으므로, 할레이션이 이미 있으면 그
+ * 픽셀이 디퓨전 레이어에 구워져 나중에 할레이션을 끌 수 없다(사용자 버그).
+ * 파이프라인이 디퓨전 → 할레이션 → 그레인 순으로 이 함수와 applyGrain을 나눠 부른다.
+ */
+async function applyDiffusion(doc, grain, medium, prefix) {
   if (!grain.enabled) return;
-
-  const m = medium || {};
-  const sizing = format.grainSize(doc, m, grain.size);
-
-  // 디퓨전이 먼저다 — 그레인은 해상도를 낮춘 이미지 위에 얹혀야 한다.
+  const sizing = format.grainSize(doc, medium || {}, grain.size);
   if (grain.diffuseDisplace) await applyDisplaceDiffusion(doc, grain, sizing, prefix);
-  else await applyDiffusion(doc, grain, sizing, prefix);
+  else await blurDiffusion(doc, grain, sizing, prefix);
+}
 
-  // 그레인 텍스처 한 벌을 값 노이즈로 생성해 세 존이 공유한다.
+/**
+ * 그레인 존만 — 값 노이즈 텍스처 한 벌을 세 존이 Overlay로 공유한다. 디퓨전·
+ * 할레이션이 모두 얹힌 뒤 **최상단**에 온다(매체 특성).
+ */
+async function applyGrain(doc, grain, medium, prefix) {
+  if (!grain.enabled) return;
+  const sizing = format.grainSize(doc, medium || {}, grain.size);
+
   const width = doc.width;
   const height = doc.height;
   const depth = depthOf(doc);
@@ -188,4 +198,13 @@ async function apply(doc, grain, medium, prefix) {
   await addZone(doc, "Highlight", grain.highlight, grain.highlightRange, grain.feather, grainBuf, dims, prefix);
 }
 
-module.exports = { apply, applyDiffusion, blendRangeFor };
+/**
+ * 편의 래퍼 — 디퓨전 + 그레인을 한 번에. **할레이션을 끼우지 않는다.** 파이프라인은
+ * 할레이션을 사이에 넣으려고 두 단계를 따로 부른다(applyDiffusion/applyGrain).
+ */
+async function apply(doc, grain, medium, prefix) {
+  await applyDiffusion(doc, grain, medium, prefix);
+  await applyGrain(doc, grain, medium, prefix);
+}
+
+module.exports = { apply, applyDiffusion, applyGrain, blendRangeFor };
