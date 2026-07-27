@@ -196,11 +196,28 @@ async function apply(doc, halation, formatId, prefix) {
     const dup = await base.duplicate();
     await play([selectLayer(dup.id), ps.renameLayer(`${prefix} · Halation ${sc.name}`)]);
 
-    // 채널별 블러 — 스케일 배율 × 채널 차등(R 최대). 사실상 0인 채널은 건너뛴다.
+    // 채널별 확산 — 스케일 배율 × 채널 차등(R 최대). 사실상 0인 채널은 건너뛴다.
+    //
+    // **원반(disk).** 할레이션은 렌즈 앞 안개가 아니라 베이스 뒷면에서 튕겨 나온
+    // 빛의 궤적이라, 종형 가우시안이 아니라 특정 반경까지 꽉 찬 뒤 경계에서 떨어지는
+    // 원반이다(사용자 육안 확인). Maximum으로 팽창시켜 원반을 만들고 작은 가우시안
+    // 으로 가장자리만 소프트하게 한다. disk=0이면 순수 가우시안. Maximum은 100px
+    // 상한이라 초과분은 가우시안으로 넘긴다.
+    const diskFrac = clamp((halation.disk == null ? 0 : halation.disk) / 100, 0, 1);
     for (const [channel, factor] of channels) {
       const radius = baseRadius * sc.mul * factor;
       if (radius < 0.15) continue;
-      await play([ps.selectChannel(channel), ps.gaussianBlur(radius)]);
+      const cmds = [ps.selectChannel(channel)];
+      if (diskFrac > 0 && radius * diskFrac >= 1) {
+        let dr = radius * diskFrac;
+        let gr = radius * (1 - diskFrac);
+        if (dr > 100) { gr += dr - 100; dr = 100; } // Maximum 100px 상한 초과분은 블러로
+        cmds.push(ps.maximumFilter(dr));
+        if (gr >= 0.15) cmds.push(ps.gaussianBlur(gr));
+      } else {
+        cmds.push(ps.gaussianBlur(radius));
+      }
+      await play(cmds);
     }
 
     const cmds = [ps.selectChannel("RGB")];

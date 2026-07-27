@@ -130,6 +130,7 @@ async function seedIfEmpty() {
   cine.halation.radius = 1.4; // bleed ×4 → ~5.6% 확산, 실측 범위와 일치
   cine.halation.core = 70;
   cine.halation.bleed = 85; // 넓은 붉은 헤일로가 강한 것이 특징
+  cine.halation.disk = 75; // 경계 뚜렷한 원반형 번짐
   cine.halation.tintHue = 14;
   cine.halation.tintSaturation = 90;
 

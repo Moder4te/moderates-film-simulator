@@ -115,6 +115,20 @@ function gaussianBlur(radiusPx) {
   };
 }
 
+/**
+ * Maximum(최대값) 필터 — 밝은 영역을 형태학적으로 팽창시켜 **원반(disk)**을 만든다.
+ * 가우시안의 종형 곡선과 달리 특정 반경까지 꽉 찬 뒤 경계에서 뚝 떨어진다.
+ * roundness로 사각이 아닌 원형 팽창. **반경은 1~100px 정수 상한**(PS 제약).
+ */
+function maximumFilter(radiusPx) {
+  const r = Math.max(1, Math.min(100, Math.round(radiusPx)));
+  return {
+    _obj: "maximum",
+    radius: { _unit: "pixelsUnit", _value: r },
+    select: { _enum: "maximumMinimumSelectType", _value: "roundness" },
+  };
+}
+
 /** channel: "red" | "grain"(=green) | "blue" | "RGB"(composite) */
 function selectChannel(channel) {
   return {
@@ -210,6 +224,7 @@ module.exports = {
   fillLayer,
   addNoise,
   gaussianBlur,
+  maximumFilter,
   selectChannel,
   stampVisible,
   percentToPixels,

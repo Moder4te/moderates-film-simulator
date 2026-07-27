@@ -163,6 +163,7 @@ function syncUI() {
   setSlider("halRadius", h.radius);
   setSlider("halCore", h.core);
   setSlider("halBleed", h.bleed);
+  setSlider("halDisk", h.disk);
   setSlider("halHue", h.tintHue);
   setSlider("halSat", h.tintSaturation);
 
@@ -287,6 +288,7 @@ function wire() {
   bindSlider("halRadius", "halation.radius");
   bindSlider("halCore", "halation.core");
   bindSlider("halBleed", "halation.bleed");
+  bindSlider("halDisk", "halation.disk");
   bindSlider("halHue", "halation.tintHue");
   bindSlider("halSat", "halation.tintSaturation");
   bindCheckbox("halationEnabled", "halation.enabled");
