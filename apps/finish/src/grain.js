@@ -1,24 +1,24 @@
 /**
- * 명암별 차등 그레인 — 다이클라우드 근사.
+ * 명암별 차등 그레인 — 값 노이즈 다이클라우드.
  *
- * 실제 필름 입자는 노출량에 따라 가시성이 다르다. 완전 암부와 완전 명부에서는
- * 입자가 억제되고 중간톤에서 가장 두드러진다. 균일 노이즈로는 재현되지 않는다.
+ * 실제 필름 입자는 노출량에 따라 가시성이 다르다. 완전 암부·명부에서 억제되고
+ * 중간톤에서 가장 두드러진다. 그리고 입자 자체가 균일한 둥근 점이 아니다.
  *
- * 그리고 입자 자체가 균일한 둥근 점이 아니다. 두 가지를 더 재현한다(format.dyeClouds).
+ * ── 값 노이즈로 생성한다 (블러 아님) ────────────────────────────────────
  *
- *   · **채널별 진폭** — Vision3 500T 실측 4장에서 채널차는 크기가 아니라 세기였다
- *     (청색 RMS가 녹색의 ~1.76배). 채널을 골라 각각 노이즈를 넣어 청색을 시끄럽게
- *     한다. halation이 쓰는 채널 선택 패턴과 같다.
- *   · **클럼프 옥타브** — 미세 해시 위에 큰 상관길이의 덩어리를 겹친다. 실제
- *     그레인은 단일 주파수가 아니라 광대역 밀도 요동이다.
+ * 예전엔 Add Noise(1px) + 가우시안 블러로 큰 입자를 흉내 냈다. 근본 결함이었다 —
+ * **블러는 큰 blob을 못 만든다.** 반경을 키우면 대비가 같이 떨어져 mush가 되지
+ * 입자가 커지지 않는다(사용자 지적). 그래서 그레인 텍스처를 JS 값 노이즈로
+ * 생성한다(core/optics/grainfield). 셀을 키우면 대비를 유지한 채 blob이 실제로
+ * 커진다. 채널별 진폭(청색 시끄럽게)·클럼프 옥타브도 필드에 함께 굽는다.
  *
- * 그리고 블러를 크게 걸면 입자가 뭉개져 안 보인다(실측 상관길이 ~1px = 크리스프).
- * 블러 반경을 입자 px의 작은 분수로만 걸어 날카로움을 유지한다(GRAIN_BLUR).
+ * 텍스처는 **세 존이 공유한다** — 필름의 그레인은 한 층이고, 톤에 따라 달라지는
+ * 것은 가시성뿐이다. 한 번 생성해 Overlay + Blend If로 존별 강도·톤 마스크를 준다.
  *
- * 구현: 50% 회색 + 노이즈 레이어를 Overlay로 올리고, Blend If(underlying)로
- * 하단 레이어의 휘도 구간을 지정한다. 마스크 채널 생성 없이 페더링까지 얻는다.
- * median·threshold 디스크립터가 미채록이라, 채록된 addNoise·gaussianBlur·
- * selectChannel만으로 근사한다.
+ * ── 디퓨전 (해상 손실) ──────────────────────────────────────────────────
+ *
+ * 그레인이 얹히기 전에 이미지를 입자 해상도로 눌러 razor 엣지를 없앤다. 두 방식:
+ * 블러(기본)와 확산(변위, displace.js).
  */
 
 const { app, imaging } = require("photoshop");
@@ -26,23 +26,7 @@ const ps = require("../lib/host/ps");
 const { play } = require("../lib/host/ps");
 const format = require("../lib/core/optics/format");
 const displace = require("../lib/core/optics/displace");
-
-// Photoshop 채널 열거자. green은 "grain"이다(halation.js와 동일).
-const CHANNELS = [["red", "r"], ["grain", "g"], ["blue", "b"]];
-const MIN_BLUR = 0.15; // 이보다 작은 반경은 노이즈만 흐려 무의미하다.
-// 입자 px 대비 블러 반경 비율. 1:1로 걸면 뭉개진다. 작게 걸어 크리스프 유지.
-const GRAIN_BLUR = 0.4;
-
-/**
- * 강도(0~100) → Add Noise의 amount와 레이어 불투명도로 분배.
- * amount만 올리면 입자가 거칠어지기만 하므로 두 값을 함께 움직인다.
- *
- * `scale`은 서브픽셀 입자 보정이다 — 픽셀보다 고운 입자는 블러로 크기를 줄일 수
- * 없으므로 세기로 환산한다(format.js 참조).
- */
-function noiseAmountFor(strength, scale) {
-  return Math.max(1, (strength / 100) * 55 * (scale === undefined ? 1 : scale));
-}
+const grainfield = require("../lib/core/optics/grainfield");
 
 function opacityFor(strength) {
   return Math.max(1, (strength / 100) * 100);
@@ -61,92 +45,57 @@ function blendRangeFor([lo, hi], feather) {
   return [blackMin, blackMax, whiteMin, whiteMax];
 }
 
-/**
- * 노이즈 명령을 만든다.
- *
- * 컬러 모드 — 채널을 골라 각각 노이즈를 넣는다. 채널별 진폭(청색 시끄럽게)을 주고,
- * 동시에 채널이 독립이라 색 그레인이 된다. 끝에 RGB로 복원한다. Add Noise가 채널
- * 선택을 존중하는 것은 halation의 채널별 블러와 같은 필터 서브시스템 동작이다.
- *
- * 모노 모드 — 단일 노이즈.
- */
-function noiseCommands(strength, cfg, sizing) {
-  const base = noiseAmountFor(strength, sizing.amountScale);
-  if (cfg.colorMode === "mono") return [ps.addNoise(base, true)];
-
-  const { amps } = format.dyeClouds(sizing.px, cfg);
-  const out = [];
-  for (const [enumName, key] of CHANNELS) {
-    out.push(ps.selectChannel(enumName), ps.addNoise(Math.max(1, base * amps[key]), true));
-  }
-  out.push(ps.selectChannel("RGB"));
-  return out;
+/** 문서 비트 심도. PS 16bit는 0~32768(65535 아님) — Overlay 중성은 그 절반. */
+function depthOf(doc) {
+  const bytes = String(doc.bitsPerChannel) === "bitDepth16" ? 2 : 1;
+  const maxV = bytes === 2 ? 32768 : 255;
+  return { bytes, maxV, mid: maxV / 2 };
 }
 
-async function addZone(doc, label, strength, range, cfg, sizing, prefix) {
+/**
+ * 존 하나 — 공유 그레인 버퍼를 새 레이어에 putPixels하고 Overlay + Blend If.
+ * 세 존이 같은 텍스처를 쓰되 강도(불투명도)와 톤 마스크만 다르다.
+ */
+async function addZone(doc, label, strength, range, feather, grainBuf, dims, prefix) {
   if (strength <= 0) return;
 
-  const [bMin, bMax, wMin, wMax] = blendRangeFor(range, cfg.feather);
-  const opacity = opacityFor(strength);
-  // 크리스프 유지 — 입자 px의 작은 분수만 블러. 서브픽셀이면 아예 안 건다.
-  const blurPx = sizing.subPixel ? 0 : sizing.px * GRAIN_BLUR;
+  const [bMin, bMax, wMin, wMax] = blendRangeFor(range, feather);
+  await play([ps.makePixelLayer(), ps.renameLayer(`${prefix} · Grain ${label}`)]);
+  const layerId = app.activeDocument.activeLayers[0].id;
 
-  // 1) 베이스 그레인 — 채널별 진폭(또는 단일) + 미세 블러.
-  const cmds = [
-    ps.makePixelLayer(),
-    ps.renameLayer(`${prefix} · Grain ${label}`),
-    ps.fillLayer("gray"),
-    ...noiseCommands(strength, cfg, sizing),
-  ];
-  if (blurPx > MIN_BLUR) cmds.push(ps.gaussianBlur(blurPx));
-  cmds.push(ps.setLayerBlend("overlay", opacity));
-  cmds.push(ps.setUnderlyingBlendRange(bMin, bMax, wMin, wMax));
-  await play(cmds);
-
-  // 2) 클럼프 옥타브 — 큰 반경의 저세기 덩어리. 밀도 요동은 휘도라 모노.
-  const { clumpRadius, clumpScale } = format.dyeClouds(sizing.px, cfg);
-  if (clumpScale > 0 && clumpRadius >= 0.5) {
-    await play([
-      ps.makePixelLayer(),
-      ps.renameLayer(`${prefix} · Grain ${label} Clump`),
-      ps.fillLayer("gray"),
-      ps.addNoise(noiseAmountFor(strength, sizing.amountScale), true),
-      ps.gaussianBlur(clumpRadius),
-      // 베이스보다 약하게. 덩어리는 구조를 주지 세기를 지배하지 않는다.
-      ps.setLayerBlend("overlay", Math.max(1, opacity * clumpScale * 0.6)),
-      ps.setUnderlyingBlendRange(bMin, bMax, wMin, wMax),
-    ]);
+  const img = await imaging.createImageDataFromBuffer(grainBuf, {
+    width: dims.width,
+    height: dims.height,
+    components: 3,
+    componentSize: dims.bytes === 2 ? 16 : 8,
+    colorSpace: "RGB",
+  });
+  try {
+    await imaging.putPixels({
+      documentID: doc.id,
+      layerID: layerId,
+      targetBounds: { left: 0, top: 0, width: dims.width, height: dims.height },
+      imageData: img,
+    });
+  } finally {
+    img.dispose();
   }
+
+  await play([
+    ps.setLayerBlend("overlay", opacityFor(strength)),
+    ps.setUnderlyingBlendRange(bMin, bMax, wMin, wMax),
+  ]);
 }
 
 /**
- * 디퓨전 — **해상도를 입자 크기에 묶는다.**
- *
- * 필름은 입자가 곧 표본이라 입자보다 작은 디테일은 존재할 수 없다. 우리 그레인은
- * 샤프한 베이스 위에 Overlay로 얹힐 뿐이라 서브입자 디테일(razor 엣지, 1px 선)이
- * 그대로 살아남았다(사용자 지적).
- *
- * 그래서 흐린 합성본을 얹어 **입자보다 고운 디테일을 지운다.** 두 가지가 핵심이다.
- *
- *   1. **반경 = 입자 크기** (px*1.3). 입자보다 큰 디테일(엣지)은 살고 작은 것만
- *      사라진다 — 해상도가 입자에 정확히 묶인다. 입자를 키우면 해상도가 더
- *      떨어진다. 이전엔 px*2.0 고정이라 입자와 무관했다.
- *   2. **강도가 높아야 한다.** Normal 블렌드는 아래 샤프가 (1−강도)만큼 비쳐,
- *      저강도면 서브입자 디테일이 그만큼 생존한다. 실제로 지우려면 85% 이상이어야
- *      한다(시뮬: 85%에서 1px 디테일 잔존 0.31, 100%에서 0.18).
- *
- * 그 위에 크리스프 그레인이 쌓여 "입자 해상도 + 그 위 입자"가 된다.
- *
- * stampVisible은 디스크립터 두 개다(빈 레이어 + 병합). 펼치지 않으면 배경을
- * 덮어 원본이 사라진다(ps.js 참조).
+ * 디퓨전(블러) — 해상도를 입자 크기에 묶는다. 흐린 합성본을 얹어 입자보다 고운
+ * 디테일을 지운다. 반경 = 입자 크기, 강도가 높아야(85%+) 실제로 지워진다.
+ * stampVisible은 디스크립터 두 개다 — 펼치지 않으면 배경을 덮는다(ps.js).
  */
 async function applyDiffusion(doc, grain, sizing, prefix) {
   const amt = grain.diffusion || 0;
   if (amt <= 0) return;
-
-  // 반경 = 입자 크기. 이보다 고운 디테일이 지워진다. 서브픽셀 입자엔 하한.
   const radius = Math.max(0.6, sizing.px * 1.3);
-
   await play([
     ...ps.stampVisible(),
     ps.renameLayer(`${prefix} · Diffusion`),
@@ -156,16 +105,9 @@ async function applyDiffusion(doc, grain, sizing, prefix) {
 }
 
 /**
- * 확산(diffuse) 디퓨전 — 블러 대신 픽셀마다 이웃을 무작위로 집어 서브입자 디테일을
- * 조각낸다.
- *
- * 블러는 미세 선을 **흐리게** 남긴다(머리카락이 살아남는 이유). 확산은 픽셀마다
- * **탈상관**으로 이웃을 집어 그 선을 조각낸다 — 에너지를 없애지 않고 흐트러뜨린다.
- * (상관 변위장으로 밀면 선이 연결된 채 휘어 꼬불꼬불해진다 — 그레인이 아니라
- * warp이다. 그래서 per-pixel 탈상관으로 갔다. displace.js 참조.)
- *
- * batchPlay의 Diffuse 디스크립터가 미채록이라 imaging으로 직접 한다. 엔진의
- * applyLut과 같은 검증된 픽셀 왕복 패턴이다(빈 레이어 → 합성 읽기 → 확산 → 되쓰기).
+ * 디퓨전(확산) — 블러 대신 픽셀마다 이웃을 무작위로 집어 서브입자 디테일을
+ * 조각낸다. 블러는 미세 선을 흐리게 남기지만 확산은 조각낸다(displace.js).
+ * 반경·셀 모두 입자 크기에서 나와 흩어짐 알갱이가 텍스처와 같은 스케일이다.
  */
 async function applyDisplaceDiffusion(doc, grain, sizing, prefix) {
   const amt = grain.diffusion || 0;
@@ -181,14 +123,9 @@ async function applyDisplaceDiffusion(doc, grain, sizing, prefix) {
     const height = px.imageData.height;
     const comps = px.imageData.components;
     const data = await px.imageData.getData({ chunky: true });
-
-    // 반경 = 입자 크기 × 강도 (덩어리 이동 거리). 셀 = 입자 크기 (흩어짐 알갱이).
-    // 둘 다 입자에서 나와, 굵은 입자엔 굵은 덩어리가 넓게 흩어진다 — 텍스처와
-    // 흩어짐 알갱이가 같은 스케일로 맞는다. 미세 입자(px<1.5)는 셀 1 = per-pixel.
     const radius = Math.max(0.5, sizing.px * (amt / 100));
     const cell = sizing.px;
     const out = displace.diffuseBuffer(data, width, height, comps, { radius, cell });
-
     outImage = await imaging.createImageDataFromBuffer(out, {
       width,
       height,
@@ -211,21 +148,33 @@ async function applyDisplaceDiffusion(doc, grain, sizing, prefix) {
 async function apply(doc, grain, medium, prefix) {
   if (!grain.enabled) return;
 
-  // 입자 크기는 세 존이 공유한다 — 같은 필름의 같은 유제이므로 톤에 따라 크기가
-  // 달라질 이유가 없다. 톤별로 다른 것은 가시성(강도)이다.
   const m = medium || {};
   const sizing = format.grainSize(doc, m, grain.size);
 
-  // 디퓨전이 먼저다 — 그레인은 부드러워진 이미지 위에 얹혀야 한다.
-  // 두 방식: 블러(기본, 검증됨) vs 변위(실험, 미세 디테일을 더 잘 부순다).
+  // 디퓨전이 먼저다 — 그레인은 해상도를 낮춘 이미지 위에 얹혀야 한다.
   if (grain.diffuseDisplace) await applyDisplaceDiffusion(doc, grain, sizing, prefix);
   else await applyDiffusion(doc, grain, sizing, prefix);
 
-  // 암부 → 중간톤 → 명부 순서로 쌓는다. 순서는 결과에 영향이 없지만
-  // 레이어 패널에서 톤 순서대로 보이는 편이 읽기 쉽다.
-  await addZone(doc, "Shadow", grain.shadow, grain.shadowRange, grain, sizing, prefix);
-  await addZone(doc, "Midtone", grain.midtone, grain.midtoneRange, grain, sizing, prefix);
-  await addZone(doc, "Highlight", grain.highlight, grain.highlightRange, grain, sizing, prefix);
+  // 그레인 텍스처 한 벌을 값 노이즈로 생성해 세 존이 공유한다.
+  const width = doc.width;
+  const height = doc.height;
+  const depth = depthOf(doc);
+  const cloud = format.dyeClouds(sizing.px, grain);
+  const amps = grain.colorMode === "rgb" ? cloud.amps : null; // 없으면 모노
+  const grainBuf = grainfield.generate(width, height, 3, {
+    cell: Math.max(1, sizing.px),
+    mid: depth.mid,
+    maxV: depth.maxV,
+    amp: 0.5, // Overlay 변조 진폭. 존 불투명도가 다시 스케일한다.
+    amps,
+    clumpScale: cloud.clumpScale,
+    seed: 1,
+  });
+  const dims = { width, height, bytes: depth.bytes };
+
+  await addZone(doc, "Shadow", grain.shadow, grain.shadowRange, grain.feather, grainBuf, dims, prefix);
+  await addZone(doc, "Midtone", grain.midtone, grain.midtoneRange, grain.feather, grainBuf, dims, prefix);
+  await addZone(doc, "Highlight", grain.highlight, grain.highlightRange, grain.feather, grainBuf, dims, prefix);
 }
 
-module.exports = { apply, applyDiffusion, noiseAmountFor, blendRangeFor };
+module.exports = { apply, applyDiffusion, blendRangeFor };
