@@ -48,6 +48,14 @@ entrypoints.setup({
         if (el && event && event.appendChild) event.appendChild(el);
       },
     },
+    // 분포(벡터스코프). 별도 패널이라 사용자가 원하는 자리에 도킹·플로팅할 수 있다.
+    "filmsim.scope": {
+      show(event) {
+        const el = document.getElementById("scopePanel");
+        if (el && event && event.appendChild) event.appendChild(el);
+        renderScope(); // 패널을 처음 열었을 때 바로 그린다
+      },
+    },
   },
 });
 
@@ -329,14 +337,9 @@ function handleAchromaReset(range) {
 function switchWheelView(view) {
   $("wheel").style.display = view === "color" ? "block" : "none";
   $("wheelAchroma").style.display = view === "achroma" ? "flex" : "none";
-  const sc = $("scope");
-  if (sc) sc.style.display = view === "scope" ? "block" : "none";
-  const scNote = $("scopeNote");
-  if (scNote) scNote.style.display = view === "scope" ? "block" : "none";
   document.querySelectorAll(".wtab").forEach((t) => {
     t.className = t.dataset.view === view ? "wtab active" : "wtab";
   });
-  if (view === "scope") renderScope();
 }
 
 /**
@@ -439,8 +442,9 @@ function renderScope() {
 
   for (const cell of scopeCells) {
     const d = dens.get(cell.i);
-    // 최저 0.12는 둬야 희소한 칸이 아예 안 보이지 않는다.
-    cell.el.style.opacity = d === undefined ? "0" : String(0.12 + d * 0.88);
+    // **하한을 두지 않는다.** 예전엔 0.12를 깔았는데, 그러면 한 픽셀만 있는 칸도
+    // 무조건 보여 원이 통째로 채워졌다. 희소한 칸은 희미한 것이 맞다.
+    cell.el.style.opacity = d === undefined ? "0" : String(d);
   }
 
   const note = $("scopeNote");

@@ -27,6 +27,11 @@
  */
 
 /**
+ * 밀도 정규화 기준 분위. 최대값이 아니라 이 분위를 1.0으로 놓는다(아래 cells 주석).
+ */
+const NORM_PCT = 0.95;
+
+/**
  * 격자 누적기. 셀 좌표는 [-1,1] 정규화 평면을 n등분한 것이다.
  *
  * @param {number} n 한 변의 칸 수 (64 권장)
@@ -81,8 +86,18 @@ function createGrid(n) {
     /**
      * 비어 있지 않은 칸만 돌려준다. 호출자는 이것만 DOM으로 그린다.
      *
-     * 밀도는 **로그로 정규화**한다. 실사진의 도수 분포는 한두 칸이 나머지를 압도해
-     * 선형으로 그리면 그 칸만 보이고 나머지가 전부 사라진다.
+     * ── 정규화를 두 번 고쳤다 ───────────────────────────────────────────
+     *
+     * 처음엔 **로그**를 썼다. "소수 픽셀도 보이게" 하려던 것인데, 실사진에서는
+     * 도수가 대체로 같은 자릿수라(평균 77 · 최대 214) 로그가 전 구간을 0.65~1.0으로
+     * **압축해 모든 칸이 똑같이 진해졌다** — 원이 통째로 채워져 보인다.
+     *
+     * 그렇다고 **최대값 기준 선형**도 안 된다. 하늘처럼 한 색이 압도하는 사진에서는
+     * 그 칸이 peak를 20000까지 끌어올려 나머지가 0.003으로 사라진다.
+     *
+     * 그래서 **상위 분위(p95)를 기준**으로 잡고 그 위는 1.0으로 클램프한다.
+     * 분포가 평탄하면 p95가 최대값에 가까워 선형처럼 동작하고, 한 칸이 압도하면
+     * 그 칸만 클램프되고 나머지가 살아난다.
      *
      * @returns {{cells: Array<{x:number,y:number,d:number}>, total:number, peak:number}}
      *   x,y는 0~1 정규화 위치(칸 중심), d는 0~1 밀도
@@ -90,14 +105,20 @@ function createGrid(n) {
     cells() {
       const out = [];
       if (peak <= 0) return { cells: out, total, peak };
-      const logPeak = Math.log(1 + peak);
+
+      const nz = [];
+      for (let i = 0; i < counts.length; i++) if (counts[i] > 0) nz.push(counts[i]);
+      nz.sort((a, b) => a - b);
+      const ref = Math.max(1, nz[Math.min(nz.length - 1, Math.floor(nz.length * NORM_PCT))]);
+
       for (let i = 0; i < counts.length; i++) {
         const c = counts[i];
         if (c === 0) continue;
+        const d = c / ref;
         out.push({
           x: ((i % size) + 0.5) / size,
           y: ((i / size) | 0) / size + 0.5 / size,
-          d: Math.log(1 + c) / logPeak,
+          d: d > 1 ? 1 : d,
         });
       }
       return { cells: out, total, peak };

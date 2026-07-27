@@ -352,6 +352,14 @@
       </div>
     </div>
 
+    <!-- 분포(벡터스코프) 패널 (filmsim.scope). 각도 규약은 컬러휠과 같다. -->
+    <div id="scopePanel">
+      <div class="wheel-wrap">
+        <div id="scope" class="wheel"></div>
+      </div>
+      <div id="scopeNote" class="film-note"></div>
+    </div>
+
     <!-- 메인 패널 (filmsim.main) -->
     <div id="mainPanel">
     <!-- 프리셋 -->
@@ -401,7 +409,6 @@
         <div class="wheel-tabs">
           <div class="wtab active" data-view="color">컬러</div>
           <div class="wtab" data-view="achroma">무채색</div>
-          <div class="wtab" data-view="scope">분포</div>
         </div>
       </div>
       <div class="wheel-wrap">
@@ -420,11 +427,8 @@
             <div class="mini-label">블랙</div>
           </div>
         </div>
-        <!-- 벡터스코프. 각도 규약은 컬러휠과 같다(core/color/vectorscope.js) -->
-        <div id="scope" class="wheel" style="display: none"></div>
       </div>
       <div class="palette-note">○ 원본 → ● 적용 · 마커를 끌어 색역 조절</div>
-      <div id="scopeNote" class="film-note" style="display: none"></div>
 
       <div class="sub-head"><span class="sub-title" id="detailLabel">색역 세부 — 레드</span></div>
       <div class="wheel-wrap">
