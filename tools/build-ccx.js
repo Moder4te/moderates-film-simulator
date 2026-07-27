@@ -61,7 +61,7 @@ for (const app of APPS) {
   const stage = path.join(BUILD, app);
 
   // manifest는 반드시 BOM 없이. BOM이 붙으면 UDT가 플러그인을 아예 못 읽는다
-  // (`Unexpected token ﻿ in JSON at position 0`). UXP-NOTES.md 1.1 참고.
+  // (`Unexpected token ﻿ in JSON at position 0`). docs/UXP-NOTES.md 1.1 참고.
   const manifestRaw = fs.readFileSync(path.join(appRoot, "manifest.json"));
   if (manifestRaw[0] === 0xef && manifestRaw[1] === 0xbb && manifestRaw[2] === 0xbf) {
     throw new Error(`apps/${app}/manifest.json에 UTF-8 BOM이 있습니다.`);

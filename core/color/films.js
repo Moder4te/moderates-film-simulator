@@ -347,7 +347,7 @@ const FILMS = [
 
     // 최신 TDS는 RMS 그래뉼래러티 대신 Print Grain Index를 싣는다.
     // µm 단위 입자 크기로 변환할 수 없다고 문서가 명시하므로, 필름 간
-    // **상대 거칠기**로만 쓴다 (v2plan.md 4.2 참조).
+    // **상대 거칠기**로만 쓴다 (docs/archive/v2plan.md 4.2 참조).
     grain: { printGrainIndex: 37, atMagnification: 4.4, format: "35mm" },
 
     exposureRange: [-2.0, 2.0],

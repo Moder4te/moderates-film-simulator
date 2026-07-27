@@ -1,11 +1,15 @@
 # Photoshop UXP 플러그인 — 실측 지식 정리
 
+> **성격: 정적(플랫폼 지식).** 새로 부딪힌 UXP 함정을 확인했을 때만 추가한다.
+> 이 프로젝트의 설계 결정은 [`DECISIONS.md`](./DECISIONS.md), 구조는
+> [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+
 FilmSim(v1.0 → v2.0.0) 개발에서 **실제로 부딪혀 확인한 것만** 모았다. 추측은 넣지
 않았고, 확인하지 못한 것은 그렇다고 적었다.
 
 용도는 두 가지다. 이 저장소에서 이어서 작업하는 경우, 그리고 **다른 Photoshop UXP
 플러그인을 처음부터 만드는 경우**. 후자를 위해 FilmSim 고유의 내용(센시토메트리 등)은
-빼고 플랫폼 지식만 남겼다. 설계 결정과 근거는 `v2plan.md`에 있다.
+빼고 플랫폼 지식만 남겼다.
 
 ---
 
@@ -764,13 +768,17 @@ if (v > 1) v -= 1;          // 음의 잔차가 감긴 경우
 
 | 주제 | 파일 |
 |---|---|
-| 픽셀 왕복 · 16bit 범위 | `src/apply.js`, `src/lut.js` |
-| 색공간 변환 | `src/colorspace.js` |
-| 미리보기 (JPEG → img) | `src/preview.js` |
-| 커스텀 칩 · 슬라이더 | `src/main.js`, `src/cslider.js` |
-| batchPlay 래퍼 | `src/ps.js` |
-| .cube 직렬화 | `src/lut.js`, `src/cubeexport.js` |
-| ACR 프로파일 생성 | `src/xmpcodec.js`, `src/xmpexport.js` |
+| 픽셀 왕복 · 16bit 범위 | `apps/engine/src/apply.js`, `core/color/lut.js` |
+| 색공간 변환 | `core/color/colorspace.js` |
+| 미리보기 (JPEG → img) | `apps/engine/src/preview.js` |
+| 커스텀 슬라이더 (로그 스케일 포함) | `shared/ui/cslider.js` |
+| batchPlay 래퍼 (디스크립터는 전부 여기) | `host/ps.js` |
+| .cube 직렬화 | `core/io/cube.js` |
+| ACR 프로파일 생성 | `core/io/xmp.js`, `core/io/xmpcodec.js` |
+| 컬러휠 (DOM+translate) | `apps/engine/src/colorwheel.js` |
+| 값 노이즈 그레인 · 확산 | `core/optics/grainfield.js`, `core/optics/displace.js` |
+| 다중스케일 할레이션 | `apps/finish/src/halation.js` |
 | PDF 벡터 곡선 추출 | `tools/extract_tds_curves.py` |
 
-설계 결정과 그 근거는 `v2plan.md`, 특히 부록 B(UXP 실측 로그)와 7.5절(프로파일 포맷)에 있다.
+설계 결정과 근거는 [`DECISIONS.md`](./DECISIONS.md). 원본 실측 로그는
+[`archive/v2plan.md`](./archive/v2plan.md) 부록 B(UXP 실측)와 7.5절(프로파일 포맷)에 있다.

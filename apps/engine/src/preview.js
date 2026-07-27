@@ -60,7 +60,7 @@ function clamp255(v) {
  * v1은 이걸 8bit로 가정해 전부 255로 클램프했고, 그래서 16bit 문서에서는 미리보기가
  * 하얗게 날아갔다. 평소 8bit JPEG로 작업하면 드러나지 않던 버그다. v2는 16bit가
  * 전제이므로 여기서 정규화한다. (`getPixels`에 `componentSize: 8`을 주는 방법은
- * 쓰면 안 된다 — 16bit 문서에서 -32005로 죽는다. v2plan.md 부록 B 참조)
+ * 쓰면 안 된다 — 16bit 문서에서 -32005로 죽는다. docs/archive/v2plan.md 부록 B 참조)
  *
  * 출력이 항상 8bit인 이유는 encodeImageData가 JPEG를 만들기 때문이다.
  */
@@ -119,7 +119,7 @@ async function renderOnce(params) {
 
   // 필름 엔진이 켜져 있으면 LUT을 굽는다(색 조정까지 구워 넣은 최종본).
   // 33³ 생성이 1ms라 매 렌더마다 새로 구워도 부담이 없다 — 캐시가 필요 없는
-  // 이유다(v2plan.md 4.1).
+  // 이유다(docs/archive/v2plan.md 4.1).
   // 필름이 꺼져 있어도 굽는다 — 그때는 항등 + 그레이딩이 나온다.
   // 실패하면 렌더를 건너뛴다. 옛 값으로 그리면 사용자가 잘못된 상태를 본다.
   let table = null;
