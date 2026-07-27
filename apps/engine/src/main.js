@@ -363,18 +363,38 @@ function switchWheelView(view) {
  * 그릴 칸은 데이터가 있는 것뿐이라(보통 수~수백 개) 820개를 만지는 것보다 가볍다.
  */
 const SCOPE_PAD = 10;
+const SCOPE_MIN = 200;
+const SCOPE_MAX = 460;
+
+/**
+ * 원반 크기. **패널 폭에 맞춘다.**
+ *
+ * 처음에는 컬러휠과 같은 240px 고정이었는데 작다는 지적이 있었다. 전용 패널이라
+ * 사용자가 크게 늘릴 수 있으므로 그 폭을 쓴다. UXP가 폭을 0으로 주는 경우가 있어
+ * 그때는 기본값으로 떨어진다.
+ */
+function scopeSize() {
+  const panel = $("scopePanel");
+  const w = panel && panel.clientWidth;
+  if (!w || w < SCOPE_MIN) return colorwheel.SIZE;
+  return Math.max(SCOPE_MIN, Math.min(SCOPE_MAX, w - 16));
+}
+
+let scopeSizeUsed = 0; // 눈금 캐시가 어느 크기로 만들어졌는지
 
 function scopeGeom() {
-  const size = colorwheel.SIZE; // 컬러휠과 같은 지름이라 나란히 읽힌다
+  const size = scopeSize();
   const R = size / 2 - SCOPE_PAD;
   return { size, R, cx: size / 2, cy: size / 2 };
 }
 
-/** 눈금(동심원·색상 방향)은 변하지 않으므로 문자열을 한 번만 만들어 둔다. */
+/** 눈금(동심원·색상 방향)은 크기가 그대로면 변하지 않으므로 문자열을 재사용한다. */
 let scopeChromeHtml = null;
 
 function buildScopeChrome() {
-  if (scopeChromeHtml !== null) return scopeChromeHtml;
+  const { size } = scopeGeom();
+  if (scopeChromeHtml !== null && scopeSizeUsed === size) return scopeChromeHtml;
+  scopeSizeUsed = size;
   const { R, cx, cy } = scopeGeom();
   const parts = [];
   for (const f of [0.5, 1]) {
@@ -395,6 +415,11 @@ function renderScope() {
   const host = $("scope");
   if (!host) return;
 
+  // 패널 크기가 바뀌었을 수 있으므로 원반 지름을 매번 맞춘다.
+  const geom = scopeGeom();
+  host.style.width = geom.size + "px";
+  host.style.height = geom.size + "px";
+
   const data = preview.scope();
   const cells = data && data.cells ? data.cells : [];
   const note = $("scopeNote");
@@ -407,7 +432,7 @@ function renderScope() {
   }
 
   const n = preview.GRID_N;
-  const { R, cx, cy } = scopeGeom();
+  const { R, cx, cy } = geom;
   const side = Math.ceil((R * 2) / n) + 1; // 칸 사이가 벌어지지 않게 살짝 크게
   const parts = [buildScopeChrome()];
 

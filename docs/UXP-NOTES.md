@@ -109,6 +109,21 @@ Stop-Process -Id <PID> -Force
 
 ---
 
+### 1.5 무시해도 되는 경고 — `Setting focus failed on node: div`
+
+플러그인을 로드할 때 콘솔에 이 줄이 한두 번 뜬다.
+
+```
+[general] Setting focus failed on node: div
+```
+
+**UXP 내부 경고다.** 패널을 표시하며 첫 포커스 대상을 잡으려다 루트가 `<div>`라
+실패한 것이고, 레벨이 `error`가 아니라 `general`이다. 저장소 전체에 `focus()`·
+`tabindex`를 쓰는 코드가 **하나도 없다** — 우리가 만든 것이 아니다.
+
+동작에 영향이 없어 그대로 둔다. 없애려면 패널 루트에 `tabindex="-1"`을 주는 방법이
+있지만, 포커스 순서를 건드려 키보드 조작에 부작용이 생길 수 있어 이득이 없다.
+
 ## 2. 모듈과 언어 런타임
 
 ### 2.1 require 경로

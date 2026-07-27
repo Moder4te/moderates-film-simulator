@@ -125,6 +125,14 @@
         background: rgba(22, 22, 24, 0.9);
         overflow: hidden;
       }
+      /* 벡터스코프 원반. 크기는 JS가 패널 폭에 맞춰 정한다(.wheel은 240 고정이라 작았다). */
+      .scope-wheel {
+        position: relative;
+        margin: 0 auto;
+        border-radius: 50%;
+        background: rgba(22, 22, 24, 0.9);
+        overflow: hidden;
+      }
       /* 벡터스코프 격자 칸. translate만 쓴다(UXP는 canvas·rotate 불가). */
       .sc-cell {
         position: absolute;
@@ -355,7 +363,7 @@
     <!-- 분포(벡터스코프) 패널 (filmsim.scope). 각도 규약은 컬러휠과 같다. -->
     <div id="scopePanel">
       <div class="wheel-wrap">
-        <div id="scope" class="wheel"></div>
+        <div id="scope" class="scope-wheel"></div>
       </div>
       <div id="scopeNote" class="film-note"></div>
     </div>
