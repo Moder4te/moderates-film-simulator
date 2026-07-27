@@ -102,9 +102,15 @@ async function seedIfEmpty() {
   const night = defaultParams();
   night.name = "Night Halation";
   night.category = "Starter";
-  night.halation.strength = 70;
-  night.halation.threshold = 190;
-  night.halation.radius = 1.8;
+  night.halation.threshold = 200;
+  night.halation.strength = 80;
+  night.halation.radius = 1.6;
+  night.halation.core = 80;
+  night.halation.mid = 55;
+  night.halation.bleed = 8;
+  night.halation.disk = 60;
+  night.halation.tintHue = 24;
+  night.halation.tintSaturation = 70;
   night.grain.midtone = 55;
 
   // 중형 — 같은 입자여도 확대율이 낮아 곱게 나온다. 포맷 차이를 보여주는 예시
