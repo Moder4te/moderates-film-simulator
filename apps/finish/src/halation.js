@@ -167,10 +167,16 @@ async function apply(doc, halation, formatId, prefix) {
   //     경계를 세운다. colorize 안 한다 — 채널 확산차가 만든 링을 그대로 살린다.
   //   · **Bleed** — ×4.0, **Linear Dodge(Add)**. 넓은 헤일로. Add로 암부·중간톤
   //     위 채도 높은 붉은빛을 유지(Screen은 살몬으로 희석).
+  // `shrink` — 이 스케일을 몇 분의 1 해상도에서 계산할지. **넓게 번지는 성분은 저주파라
+  // 낮은 해상도에서 계산해도 결과가 같다**(블룸의 정석). Bleed는 반경이 수백 px까지
+  // 가는데 1/4로 줄이면 픽셀 1/16 · 반경 1/4이라 비용이 급감한다.
+  //
+  // **Core는 반드시 풀해상도다.** 원반의 뚜렷한 경계가 이 룩의 핵심인데(육안 확인)
+  // 축소·확대를 거치면 그 경계가 뭉개진다.
   const scales = [
-    { name: "Core", mul: 0.3, w: core / 100, blend: "colorDodge", whitenSat: halation.tintSaturation * 0.1 },
-    { name: "Mid", mul: 1.1, w: mid / 100, blend: "linearDodge", whitenSat: null },
-    { name: "Bleed", mul: 4.0, w: bleed / 100, blend: "linearDodge", whitenSat: null },
+    { name: "Core", mul: 0.3, w: core / 100, blend: "colorDodge", whitenSat: halation.tintSaturation * 0.1, shrink: 1 },
+    { name: "Mid", mul: 1.1, w: mid / 100, blend: "linearDodge", whitenSat: null, shrink: 2 },
+    { name: "Bleed", mul: 4.0, w: bleed / 100, blend: "linearDodge", whitenSat: null, shrink: 4 },
   ];
 
   // 적색 구동 + 오렌지-레드로 색칠한 하이라이트 소스 한 장. 각 스케일이 복제해 간다.
@@ -189,6 +195,8 @@ async function apply(doc, halation, formatId, prefix) {
     ["blue", spread.b],
   ];
 
+  let shrinkOk = true; // 축소가 한 번이라도 실패하면 이후 전부 풀해상도로
+
   for (const sc of scales) {
     const opacity = halation.strength * sc.w;
     if (opacity < 1) continue; // 기여가 없는 스케일은 건너뛴다
@@ -198,22 +206,43 @@ async function apply(doc, halation, formatId, prefix) {
     const dup = await base.duplicate();
     await play([selectLayer(dup.id), ps.renameLayer(`${prefix} · Halation ${sc.name}`)]);
 
+    // 축소해서 계산한다(위 shrink 주석 참조). transform이 안 먹는 환경이면 조용히
+    // 풀해상도로 돌아간다 — 느릴 뿐 결과는 같다. 한 번 실패하면 이후 스케일도 시도하지
+    // 않는다(같은 이유로 실패할 것이고, **축소만 되고 복원이 안 되는 상태가 최악**이다).
+    let shrink = shrinkOk ? sc.shrink : 1;
+    if (shrink > 1) {
+      try {
+        await play([ps.scaleLayer(100 / shrink)]);
+      } catch (e) {
+        console.error("할레이션 축소 실패 — 풀해상도로 진행합니다", e);
+        shrinkOk = false;
+        shrink = 1;
+      }
+    }
+
     // 채널별 확산 — 스케일 배율 × 채널 차등(R 최대). 사실상 0인 채널은 건너뛴다.
+    // 축소본에서 돌므로 반경도 같은 비율로 줄인다.
     //
     // **원반(disk).** 할레이션은 렌즈 앞 안개가 아니라 베이스 뒷면에서 튕겨 나온
     // 빛의 궤적이라, 종형 가우시안이 아니라 특정 반경까지 꽉 찬 뒤 경계에서 떨어지는
     // 원반이다(사용자 육안 확인). Maximum으로 팽창시켜 원반을 만들고 작은 가우시안
-    // 으로 가장자리만 소프트하게 한다. disk=0이면 순수 가우시안. Maximum은 100px
-    // 상한이라 초과분은 가우시안으로 넘긴다.
+    // 으로 가장자리만 소프트하게 한다. disk=0이면 순수 가우시안.
+    //
+    // ⚠️ **상한을 축소 배율로 환산한다.** Maximum은 100px 상한인데, 축소본에서는 그
+    // 100px이 원본 기준 100×shrink px에 해당한다. 상한을 그대로 두면 축소한 스케일만
+    // 원반이 훨씬 커져 **룩이 바뀐다.** 성능 개선은 결과를 바꾸지 않아야 한다 — 바뀌면
+    // 속도가 깨뜨린 것인지 의도된 차이인지 구분할 수 없다. (상한을 풀고 싶으면
+    // 그것은 별도의 의도적 변경으로 다룬다.)
     const diskFrac = clamp((halation.disk == null ? 0 : halation.disk) / 100, 0, 1);
+    const diskCap = 100 / shrink; // 원본 기준 100px에 해당하는 축소본 반경
     for (const [channel, factor] of channels) {
-      const radius = baseRadius * sc.mul * factor;
+      const radius = (baseRadius * sc.mul * factor) / shrink;
       if (radius < 0.15) continue;
       const cmds = [ps.selectChannel(channel)];
       if (diskFrac > 0 && radius * diskFrac >= 1) {
         let dr = radius * diskFrac;
         let gr = radius * (1 - diskFrac);
-        if (dr > 100) { gr += dr - 100; dr = 100; } // Maximum 100px 상한 초과분은 블러로
+        if (dr > diskCap) { gr += dr - diskCap; dr = diskCap; } // 초과분은 블러로
         cmds.push(ps.maximumFilter(dr));
         if (gr >= 0.15) cmds.push(ps.gaussianBlur(gr));
       } else {
@@ -223,6 +252,9 @@ async function apply(doc, halation, formatId, prefix) {
     }
 
     const cmds = [ps.selectChannel("RGB")];
+    // 원래 크기로 되돌린다. 여기서 실패하면 이 스케일만 작게 남으므로 조용히 넘기지
+    // 않고 알린다(축소는 성공했는데 확대가 실패하는 경우는 사실상 없다).
+    if (shrink > 1) cmds.push(ps.scaleLayer(shrink * 100));
     // 코어만 화이트닝(colorize로 채도↓). 중간·블리딩은 소스 색을 그대로 둔다 —
     // colorize를 걸면 채널 확산차가 만든 붉은 링이 단색 안개로 뭉개진다.
     if (sc.whitenSat != null) cmds.push(colorize(halation.tintHue, sc.whitenSat));

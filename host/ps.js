@@ -129,6 +129,30 @@ function maximumFilter(radiusPx) {
   };
 }
 
+/**
+ * 활성 레이어를 percent%로 확대·축소한다 (중심 고정).
+ *
+ * 블룸 최적화용이다 — 넓게 번지는 성분은 **낮은 해상도에서 계산해도 결과가 같다.**
+ * 1/4로 줄이면 픽셀은 1/16, 반경도 1/4이라 큰 반경 필터의 비용이 급감한다.
+ *
+ * 보간은 bilinear로 둔다. 어차피 곧 크게 blur할 것이라 더 비싼 보간이 의미가 없다.
+ */
+function scaleLayer(percent) {
+  return {
+    _obj: "transform",
+    _target: [TARGET_LAYER],
+    freeTransformCenterState: { _enum: "quadCenterState", _value: "QCSAverage" },
+    offset: {
+      _obj: "offset",
+      horizontal: { _unit: "pixelsUnit", _value: 0 },
+      vertical: { _unit: "pixelsUnit", _value: 0 },
+    },
+    width: { _unit: "percentUnit", _value: percent },
+    height: { _unit: "percentUnit", _value: percent },
+    interfaceIconFrameDimmed: { _enum: "interpolationType", _value: "bilinear" },
+  };
+}
+
 /** channel: "red" | "grain"(=green) | "blue" | "RGB"(composite) */
 function selectChannel(channel) {
   return {
@@ -225,6 +249,7 @@ module.exports = {
   addNoise,
   gaussianBlur,
   maximumFilter,
+  scaleLayer,
   selectChannel,
   stampVisible,
   percentToPixels,
