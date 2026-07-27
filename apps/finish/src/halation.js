@@ -22,24 +22,72 @@
  * PS의 GPU 가우시안을 재사용한다(batchPlay). 추출본은 DOM duplicate로 복제한다.
  */
 
-const { app } = require("photoshop");
+const { app, imaging } = require("photoshop");
 const ps = require("../lib/host/ps");
 const { play } = require("../lib/host/ps");
 const format = require("../lib/core/optics/format");
 
-/** 임계값 이상만 남기고 나머지를 검정으로 눌러 하이라이트를 추출한다. */
-function extractHighlights(threshold) {
-  return {
-    _obj: "levels",
-    presetKind: { _enum: "presetKindType", _value: "presetKindCustom" },
-    adjustment: [
-      {
-        _obj: "levelsAdjustment",
-        channel: { _ref: "channel", _enum: "ordinal", _value: "composite" },
-        input: [Math.round(threshold), 255],
-      },
-    ],
-  };
+/**
+ * 할레이션 소스 = **적색 채널 구동** 하이라이트. 새 레이어에 putPixels한다.
+ *
+ * 예전엔 합성 휘도 >임계값으로 뽑았다. 근본 결함이었다 — 할레이션은 물리적으로
+ * **적색 현상**(적색광이 유제를 통과해 베이스에서 반사)인데, 포화 적색 네온
+ * (R255 G0 B0)은 휘도가 ~76뿐이라 임계에 안 걸려 아예 블룸을 안 했다. 그래서
+ * 붉은 오염이 안 생겼다(작례 실측 대비 붉은 링 절반, 붉은 광원 2.8% 누락).
+ *
+ * 이제 R 채널로 smoothstep 추출한다. 붉은·흰 광원(R 높음)은 잡히고 파랑·초록
+ * 광원(R 낮음)은 안 잡힌다 — 할레이션이 붉은 이유 그 자체다. 강도만 회색으로
+ * 담고 색(오렌지-레드)은 뒤의 colorize가 준다.
+ */
+async function buildRedSource(doc, threshold, prefix) {
+  await play([ps.makePixelLayer(), ps.renameLayer(`${prefix} · Halation src`)]);
+  const layerId = app.activeDocument.activeLayers[0].id;
+
+  const px = await imaging.getPixels({ documentID: doc.id, colorSpace: "RGB" });
+  let outImage = null;
+  try {
+    const w = px.imageData.width;
+    const h = px.imageData.height;
+    const comps = px.imageData.components;
+    const data = await px.imageData.getData({ chunky: true });
+    const bytes = data.BYTES_PER_ELEMENT;
+    const maxV = bytes === 2 ? 32768 : 255; // PS 16bit는 0~32768
+    const t = (threshold / 255) * maxV;
+    const span = maxV - t;
+
+    const out = new data.constructor(w * h * comps);
+    for (let p = 0; p < w * h; p++) {
+      const o = p * comps;
+      // R 기반 smoothstep 강도. 채널 순서는 RGB(getPixels colorSpace:"RGB").
+      let s = span > 0 ? (data[o] - t) / span : 0;
+      s = s < 0 ? 0 : s > 1 ? 1 : s;
+      s = s * s * (3 - 2 * s);
+      const v = s * maxV;
+      out[o] = v;
+      out[o + 1] = v;
+      out[o + 2] = v;
+      if (comps > 3) out[o + 3] = maxV; // 불투명
+    }
+
+    outImage = await imaging.createImageDataFromBuffer(out, {
+      width: w,
+      height: h,
+      components: comps,
+      componentSize: bytes === 2 ? 16 : 8,
+      colorSpace: "RGB",
+    });
+    await imaging.putPixels({
+      documentID: doc.id,
+      layerID: layerId,
+      targetBounds: { left: 0, top: 0, width: w, height: h },
+      imageData: outImage,
+    });
+  } finally {
+    if (outImage) outImage.dispose();
+    px.imageData.dispose();
+  }
+
+  return app.activeDocument.activeLayers[0];
 }
 
 function colorize(hue, saturation) {
@@ -95,16 +143,8 @@ async function apply(doc, halation, formatId, prefix) {
     { name: "Bleed", mul: 4.0, w: bleed / 100, blend: "screen", satMul: 1.0 },
   ];
 
-  // 하이라이트 추출본 한 장. 각 스케일이 여기서 복제돼 나간다.
-  //
-  // stampVisible은 디스크립터를 **두 개** 돌려준다(빈 레이어 생성 + 병합).
-  // 병합만 내면 결과가 활성 레이어 안으로 들어가 배경 원본을 덮는다 — ps.js 참조.
-  await play([
-    ...ps.stampVisible(),
-    ps.renameLayer(`${prefix} · Halation src`),
-    extractHighlights(halation.threshold),
-  ]);
-  const base = app.activeDocument.activeLayers[0];
+  // 적색 구동 하이라이트 소스 한 장(회색 강도). 각 스케일이 여기서 복제돼 나간다.
+  const base = await buildRedSource(doc, halation.threshold, prefix);
   const baseId = base.id;
 
   const channels = [
