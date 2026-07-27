@@ -105,7 +105,7 @@ function typeOf(film) {
  *   **최소 농도(Dmin)를 흰색 1.0에 맞춘다.** 슬라이드 스캐너가 하는 일이 그것이고,
  *   기준 그레이에 맞추면 대비가 2를 넘는 슬라이드에서 출력이 5를 넘어가 버린다.
  */
-function channelResponse(points, printGamma, exposureStops, sign) {
+function channelResponse(points, printGamma, exposureStops, sign, wbShift) {
   // 리버설 곡선은 노광이 늘수록 농도가 **내려간다**. 단조 보정은 "증가"를
   // 강제하므로 그대로 쓰면 곡선을 뭉갠다. 부호를 뒤집어 보정한 뒤 되돌린다.
   const src = sign > 0
@@ -113,7 +113,10 @@ function channelResponse(points, printGamma, exposureStops, sign) {
     : monotonic(points.map(([h, d]) => [h, -d])).map(([h, d]) => [h, -d]);
 
   const fn = tabulate(pchip(src), TAB_MIN, TAB_MAX, TAB_STEPS);
-  const shift = exposureStops * LOG2 - MID_GRAY_OFFSET;
+  // wbShift = 텅스텐 밸런스 캐스트(채널별 로그노광 오프셋). H에는 더하지만 아래
+  // d0/dWhite 기준에는 **안 더한다** — 그래야 채널 정규화가 캐스트를 중화하지 않고
+  // 살린다(daylight 필름은 0이라 완전 불변). film.js buildLut 참조.
+  const shift = exposureStops * LOG2 - MID_GRAY_OFFSET + (wbShift || 0);
 
   if (sign > 0) {
     // 네거티브 — 기준 그레이에서 P = 0.18이 되도록 맞춘다.
@@ -182,10 +185,12 @@ function buildLut(film, opts) {
 
   if (info.channels === 1) return buildMonoLut(film, size, exposure, info);
 
+  // 텅스텐 캐스트(있으면). daylight 필름은 없어서 0 → 기존 동작 그대로.
+  const cast = film.tungstenCast || { r: 0, g: 0, b: 0 };
   const respond = [
-    channelResponse(cur.r, pg, exposure, info.sign),
-    channelResponse(cur.g, pg, exposure, info.sign),
-    channelResponse(cur.b, pg, exposure, info.sign),
+    channelResponse(cur.r, pg, exposure, info.sign, cast.r),
+    channelResponse(cur.g, pg, exposure, info.sign, cast.g),
+    channelResponse(cur.b, pg, exposure, info.sign, cast.b),
   ];
 
   // 1~4단계는 채널끼리 독립이고, 격자의 각 축은 같은 size개 값만 갖는다.

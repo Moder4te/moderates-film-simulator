@@ -536,8 +536,13 @@ A1의 표본이 그 역할을 할 수 있다.
 `tools/tds-catalog.md`에 64종을 등급별로 정리해 뒀다. A등급은 추출 완료.
 다음 후보는 색감이 특이하다고 평가되는 것 우선.
 
+- ~~Kodak Vision3 500T (텅스텐)~~ — **추가 완료 (엔진 v2.7.0).** H-1-5219t p3에서
+  추출(영화용 TDS라 레이아웃이 달라 곡선 분리·Log Exposure 축 보정을 손으로 했다).
+  γ R0.463/G0.544/B0.530, B>G>R. **텅스텐 밸런스 처리 신설** — `film.tungstenCast`
+  (채널별 로그노광 오프셋)를 H에 더하되 정규화 기준엔 안 더해 청록 캐스트를 살린다
+  (daylight 필름은 0이라 불변). 캐스트 크기 {r-0.1,b+0.25}는 **추정값 — 실기 튜닝 필요**.
+  CineStill 800T의 원본 필름이다.
 - Kodak Vericolor III
-- Kodak Vision3 500T (텅스텐 — 현재 데이라이트 필름만 있다)
 - Kodak Royal Gold 200 / Gold 200 (1998년판)
 - Fuji Reala / Pro 400H
 - Agfa Optima II
