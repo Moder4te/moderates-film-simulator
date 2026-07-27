@@ -75,6 +75,11 @@ async function applyLut(doc, table, size, prefix) {
   // Finish — 할레이션·그레인)이 합성에 섞여 있으면, 그것까지 색 레이어에 구워진다.
   // 그러면 마감이 (구워진 색 레이어 + 살아있는 마감 그룹) 두 벌이 되어 중복된다.
   // 그래서 자기 것이 아닌 FilmSim 레이어를 잠시 숨겨 **깨끗한 원본만** 읽는다.
+  //
+  // ⚠️ 한계: 마감의 **디퓨전 레이어는 그 시점 합성본을 구운 파괴적 스탬프**다.
+  // 마감을 먼저 얹은 뒤 색을 적용하면 그 스탬프된 픽셀은 이미 확정돼 되돌릴 수
+  // 없다 — 격리로 중복은 막아도, 디퓨전에 구워진 원본색까지 새로 칠하지는 못한다.
+  // 올바른 순서는 색 → 마감이다(README 현재 한계). 설계상 남겨둔 한계점.
   const foreign = collectLayers(
     app.activeDocument.layers,
     (l) => l.name && l.name.startsWith(FILMSIM) && !l.name.startsWith(prefix),
