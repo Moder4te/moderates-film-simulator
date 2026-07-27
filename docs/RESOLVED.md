@@ -6,6 +6,24 @@
 
 ## 색 엔진
 
+### 내보내기가 런타임에 죽어 있었다 — engine v2.10.0
+
+- **증상** `.cube`·Lightroom 프로파일 버튼을 누르면 콘솔에
+  `cubeexport.exportToFile is not a function`. README의 주요 기능인데 동작한 적이 없다
+- **원인** `core/io`는 **직렬화만** 하고 파일 쓰기는 앱 몫인데(core는 순수해야 해서
+  `uxp`를 못 부른다) **그 앱 계층이 아예 없었다.** main.js가 `core/io/cube`에 파일
+  함수를 기대했다. v2 분리 때 만들어지지 않은 것으로 보인다
+- **고침** `apps/engine/src/exportfile.js` 신설(exportCube / exportXmpOne / exportXmpSet).
+  세트는 한 장이 실패해도 멈추지 않고 실패 이름과 사유를 함께 돌려준다
+- **왜 오래 안 드러났나** `check-load`는 **모듈 로드만** 보고 호출은 보지 않는다.
+  버튼을 눌러야만 드러나는 종류였다 → `tools/check-api.js` 추가
+- **교훈 — 검사가 조용히 no-op이 될 수 있다.** check-api를 만들며 두 번 헛돌았고
+  **둘 다 "통과"를 찍으면서 아무것도 보지 않고 있었다.**
+  ① 진입 모듈(main.js)의 require는 플러그인 루트 기준인데(UXP-NOTES 2.1) 그걸
+  빠뜨려 main.js를 통째로 건너뜀 ② `module.exports = { a, b };` 한 줄 export를
+  정규식이 못 읽어 대부분의 모듈을 지나침. 둘 다 **일부러 오타를 주입해 본 뒤에야**
+  드러났다. 새 검사를 넣으면 반드시 깨뜨려 보고 잡히는지 확인할 것
+
 ### F3(구 0-8). 실시간 벡터스코프 — engine v2.9.0
 
 - **제약이 설계를 정했다** UXP는 canvas가 드래그 중 검게 클리어되고 SVG·rotate도 못 써

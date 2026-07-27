@@ -21,7 +21,8 @@ apps/
   finish/   마감 플러그인 (광학)
     src/    main params pipeline grading halation grain batch presets
     lib/    ← core/optics · host · shared 만. 색이 없다
-tools/    check* sync-libs build-ccx extract_tds_curves.py
+tools/    check(.js 문법·BOM) check-boundaries check-load check-api
+          check-conformance check-tone · sync-libs build-ccx extract_tds_curves.py
 ```
 
 `core/`가 순수하면 **노드에서 그대로 돌려 값을 전수 대조할 수 있다.** 색 검증
@@ -53,6 +54,14 @@ tools/    check* sync-libs build-ccx extract_tds_curves.py
 
 `tools/check-conformance.js`는 값이 아니라 **구조**도 본다 — "엔진 함수를 부르는 곳이
 몇 군데인가"를 세어, 각 경로에 같은 변환을 복붙한 구조를 잡아낸다.
+
+`tools/check-api.js`는 앱이 부르는 `모듈.함수()`가 **실제로 존재하는지** 본다.
+`check-load`는 모듈 로드만 확인하고 호출까지는 보지 않아, `.cube`·프로파일 내보내기가
+런타임에 죽고 있는 것을 오래 놓쳤다(→ [`RESOLVED.md`](./RESOLVED.md)).
+
+> **검사는 일부러 깨뜨려 확인한다.** check-api를 만들 때 두 번 헛돌았고 둘 다
+> **통과 표시를 내면서 아무것도 검사하지 않고 있었다.** 통과했다는 것이 검사가
+> 실제로 돈다는 뜻은 아니다.
 
 ## 파이프라인
 
