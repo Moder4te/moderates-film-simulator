@@ -459,7 +459,7 @@ const FILMS = [
     // H에 더하되(d0엔 안 더함) 이 캐스트를 살린다. 안 그러면 채널 정규화가
     // 청록을 중화해 800T 특유의 색이 사라진다.
     // ⚠️ 크기는 추정값이다(주광 5500K vs 3200K 무보정 근사). 실기 색으로 튜닝할 것.
-    tungstenCast: { r: -0.1, g: 0, b: 0.25 },
+    tungstenCast: { r: -0.04, g: 0, b: 0.1 },
 
     grain: { printGrainIndex: null, atMagnification: 4.4, format: "35mm" },
 
