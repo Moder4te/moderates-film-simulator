@@ -159,6 +159,41 @@ for (const app of ["engine", "finish"]) {
   }
 }
 
+// ── 6. 엔진 색 재적용이 중복되면 안 된다 ────────────────────────────────
+//
+// 두 가지가 깨지면 재적용 시 색이 누적되거나 마감(할레이션·그레인)이 색 레이어에
+// 구워져 두 벌이 된다. 실기로만 드러나 회귀를 놓치기 쉬우므로 정적으로 못 박는다.
+//
+//   (a) pipeline.run이 clearOwnLayers를 부른다 — 이전 색 레이어를 안 지우면 누적.
+//   (b) applyLut이 getPixels **전에** 다른 FilmSim 레이어를 숨긴다 — 합성본에
+//       마감이 섞여 있으면 색에 구워진다. 숨겼으면 반드시 되돌린다.
+(function checkEngineReapply() {
+  const pipe = path.join(ROOT, "apps/engine/src/pipeline.js");
+  const ap = path.join(ROOT, "apps/engine/src/apply.js");
+  if (fs.existsSync(pipe)) {
+    const s = fs.readFileSync(pipe, "utf8");
+    if (!/async function clearOwnLayers\(/.test(s) || !/await clearOwnLayers\(/.test(s)) {
+      problems.push("apps/engine/src/pipeline.js — run이 clearOwnLayers를 부르지 않는다. 재적용 색이 누적된다.");
+    }
+    if (!/l\.layers/.test(s)) {
+      problems.push("apps/engine/src/pipeline.js — clearOwnLayers가 그룹 안(l.layers)을 재귀로 훑지 않는다. 중첩된 색 레이어를 못 지운다.");
+    }
+  }
+  if (fs.existsSync(ap)) {
+    const s = fs.readFileSync(ap, "utf8");
+    const hide = s.indexOf(".visible = false");
+    const get = s.indexOf("imaging.getPixels");
+    if (!/startsWith\(FILMSIM\)/.test(s) || hide < 0) {
+      problems.push("apps/engine/src/apply.js — applyLut이 다른 FilmSim 레이어를 격리(숨김)하지 않는다. 재적용 시 마감이 색에 구워진다.");
+    } else if (get < 0 || hide > get) {
+      problems.push("apps/engine/src/apply.js — 다른 FilmSim 레이어를 getPixels 전에 숨겨야 한다(순서 어긋남).");
+    }
+    if (!/\.visible = true/.test(s)) {
+      problems.push("apps/engine/src/apply.js — 숨긴 레이어 가시성을 되돌리지 않는다(.visible = true 없음).");
+    }
+  }
+})();
+
 if (problems.length) {
   console.error("경계 위반 " + problems.length + "건\n");
   for (const p of problems) console.error("  " + p);

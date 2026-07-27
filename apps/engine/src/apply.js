@@ -17,6 +17,19 @@ const { app, action, imaging } = require("photoshop");
 const ps = require("../lib/host/ps");
 const lut = require("../lib/core/color/lut");
 
+/** 모든 FilmSim 레이어의 공통 접두사. 색·마감 양쪽이 이걸로 시작한다. */
+const FILMSIM = "FilmSim";
+
+/** layers 트리를 재귀로 훑어 pred를 만족하는 레이어를 모은다(그룹 안까지). */
+function collectLayers(layers, pred, out) {
+  for (const l of layers || []) {
+    if (pred(l)) out.push(l);
+    const kids = l.layers;
+    if (kids && kids.length) collectLayers(kids, pred, out);
+  }
+  return out;
+}
+
 
 /**
  * 문서가 전제를 만족하는지 본다. 막지는 않고 경고만 돌려준다.
@@ -56,38 +69,72 @@ function validate(doc, params) {
  * @param {string} prefix 레이어 이름 접두사 (파이프라인이 소유권을 표시한다)
  */
 async function applyLut(doc, table, size, prefix) {
-  // 레이어를 먼저 만든다. getPixels가 합성을 읽으므로, 빈 레이어가 위에 있어도
-  // 읽는 내용은 달라지지 않는다.
-  await ps.play([ps.makePixelLayer(), ps.renameLayer(`${prefix} · Color`)]);
-  const layerId = app.activeDocument.activeLayers[0].id;
+  // ── 중복 방지: 다른 FilmSim 레이어를 읽기에서 격리한다 ────────────────────
+  //
+  // getPixels는 **합성본**을 읽는다. 색을 재적용할 때 이미 얹힌 마감(FilmSim
+  // Finish — 할레이션·그레인)이 합성에 섞여 있으면, 그것까지 색 레이어에 구워진다.
+  // 그러면 마감이 (구워진 색 레이어 + 살아있는 마감 그룹) 두 벌이 되어 중복된다.
+  // 그래서 자기 것이 아닌 FilmSim 레이어를 잠시 숨겨 **깨끗한 원본만** 읽는다.
+  const foreign = collectLayers(
+    app.activeDocument.layers,
+    (l) => l.name && l.name.startsWith(FILMSIM) && !l.name.startsWith(prefix),
+    []
+  );
+  const toRestore = [];
+  for (const l of foreign) {
+    if (l.visible) { l.visible = false; toRestore.push(l); }
+  }
 
-  const px = await imaging.getPixels({ documentID: doc.id, colorSpace: "RGB" });
-  let outImage = null;
   try {
-    const width = px.imageData.width;
-    const height = px.imageData.height;
-    const comps = px.imageData.components;
-    const data = await px.imageData.getData({ chunky: true });
+    await ps.play([ps.makePixelLayer(), ps.renameLayer(`${prefix} · Color`)]);
+    const colorLayer = app.activeDocument.activeLayers[0];
+    const layerId = colorLayer.id;
 
-    const out = lut.applyToBuffer(data, comps, width * height, table, size);
+    const px = await imaging.getPixels({ documentID: doc.id, colorSpace: "RGB" });
+    let outImage = null;
+    try {
+      const width = px.imageData.width;
+      const height = px.imageData.height;
+      const comps = px.imageData.components;
+      const data = await px.imageData.getData({ chunky: true });
 
-    outImage = await imaging.createImageDataFromBuffer(out, {
-      width,
-      height,
-      components: 3,
-      componentSize: data.BYTES_PER_ELEMENT === 2 ? 16 : 8,
-      colorSpace: "RGB",
-    });
+      const out = lut.applyToBuffer(data, comps, width * height, table, size);
 
-    await imaging.putPixels({
-      documentID: doc.id,
-      layerID: layerId,
-      targetBounds: { left: 0, top: 0, width, height },
-      imageData: outImage,
-    });
+      outImage = await imaging.createImageDataFromBuffer(out, {
+        width,
+        height,
+        components: 3,
+        componentSize: data.BYTES_PER_ELEMENT === 2 ? 16 : 8,
+        colorSpace: "RGB",
+      });
+
+      await imaging.putPixels({
+        documentID: doc.id,
+        layerID: layerId,
+        targetBounds: { left: 0, top: 0, width, height },
+        imageData: outImage,
+      });
+    } finally {
+      if (outImage) outImage.dispose();
+      px.imageData.dispose();
+    }
+
+    // 색 레이어는 마감 **아래**에 놓여야 한다(색 → 마감 순서). 방금 맨 위에
+    // 만들었으니, 마감(foreign) 중 가장 아래 레이어 밑으로 내린다. 이동이
+    // 실패해도 중복은 이미 막혔으므로 치명적이지 않다(위치만 어긋난다).
+    if (foreign.length) {
+      try {
+        const anchor = foreign[foreign.length - 1];
+        await colorLayer.move(anchor, "placeAfter");
+      } catch (e) {
+        /* 위치 조정 실패는 무시 — 중복 자체는 격리로 이미 해결 */
+      }
+    }
   } finally {
-    if (outImage) outImage.dispose();
-    px.imageData.dispose();
+    // 숨겼던 마감 레이어 가시성 복원. 예외가 나도 반드시 되돌린다.
+    for (const l of toRestore) {
+      try { l.visible = true; } catch (e) { /* 이미 지워진 참조 등 */ }
+    }
   }
 }
 
