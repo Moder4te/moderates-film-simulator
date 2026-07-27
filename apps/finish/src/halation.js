@@ -153,9 +153,11 @@ async function apply(doc, halation, formatId, prefix) {
 
   const core = halation.core == null ? 60 : halation.core;
   const bleed = halation.bleed == null ? 50 : halation.bleed;
+  const mid = halation.mid == null ? 78 : halation.mid;
 
   // 스케일 = { 반경 배율, 가중(0~1), 블렌드, 코어 화이트닝 여부 }.
-  // 중간은 코어·블리딩을 이어 주는 다리라 둘의 평균으로 자동 산출한다.
+  // 미드는 붉은 링 본체라 사용자가 직접 조절한다(예전엔 core·bleed 평균으로 자동
+  // 산출했으나 독립 슬라이더로 뺐다).
   //
   //   · **Core**  — 타이트(×0.3), **Color Dodge**. 실제 할레이션의 코어는 뜨거운
   //     흰색으로 날아간다. 소스는 오렌지-레드라 여기만 colorize로 채도를 죽여
@@ -167,7 +169,7 @@ async function apply(doc, halation, formatId, prefix) {
   //     위 채도 높은 붉은빛을 유지(Screen은 살몬으로 희석).
   const scales = [
     { name: "Core", mul: 0.3, w: core / 100, blend: "colorDodge", whitenSat: halation.tintSaturation * 0.1 },
-    { name: "Mid", mul: 1.1, w: (core + bleed) / 180, blend: "linearDodge", whitenSat: null },
+    { name: "Mid", mul: 1.1, w: mid / 100, blend: "linearDodge", whitenSat: null },
     { name: "Bleed", mul: 4.0, w: bleed / 100, blend: "linearDodge", whitenSat: null },
   ];
 
