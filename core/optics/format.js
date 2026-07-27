@@ -72,15 +72,23 @@ function referenceById(id) {
   return REF_BY_ID.get(id) || REF_BY_ID.get("document");
 }
 
+/** 입자 크기 슬라이더 상한. 이보다 굵은 그레인은 크기가 아니라 해상도로 낸다. */
+const MAX_GRAIN_SIZE = 10;
+
 /**
- * 사용자 슬라이더(0~100) → 필름면 유효 입자 지름 (µm).
+ * 사용자 슬라이더(0~10) → 필름면 유효 입자 지름 (µm). 범위 2~6µm.
  *
- * 2~42µm. 기본값 20이 **10µm**에 오는데, 이는 v2plan 4.5가 검증에 쓴 Portra 400의
- * 유효 입자 크기다. 실제 은염 결정은 미세립 4~6µm, 고감도 15~20µm 범위다.
+ * **상한을 10(=6µm)으로 둔다.** 그 위로 올리면 입자 텍스처와 흩어짐이 여러 px로
+ * 커져 블록지고 부자연스럽다. 실제로 그레인은 필름 고유 크기(µm)로 고정이고,
+ * "굵은 그레인"은 크기가 아니라 **확대율(해상도)**의 문제다 — 같은 입자를 더
+ * 키워 인화하면 굵어 보인다. 그래서 더 굵은 룩은 이 슬라이더가 아니라
+ * "입자 크기 기준"을 실제 문서보다 높게(또는 문서를 축소) 잡아서 낸다.
+ *
+ * 기울기 0.4µm/단위는 예전과 같아, 낮은 값의 감각(2 → 2.8µm)이 유지된다.
  */
 function micronsFor(size) {
-  const s = size <= 0 ? 0 : size >= 100 ? 100 : size;
-  return 2 + (s / 100) * 40;
+  const s = size <= 0 ? 0 : size >= MAX_GRAIN_SIZE ? MAX_GRAIN_SIZE : size;
+  return 2 + s * 0.4;
 }
 
 /**
@@ -205,6 +213,7 @@ module.exports = {
   byId,
   references,
   referenceById,
+  MAX_GRAIN_SIZE,
   micronsFor,
   longEdgeFor,
   grainSize,
