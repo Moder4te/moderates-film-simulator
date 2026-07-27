@@ -155,7 +155,9 @@
 
 **PolyForm Noncommercial 1.0.0.** 근거와 제약은 [`DECISIONS.md`](./DECISIONS.md) 법률 절.
 
-### A3(부분). Vision3 500T + 텅스텐 밸런스 — engine v2.7.0
+### 필름 추가(부분) — Vision3 500T + 텅스텐 밸런스 — engine v2.7.0
+
+> 항목 자체는 계속 진행 중이다 → [`../TODO.md`](../TODO.md) D1(옛 A3).
 
 - **곡선 추출** Kodak H-1-5219t p3. **영화용 TDS라 레이아웃이 다르다** — 3곡선이 한 벡터
   path에 연결되고 x축이 이중(Log Exposure / Camera Stops). x-backtrack으로 분리하고 위
