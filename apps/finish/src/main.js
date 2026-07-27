@@ -161,6 +161,8 @@ function syncUI() {
   setSlider("halThreshold", h.threshold);
   setSlider("halStrength", h.strength);
   setSlider("halRadius", h.radius);
+  setSlider("halCore", h.core);
+  setSlider("halBleed", h.bleed);
   setSlider("halHue", h.tintHue);
   setSlider("halSat", h.tintSaturation);
 
@@ -283,6 +285,8 @@ function wire() {
   bindSlider("halThreshold", "halation.threshold");
   bindSlider("halStrength", "halation.strength");
   bindSlider("halRadius", "halation.radius");
+  bindSlider("halCore", "halation.core");
+  bindSlider("halBleed", "halation.bleed");
   bindSlider("halHue", "halation.tintHue");
   bindSlider("halSat", "halation.tintSaturation");
   bindCheckbox("halationEnabled", "halation.enabled");
