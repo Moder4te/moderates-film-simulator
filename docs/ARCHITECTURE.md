@@ -9,7 +9,7 @@
 ```
 core/     순수 계산. photoshop·uxp·DOM 접근 금지 (검사로 강제)
   color/    curve films film scanner lut colorspace simulate gamut analysis
-  optics/   format grainfield displace
+  optics/   format grainfield displace tone
   io/       cube xmp xmpcodec        직렬화만. 파일 쓰기는 앱이 한다
 host/     UXP 경계. batchPlay 디스크립터는 여기서만
   ps.js
@@ -19,7 +19,7 @@ apps/
     src/    main params pipeline apply preview colorwheel photoanalysis presets
     lib/    ← sync-libs.js가 core/color · core/io · host · shared 를 복사
   finish/   마감 플러그인 (광학)
-    src/    main params pipeline halation grain batch presets
+    src/    main params pipeline grading halation grain batch presets
     lib/    ← core/optics · host · shared 만. 색이 없다
 tools/    check* sync-libs build-ccx extract_tds_curves.py
 ```
@@ -64,7 +64,7 @@ Camera Raw (중립 현상, ProPhoto 16bit)
 [엔진]  필름 → 스캐너 → 색 조정  →  3D LUT 한 장  →  putPixels
            "FilmSim Color · Color" 픽셀 레이어
    ↓
-[마감]  디퓨전 → 할레이션 → 그레인
+[마감]  그레이딩 → 디퓨전 → 할레이션 → 그레인
            "FilmSim Finish · …" 레이어들 → 그룹
 ```
 
@@ -85,8 +85,11 @@ clearOwnLayers(재귀)  →  film.hasEffect? → buildForParams(params, size) �
 ### 마감 내부 — `apps/finish/src/pipeline.js`
 
 ```
-clearOwnLayers  →  grain.applyDiffusion  →  halation.apply  →  grain.applyGrain  →  그룹화
+clearOwnLayers → grading.apply → grain.applyDiffusion → halation.apply → grain.applyGrain → 그룹화
 ```
+
+**그레이딩이 제일 앞**이다 — 색을 확정하고 광학을 얹는 순서(전체 아키텍처와 같다).
+할레이션이 조정된 하이라이트에서 발생해야 자연스럽다.
 
 **디퓨전이 할레이션보다 먼저**여야 한다. 디퓨전이 `stampVisible`/`getPixels`로 합성본을
 잡으므로, 할레이션이 이미 있으면 그 픽셀이 디퓨전에 구워져 나중에 할레이션을 끌 수 없다.
@@ -151,6 +154,23 @@ grain_px  = (µm / 1000) × px_per_mm
 - 채널 진폭 차등(`dyeClouds`): 실측 R 1.23 / G 1.0 / B 1.76. **크기가 아니라 세기**다.
 - `grain_px < 1`이면 블러를 끄고 강도로 환산한다.
 - 격자 완화 블러 = `gridSmoothForIso(iso) × longEdge/9000` (장축 9000px 기준 튜닝값).
+
+### 마감 그레이딩 — `core/optics/tone.js`
+
+```
+선형광:   노출(2^stops) → 색온도·틴트(광도 재정규화)
+인코딩:   흑점 → 대비(S커브) → 암부·명부(영역 가중) → 채도·바이브런스
+출력:     fitGamut(회색 쪽으로 당김) → TPDF 디더 → 양자화 (한 번만)
+```
+
+- **노출·색온도만 선형광**에서 한다(빛의 곱이라). 나머지는 인코딩 공간 — PS·Lightroom
+  슬라이더와 기대가 맞는다. 감마는 문서 프로파일에서(ProPhoto 1.8, 그 외 2.2).
+- **양자화는 마지막 한 번만.** 조정 레이어를 쌓으면 8bit 문서에서 단계마다 잘린다.
+- **디더는 8bit에서만.** TPDF(균등난수 두 개의 차) ±1LSB. 실측 평균 띠폭 35.3px → 2.3px.
+- ⚠️ **중간 단계에서 클램프하면 안 된다.** 인공 평탄부가 생기면 뒤의 채도 연산
+  `L+(v−L)·s`가 그 구간에서 기울기 음수가 되어 **계조가 뒤집힌다**. 곡선은 클램프한
+  값에만 먹이고 **초과분은 보존**한다. 범위 정리는 `fitGamut`이 마지막에 한 번.
+- 프리셋 키는 `tone`이다. `grading`은 **엔진 스키마**라 migrate가 통과시킨다(충돌 금지).
 
 ### 할레이션 — `apps/finish/src/halation.js`
 
