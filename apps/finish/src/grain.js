@@ -71,33 +71,25 @@ function depthOf(doc) {
 }
 
 /**
- * 존 하나 — 공유 그레인 버퍼를 새 레이어에 putPixels하고 Overlay + Blend If.
+ * 존 하나 — 공유 그레인 **imageData**를 새 레이어에 putPixels하고 Overlay + Blend If.
  * 세 존이 같은 텍스처를 쓰되 강도(불투명도)와 톤 마스크만 다르다.
+ *
+ * imageData는 호출자가 **한 번만 만들어** 넘긴다. 존마다 새로 만들면 같은 버퍼를
+ * 세 번 변환하게 되는데, 대형 문서에서 그 비용이 그대로 세 배가 된다.
  */
-async function addZone(doc, label, strength, range, feather, grainBuf, dims, prefix) {
+async function addZone(doc, label, strength, range, feather, img, dims, prefix) {
   if (strength <= 0) return;
 
   const [bMin, bMax, wMin, wMax] = blendRangeFor(range, feather);
   await play([ps.makePixelLayer(), ps.renameLayer(`${prefix} · Grain ${label}`)]);
   const layerId = app.activeDocument.activeLayers[0].id;
 
-  const img = await imaging.createImageDataFromBuffer(grainBuf, {
-    width: dims.width,
-    height: dims.height,
-    components: 3,
-    componentSize: dims.bytes === 2 ? 16 : 8,
-    colorSpace: "RGB",
+  await imaging.putPixels({
+    documentID: doc.id,
+    layerID: layerId,
+    targetBounds: { left: 0, top: 0, width: dims.width, height: dims.height },
+    imageData: img,
   });
-  try {
-    await imaging.putPixels({
-      documentID: doc.id,
-      layerID: layerId,
-      targetBounds: { left: 0, top: 0, width: dims.width, height: dims.height },
-      imageData: img,
-    });
-  } finally {
-    img.dispose();
-  }
 
   // 격자 마디 완화(활성 = 방금 putPixels한 그레인 레이어) → 블렌드.
   const cmds = [];
@@ -202,9 +194,22 @@ async function applyGrain(doc, grain, medium, prefix) {
   });
   const dims = { width, height, bytes: depth.bytes, gridSmooth: gridSmoothPx(grain.iso, sizing.longEdge) };
 
-  await addZone(doc, "Shadow", grain.shadow, grain.shadowRange, grain.feather, grainBuf, dims, prefix);
-  await addZone(doc, "Midtone", grain.midtone, grain.midtoneRange, grain.feather, grainBuf, dims, prefix);
-  await addZone(doc, "Highlight", grain.highlight, grain.highlightRange, grain.feather, grainBuf, dims, prefix);
+  // imageData는 **한 번만** 만들어 세 존이 나눠 쓴다. 존마다 만들면 같은 버퍼를
+  // 세 번 변환하게 되고, 대형 문서에서는 그것만으로 수백 ms가 든다.
+  const img = await imaging.createImageDataFromBuffer(grainBuf, {
+    width,
+    height,
+    components: 3,
+    componentSize: depth.bytes === 2 ? 16 : 8,
+    colorSpace: "RGB",
+  });
+  try {
+    await addZone(doc, "Shadow", grain.shadow, grain.shadowRange, grain.feather, img, dims, prefix);
+    await addZone(doc, "Midtone", grain.midtone, grain.midtoneRange, grain.feather, img, dims, prefix);
+    await addZone(doc, "Highlight", grain.highlight, grain.highlightRange, grain.feather, img, dims, prefix);
+  } finally {
+    img.dispose();
+  }
 }
 
 /**

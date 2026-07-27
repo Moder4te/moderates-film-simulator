@@ -2,7 +2,7 @@
   "manifestVersion": 5,
   "id": "com.filmsim.finish",
   "name": "Film Simulation — Finish",
-  "version": "2.14.0",
+  "version": "2.14.1",
   "main": "index.html",
   "host": [
     {

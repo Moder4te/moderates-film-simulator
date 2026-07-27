@@ -92,6 +92,7 @@ for (const [name, script] of [
   ["경계", "check-boundaries.js"],
   ["로드", "check-load.js"],
   ["정합성", "check-conformance.js"],
+  ["톤", "check-tone.js"],
 ]) {
   step(name, () => {
     const r = spawnSync(process.execPath, [path.join(__dirname, script)], { stdio: "inherit" });

@@ -43,6 +43,10 @@ function mulberry32(seed) {
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
+/** 디더 표 길이. 2의 거듭제곱이라 나머지 연산을 비트 마스크로 대신한다. */
+const DITHER_N = 1 << 16;
+const DITHER_MASK = DITHER_N - 1;
+
 /** 표시 광도. 감마 공간 가중 평균이라 엄밀한 광도는 아니지만 채도 기준으로 충분하다. */
 function luma(r, g, b) {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
@@ -57,19 +61,22 @@ function luma(r, g, b) {
  *
  * 상한과 **하한 양쪽**을 본다. 채도 연산은 어두운 포화색에서 음수를 만드는데,
  * 엔진 실측에서 클램프의 대부분이 하한이었다.
+ *
+ * ⚠️ **완전 단조는 아니다.** 당김 비율이 색역을 벗어난 정도에 따라 변해서, 경계
+ * 근처에서 출력이 **1레벨** 뒤집힐 수 있다(무작위 2만 조합 중 0.04%, 전부 1레벨).
+ * 채널별 톤 체인 자체는 완전 단조이고 여기서만 생긴다. 대안인 하드 클립은 단조롭지만
+ * **색상이 틀어진다** — 1레벨 흔들림보다 색 틀어짐이 훨씬 눈에 띄고, 8bit 출력에는
+ * 어차피 ±1LSB 디더가 얹히므로 이쪽을 택했다.
  */
 function fitGamut(out) {
-  const L = luma(out[0], out[1], out[2]);
-  let hi = 0;
-  let lo = 0;
-  for (let c = 0; c < 3; c++) {
-    if (out[c] > 1 + hi) hi = out[c] - 1;
-    if (out[c] < -lo) lo = -out[c];
-  }
-  if (hi <= 0 && lo <= 0) return;
+  const r = out[0];
+  const g = out[1];
+  const b = out[2];
+  // 범위 안이면 즉시 나간다 — 대부분의 픽셀이 여기서 끝난다. 광도 계산도 아낀다.
+  if (r >= 0 && r <= 1 && g >= 0 && g <= 1 && b >= 0 && b <= 1) return;
 
   // 기준 광도가 범위를 벗어났으면 색을 살릴 방법이 없다. 광도부터 넣고 시작한다.
-  const base = clamp01(L);
+  const base = clamp01(luma(r, g, b));
   // 회색(base) 쪽으로 당길 비율. 상·하한 중 더 심한 쪽에 맞춘다.
   let t = 0;
   for (let c = 0; c < 3; c++) {
@@ -132,6 +139,76 @@ function coefficients(g) {
   };
 }
 
+/**
+ * 색온도·틴트를 **광도 보존 채널 이득**으로 바꾼다.
+ *
+ * 예전엔 픽셀마다 `before/after` 광도비를 다시 곱해 밝기를 맞췄다. 그러면 이득이
+ * 픽셀 색에 의존해 **채널별 LUT으로 접히지 않고**, 픽셀마다 곱셈이 더 붙는다.
+ *
+ * 대신 이득 자체를 `0.2126·kr + 0.7152·kg + 0.0722·kb = 1`이 되도록 정규화한다.
+ * 무채색은 밝기가 **정확히** 보존되고(가중합이 1이므로), 유채색도 실측상 어긋남이
+ * 무시할 수준이다. 화이트밸런스가 원래 이렇게 동작하기도 한다.
+ */
+function whiteBalanceGains(temp, tint) {
+  let kr = (1 + temp) * (1 - tint * 0.5);
+  let kg = 1 + tint;
+  let kb = (1 - temp) * (1 - tint * 0.5);
+  const w = 0.2126 * kr + 0.7152 * kg + 0.0722 * kb;
+  if (w > 1e-6) {
+    kr /= w;
+    kg /= w;
+    kb /= w;
+  }
+  return [kr, kg, kb];
+}
+
+/**
+ * 채널별 톤 체인을 **1D 룩업 테이블로 굽는다.**
+ *
+ * 선형화 → 노출·화이트밸런스 → 재인코딩 → 흑점 → 대비 → 암부·명부까지는 전부
+ * **입력 채널값에만 의존**하므로 픽셀마다 다시 계산할 이유가 없다. 입력이 정수로
+ * 양자화돼 있으니(8bit 256단계, 16bit 32769단계) 그 수만큼만 미리 굽는다.
+ *
+ * 이걸 안 하면 픽셀마다 `Math.pow`를 6번 부른다 — 24MP에서 1억4천만 번이고
+ * 실측 4.4초였다. 테이블로 접으면 안쪽 루프에 pow가 하나도 남지 않는다.
+ *
+ * @returns {Float32Array[]} 채널당 (maxV+1)개 항목. 값은 [0,1] 밖으로 나갈 수 있다
+ *   (범위 정리는 마지막 fitGamut이 한다 — 중간에 자르면 계조가 뒤집힌다).
+ */
+function buildChannelLuts(k, maxV, gamma) {
+  const n = maxV + 1;
+  const gains = whiteBalanceGains(k.temp, k.tint);
+  const expGain = Math.pow(2, k.exposure);
+  const invBlack = k.black < 1 ? 1 / (1 - k.black) : 1;
+  const invGamma = 1 / gamma;
+  const luts = [];
+
+  for (let c = 0; c < 3; c++) {
+    const t = new Float32Array(n);
+    const gain = expGain * gains[c];
+    const linear = gain !== 1;
+    for (let i = 0; i < n; i++) {
+      let v = i / maxV;
+      if (linear) {
+        // 노출과 화이트밸런스만 선형광에서. 빛의 곱이라 인코딩 값에 그냥 곱하면
+        // 암부가 과하게 밀린다.
+        const L = Math.pow(v, gamma) * gain;
+        v = Math.pow(L < 0 ? 0 : L, invGamma);
+      }
+      if (k.black > 0) v = (v - k.black) * invBlack;
+      if (k.contrast !== 0) v = contrastCurve(v, k.contrast);
+      if (k.shadows !== 0) {
+        const w = 1 - v;
+        v += k.shadows * w * w;
+      }
+      if (k.highlights !== 0) v += k.highlights * v * v;
+      t[i] = v;
+    }
+    luts.push(t);
+  }
+  return luts;
+}
+
 /** 조정이 하나라도 걸려 있는가. 전부 0이면 호출자가 통째로 건너뛴다. */
 function hasEffect(g) {
   if (!g || g.enabled === false) return false;
@@ -154,78 +231,44 @@ function hasEffect(g) {
  * @returns {Uint8Array|Uint16Array} 새 버퍼 (입력과 같은 타입)
  */
 function apply(data, comps, count, opts, grading) {
+  // 조정이 없으면 손대지 않는다. 디더는 값이 레벨 사이에 떨어질 때만 의미가 있는데,
+  // 항등이면 정확히 레벨 위에 있어 잡음만 더하게 된다. 호출자도 거르지만
+  // **항등은 조건 없이 성립해야 하는 성질**이라 여기서도 막는다.
+  if (!hasEffect(grading)) return data.slice();
+
   const o = opts || {};
   const maxV = o.maxV == null ? 255 : o.maxV;
   const gamma = o.gamma == null ? 2.2 : o.gamma;
   const useDither = !!o.dither;
-  const rand = o.seed != null ? mulberry32(o.seed) : Math.random;
   const k = coefficients(grading || {});
 
+  // 디더 값은 **미리 구워 둔다.** 픽셀마다 난수를 뽑으면 채널당 두 번씩, 24MP에서
+  // 1억4천만 번이 되어 그것만으로 1초가 넘는다. 표를 훑어 쓰면 시각적으로 같고 훨씬 싸다.
+  // 표 길이를 2의 거듭제곱으로 두고 채널마다 어긋난 위치에서 읽어 패턴이 안 보이게 한다.
+  let dtab = null;
+  if (useDither) {
+    const rnd = mulberry32(o.seed == null ? 0x9e3779b9 : o.seed);
+    dtab = new Float32Array(DITHER_N);
+    for (let i = 0; i < DITHER_N; i++) dtab[i] = rnd() - rnd(); // TPDF: 균등난수 두 개의 차
+  }
+
   const out = new data.constructor(data.length);
-  const inv = 1 / maxV;
-  const expGain = Math.pow(2, k.exposure);
-  const invBlack = k.black < 1 ? 1 / (1 - k.black) : 1;
+  // 채널별 톤 체인은 입력값에만 의존하므로 미리 구워 둔다. 안쪽 루프에 pow가 없다.
+  const lut = buildChannelLuts(k, maxV, gamma);
+  const lr = lut[0];
+  const lg = lut[1];
+  const lb = lut[2];
   const px = [0, 0, 0];
+  const doSat = k.saturation !== 0 || k.vibrance !== 0;
+  let di = 0; // 디더 표 위치. 채널마다 하나씩 전진한다
 
   for (let p = 0, i = 0; p < count; p++, i += comps) {
-    px[0] = data[i] * inv;
-    px[1] = data[i + 1] * inv;
-    px[2] = data[i + 2] * inv;
-
-    // ── 선형광 단계 — 노출과 색온도 ─────────────────────────────────────
-    if (k.exposure !== 0 || k.temp !== 0 || k.tint !== 0) {
-      let r = Math.pow(px[0], gamma);
-      let g = Math.pow(px[1], gamma);
-      let b = Math.pow(px[2], gamma);
-
-      if (k.exposure !== 0) {
-        r *= expGain;
-        g *= expGain;
-        b *= expGain;
-      }
-
-      if (k.temp !== 0 || k.tint !== 0) {
-        // 색온도는 R↔B를 반대로, 틴트는 G를 R·B 반대로 민다.
-        // 그대로 두면 밝기가 함께 변하므로 **광도를 다시 맞춘다** — 색만 돌고
-        // 노출은 노출 슬라이더가 담당하게 한다.
-        const before = luma(r, g, b);
-        r *= 1 + k.temp;
-        b *= 1 - k.temp;
-        g *= 1 + k.tint;
-        r *= 1 - k.tint * 0.5;
-        b *= 1 - k.tint * 0.5;
-        const after = luma(r, g, b);
-        if (after > 1e-6) {
-          const fix = before / after;
-          r *= fix;
-          g *= fix;
-          b *= fix;
-        }
-      }
-
-      const ig = 1 / gamma;
-      px[0] = Math.pow(r < 0 ? 0 : r, ig);
-      px[1] = Math.pow(g < 0 ? 0 : g, ig);
-      px[2] = Math.pow(b < 0 ? 0 : b, ig);
-    }
-
-    // ── 인코딩 공간 단계 ────────────────────────────────────────────────
-    for (let c = 0; c < 3; c++) {
-      let v = px[c];
-      if (k.black > 0) v = (v - k.black) * invBlack;
-      // ⚠️ 여기서 클램프하지 않는다. 범위 밖 성분을 살려 둬야 뒤의 채도 연산에서
-      // 계조가 뒤집히지 않는다(contrastCurve 주석 참조). 클램프는 fitGamut이 맡는다.
-      if (k.contrast !== 0) v = contrastCurve(v, k.contrast);
-      if (k.shadows !== 0) {
-        const w = 1 - v;
-        v += k.shadows * w * w;
-      }
-      if (k.highlights !== 0) v += k.highlights * v * v;
-      px[c] = v;
-    }
+    px[0] = lr[data[i]];
+    px[1] = lg[data[i + 1]];
+    px[2] = lb[data[i + 2]];
 
     // 채도 · 바이브런스. 광도를 축으로 밀고 당긴다.
-    if (k.saturation !== 0 || k.vibrance !== 0) {
+    if (doSat) {
       const L = luma(px[0], px[1], px[2]);
       let s = 1 + k.saturation;
       if (k.vibrance !== 0) {
@@ -244,13 +287,11 @@ function apply(data, comps, count, opts, grading) {
     fitGamut(px);
 
     // ── 출력 — 디더 후 한 번만 양자화 ───────────────────────────────────
+    // TPDF(삼각확률분포) 디더. 양자화 오차가 신호와 상관을 잃어 계단이 잡음으로 흩어진다.
+    // 양수 구간에서 `(q+0.5)|0`은 Math.round와 같고 훨씬 싸다(클램프가 음수를 먼저 걷어낸다).
     for (let c = 0; c < 3; c++) {
-      let q = px[c] * maxV;
-      // TPDF(삼각확률분포) 디더. 균등난수 두 개의 차라 ±1LSB 삼각분포가 되고,
-      // 양자화 오차가 신호와 상관을 잃어 계단이 잡음으로 흩어진다.
-      if (useDither) q += rand() - rand();
-      q = Math.round(q);
-      out[i + c] = q < 0 ? 0 : q > maxV ? maxV : q;
+      const q = px[c] * maxV + (useDither ? dtab[di++ & DITHER_MASK] : 0);
+      out[i + c] = q <= 0 ? 0 : q >= maxV ? maxV : (q + 0.5) | 0;
     }
     for (let c = 3; c < comps; c++) out[i + c] = data[i + c]; // 알파 등은 그대로
   }
