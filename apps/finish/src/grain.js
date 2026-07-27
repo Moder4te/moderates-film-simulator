@@ -156,14 +156,16 @@ async function applyDiffusion(doc, grain, sizing, prefix) {
 }
 
 /**
- * 변위 디퓨전 — 블러 대신 픽셀을 입자 스케일로 이동시켜 서브입자 디테일을 부순다.
+ * 확산(diffuse) 디퓨전 — 블러 대신 픽셀마다 이웃을 무작위로 집어 서브입자 디테일을
+ * 조각낸다.
  *
- * 블러는 미세 선을 **흐리게** 남긴다(머리카락이 살아남는 이유). 변위는 픽셀을
- * 옮겨 그 선을 입자 스케일로 **조각낸다** — 에너지를 없애지 않고 흐트러뜨린다.
- * 필름이 미세 디테일을 확률적으로 기록/누락하는 거동에 더 가깝다(displace.js).
+ * 블러는 미세 선을 **흐리게** 남긴다(머리카락이 살아남는 이유). 확산은 픽셀마다
+ * **탈상관**으로 이웃을 집어 그 선을 조각낸다 — 에너지를 없애지 않고 흐트러뜨린다.
+ * (상관 변위장으로 밀면 선이 연결된 채 휘어 꼬불꼬불해진다 — 그레인이 아니라
+ * warp이다. 그래서 per-pixel 탈상관으로 갔다. displace.js 참조.)
  *
  * batchPlay의 Diffuse 디스크립터가 미채록이라 imaging으로 직접 한다. 엔진의
- * applyLut과 같은 검증된 픽셀 왕복 패턴이다(빈 레이어 → 합성 읽기 → 변위 → 되쓰기).
+ * applyLut과 같은 검증된 픽셀 왕복 패턴이다(빈 레이어 → 합성 읽기 → 확산 → 되쓰기).
  */
 async function applyDisplaceDiffusion(doc, grain, sizing, prefix) {
   const amt = grain.diffusion || 0;
@@ -180,10 +182,9 @@ async function applyDisplaceDiffusion(doc, grain, sizing, prefix) {
     const comps = px.imageData.components;
     const data = await px.imageData.getData({ chunky: true });
 
-    // 진폭 = 입자 스케일 × 강도. 상관길이 = 입자. 균일난수라 RMS ≈ amp/√3.
-    const ampPx = Math.max(0.3, sizing.px * (amt / 100) * 1.2);
-    const corrPx = Math.max(1, sizing.px);
-    const out = displace.displaceBuffer(data, width, height, comps, { ampPx, corrPx });
+    // 반경 = 입자 스케일 × 강도. 픽셀마다 탈상관이라 선이 휘지 않고 조각난다.
+    const radius = Math.max(0.5, sizing.px * (amt / 100) * 1.5);
+    const out = displace.diffuseBuffer(data, width, height, comps, { radius });
 
     outImage = await imaging.createImageDataFromBuffer(out, {
       width,
