@@ -35,6 +35,16 @@ function imgEl() {
   return document.getElementById("pvImage");
 }
 
+/** layers 트리를 재귀로 훑어 pred를 만족하는 레이어를 모은다(그룹 안까지). */
+function collectLayers(layers, pred, out) {
+  for (const l of layers || []) {
+    if (pred(l)) out.push(l);
+    const kids = l.layers;
+    if (kids && kids.length) collectLayers(kids, pred, out);
+  }
+  return out;
+}
+
 function clamp255(v) {
   return v < 0 ? 0 : v > 255 ? 255 : v;
 }
@@ -125,13 +135,44 @@ async function renderOnce(params) {
   const toDisplay = colorspace.displayConverter(await documentProfile());
 
   await core.executeAsModal(
-    async () => {
-      // colorSpace를 RGB로 고정해 그레이스케일·CMYK 문서에서도 RGB로 받는다.
-      const px = await imaging.getPixels({
+    async (ctx) => {
+      // ── 격리: FilmSim 레이어를 숨겨 '깨끗한 원본'만 읽는다 ─────────────────
+      //
+      // getPixels는 합성본을 읽는다. 색을 [적용]하면 문서에 색 레이어가 구워지는데,
+      // 그걸 그대로 읽어 LUT을 또 얹으면 미리보기가 **중복 적용된 상태로 보인다**
+      // (실제 이미지는 멀쩡한데 미리보기만 두 번 먹은 것처럼). 미리보기는 "원본 →
+      // LUT"을 보여야 하므로, 이미 얹힌 색·마감(FilmSim 전부)을 잠시 숨기고 읽는다.
+      //
+      // 히스토리 오염 방지를 위해 suspendHistory로 감싼다. 숨김→읽기→복원이 한
+      // 모달 안에서 끝나 순 변화가 없으므로 캔버스 플리커도 없다.
+      const doc = app.activeDocument;
+      const hidden = [];
+      const history = await ctx.hostControl.suspendHistory({
         documentID: docId,
-        targetSize: { width: PV_WIDTH },
-        colorSpace: "RGB",
+        name: "미리보기",
       });
+      let px;
+      try {
+        const foreign = collectLayers(
+          doc.layers,
+          (l) => l.name && l.name.startsWith("FilmSim"),
+          []
+        );
+        for (const l of foreign) {
+          if (l.visible) { l.visible = false; hidden.push(l); }
+        }
+        // colorSpace를 RGB로 고정해 그레이스케일·CMYK 문서에서도 RGB로 받는다.
+        px = await imaging.getPixels({
+          documentID: docId,
+          targetSize: { width: PV_WIDTH },
+          colorSpace: "RGB",
+        });
+      } finally {
+        for (const l of hidden) {
+          try { l.visible = true; } catch (e) { /* 이미 지워진 참조 */ }
+        }
+        await ctx.hostControl.resumeHistory(history);
+      }
       const w = px.imageData.width;
       const h = px.imageData.height;
       const comps = px.imageData.components;

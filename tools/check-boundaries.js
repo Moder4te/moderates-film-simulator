@@ -192,6 +192,22 @@ for (const app of ["engine", "finish"]) {
       problems.push("apps/engine/src/apply.js — 숨긴 레이어 가시성을 되돌리지 않는다(.visible = true 없음).");
     }
   }
+  // (c) 미리보기도 getPixels 전에 FilmSim 레이어를 숨겨야 한다 — 안 그러면 적용된
+  //     색을 다시 읽어 미리보기가 중복 적용된 것처럼 보인다.
+  const pv = path.join(ROOT, "apps/engine/src/preview.js");
+  if (fs.existsSync(pv)) {
+    const s = fs.readFileSync(pv, "utf8");
+    const hide = s.indexOf(".visible = false");
+    const get = s.indexOf("imaging.getPixels");
+    if (!/startsWith\("FilmSim"\)/.test(s) || hide < 0) {
+      problems.push("apps/engine/src/preview.js — 미리보기가 FilmSim 레이어를 격리하지 않는다. 적용 후 미리보기가 중복으로 보인다.");
+    } else if (get < 0 || hide > get) {
+      problems.push("apps/engine/src/preview.js — FilmSim 레이어를 getPixels 전에 숨겨야 한다(순서 어긋남).");
+    }
+    if (!/\.visible = true/.test(s)) {
+      problems.push("apps/engine/src/preview.js — 숨긴 레이어 가시성을 되돌리지 않는다.");
+    }
+  }
 })();
 
 if (problems.length) {
