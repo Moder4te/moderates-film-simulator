@@ -32,6 +32,15 @@ function opacityFor(strength) {
   return Math.max(1, (strength / 100) * 100);
 }
 
+// blob 격자 마디를 지우는 미세 블러. 입자 px의 작은 분수라 크리스프는 유지하되,
+// 대형 문서(입자 px가 커질 때) smoothstep 마디가 각져 보이는 것만 눌러준다.
+// 실측: 20000px에서 0.5px가 딱 맞았고 그때 cell≈3.3 → 0.15배. 0.3px 미만은 무의미.
+const GRID_SMOOTH = 0.15;
+function gridSmoothFor(px) {
+  const b = px * GRID_SMOOTH;
+  return b >= 0.3 ? b : 0;
+}
+
 /**
  * 존 범위 [lo, hi]와 페더 폭으로 Blend If 4개 값을 만든다.
  * 페이드 인은 lo에서 lo+feather, 페이드 아웃은 hi-feather에서 hi.
@@ -81,10 +90,12 @@ async function addZone(doc, label, strength, range, feather, grainBuf, dims, pre
     img.dispose();
   }
 
-  await play([
-    ps.setLayerBlend("overlay", opacityFor(strength)),
-    ps.setUnderlyingBlendRange(bMin, bMax, wMin, wMax),
-  ]);
+  // 격자 마디 완화(활성 = 방금 putPixels한 그레인 레이어) → 블렌드.
+  const cmds = [];
+  if (dims.gridSmooth > 0) cmds.push(ps.gaussianBlur(dims.gridSmooth));
+  cmds.push(ps.setLayerBlend("overlay", opacityFor(strength)));
+  cmds.push(ps.setUnderlyingBlendRange(bMin, bMax, wMin, wMax));
+  await play(cmds);
 }
 
 /**
@@ -170,7 +181,7 @@ async function apply(doc, grain, medium, prefix) {
     clumpScale: cloud.clumpScale,
     seed: 1,
   });
-  const dims = { width, height, bytes: depth.bytes };
+  const dims = { width, height, bytes: depth.bytes, gridSmooth: gridSmoothFor(sizing.px) };
 
   await addZone(doc, "Shadow", grain.shadow, grain.shadowRange, grain.feather, grainBuf, dims, prefix);
   await addZone(doc, "Midtone", grain.midtone, grain.midtoneRange, grain.feather, grainBuf, dims, prefix);

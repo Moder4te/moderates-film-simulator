@@ -98,32 +98,35 @@ function generate(w, h, comps, opts) {
   const maxV = o.maxV == null ? 255 : o.maxV;
   const amp = (o.amp == null ? 0.5 : o.amp) * mid;
   const clumpScale = o.clumpScale || 0;
-  const out = maxV > 255 ? new Uint16Array(w * h * comps) : new Uint8Array(w * h * comps);
+  const npx = w * h;
+  const out = maxV > 255 ? new Uint16Array(npx * comps) : new Uint8Array(npx * comps);
   const baseSeed = (o.seed == null ? 1 : o.seed) >>> 0;
-
   const mono = !o.amps;
-  // 모노면 한 필드를 공유(전 채널 동일 = 무채색 그레인). 색이면 채널마다 독립.
-  const fields = [];
-  if (mono) {
-    const f = channelField(w, h, cell, clumpScale, mulberry32(baseSeed));
-    for (let c = 0; c < comps; c++) fields.push(f);
-  } else {
-    const ampsArr = [o.amps.r, o.amps.g, o.amps.b];
-    for (let c = 0; c < comps; c++) {
-      // 채널마다 다른 시드로 독립. 알파(c>2)는 노이즈 없이 필드 0.
-      if (c > 2) { fields.push(null); continue; }
-      fields.push(channelField(w, h, cell, clumpScale, mulberry32(baseSeed + c * 101)));
-    }
-  }
   const chanAmp = mono ? [1, 1, 1, 1] : [o.amps.r, o.amps.g, o.amps.b, 0];
 
-  for (let p = 0; p < w * h; p++) {
-    const o2 = p * comps;
-    for (let c = 0; c < comps; c++) {
-      const f = fields[c];
-      if (!f) { out[o2 + c] = maxV; continue; } // 알파 불투명
-      let v = mid + f[p] * amp * (chanAmp[c] == null ? 1 : chanAmp[c]);
-      out[o2 + c] = v < 0 ? 0 : v > maxV ? maxV : v;
+  // **채널-메이저로 인터리브한다.** 필드(Float32, npx×4B)를 채널마다 하나씩
+  // 만들어 out에 쓰고 즉시 버린다. 예전엔 색 모드에서 3개를 동시에 들고 있어
+  // 대형 문서(266MP → 필드만 3GB)에서 메모리가 터졌다. 이제 한 번에 하나만 산다.
+  // 모노는 한 필드를 전 채널이 공유하므로 애초에 하나뿐이다.
+  if (mono) {
+    const f = channelField(w, h, cell, clumpScale, mulberry32(baseSeed));
+    for (let p = 0; p < npx; p++) {
+      let v = mid + f[p] * amp;
+      v = v < 0 ? 0 : v > maxV ? maxV : v;
+      const o2 = p * comps;
+      for (let c = 0; c < comps; c++) out[o2 + c] = c > 2 ? maxV : v;
+    }
+    return out;
+  }
+
+  for (let c = 0; c < comps; c++) {
+    if (c > 2) { for (let p = 0; p < npx; p++) out[p * comps + c] = maxV; continue; } // 알파
+    const ca = chanAmp[c] == null ? 1 : chanAmp[c];
+    // 채널마다 다른 시드 → 독립. 루프 끝나면 f는 참조가 끊겨 다음 채널 전에 GC된다.
+    const f = channelField(w, h, cell, clumpScale, mulberry32(baseSeed + c * 101));
+    for (let p = 0; p < npx; p++) {
+      let v = mid + f[p] * amp * ca;
+      out[p * comps + c] = v < 0 ? 0 : v > maxV ? maxV : v;
     }
   }
   return out;
