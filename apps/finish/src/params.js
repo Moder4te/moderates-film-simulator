@@ -39,11 +39,12 @@ function defaultParams() {
       // bleed=광역 블리딩(Screen). 단일 가우시안은 둘을 동시에 못 낸다.
       core: 80,
       bleed: 60,
-      // 채널별 반경 배율. 레드가 가장 넓게 퍼지는 것이 할레이션의 핵심 특징.
-      channelSpread: { r: 1.0, g: 0.55, b: 0.3 },
-      // 틴트 (HSL colorize)
-      tintHue: 18,
-      tintSaturation: 80,
+      // 채널별 반경 배율(DoG). R을 넓게, G·B를 좁게 블러해 R만 도달하는 바깥
+      // 구간에 **순수 붉은 링**을 만든다. 차등이 클수록 링이 넓고 선명하다.
+      channelSpread: { r: 1.0, g: 0.35, b: 0.22 },
+      // 소스 틴트 색상(색조). buildRedSource가 이 색으로 소스를 칠한다.
+      tintHue: 14,
+      tintSaturation: 85,
     },
 
     grain: {
