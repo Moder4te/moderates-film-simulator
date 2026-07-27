@@ -347,125 +347,96 @@ function switchWheelView(view) {
  * 격자는 `preview.js`가 자기 픽셀 루프에서 이미 채워 뒀다(추가 순회 없음).
  * 여기서는 그리기만 한다.
  *
- * ── 왜 격자이고, 왜 미리 만들어 두는가 ──────────────────────────────────
+ * ── 왜 격자이고, 왜 매번 다시 그리는가 ──────────────────────────────────
  *
  * UXP는 canvas가 드래그 중 검게 클리어되고 SVG·rotate도 못 써 **DOM + translate만**
- * 가능하다. 픽셀마다 점을 찍는 것은 불가능하다.
+ * 가능하다. 픽셀마다 점을 찍는 것은 불가능하므로 평면을 격자로 나눠 도수를 센다.
  *
- * 그리고 UXP는 DOM을 native UI로 매핑하는 비용이 커서, 갱신마다 수백 개를 만들었다
- * 지우면 렌더 파이프가 밀린다(팔레트 div 15개도 그랬다). 그래서 **칸을 한 번만 만들고
- * 이후에는 불투명도만 바꾼다** — 팔레트가 쓰는 것과 같은 패턴이다.
+ * 처음에는 칸 820개를 미리 만들어 두고 **불투명도만 갱신**했다(팔레트가 쓰는 패턴).
+ * 그런데 갱신 후에도 이전 칸이 남는다는 보고가 반복됐다. 클리어 로직 자체는 정상임을
+ * 실제 데이터로 확인했다(707칸 → 4칸). 남는 설명은 **UXP가 820개의 개별 스타일 쓰기를
+ * 다 반영하지 못한다**는 것이다 — 이 저장소에는 팔레트 div 15개만으로도 렌더 파이프가
+ * 밀린 기록이 있다.
  *
- * 칸의 **색은 위치로 정해져 변하지 않는다**(그 자리의 색상각·채도). 그래서 색까지
- * 생성 시점에 굽고, 매 갱신에는 밀도만 반영한다.
+ * 그래서 **필요한 칸만 매번 새로 그린다.** 한 번의 innerHTML 교체라 부분 반영이
+ * 원천적으로 불가능하고, 이전 칸은 DOM에서 사라지므로 **남을 수가 없다.**
+ * 그릴 칸은 데이터가 있는 것뿐이라(보통 수~수백 개) 820개를 만지는 것보다 가볍다.
  */
-let scopeCells = null; // [{ el, i }] — i는 격자 인덱스
+const SCOPE_PAD = 10;
 
-function buildScope() {
-  const host = $("scope");
-  if (!host || scopeCells) return;
-  host.innerHTML = "";
-  scopeCells = [];
+function scopeGeom() {
+  const size = colorwheel.SIZE; // 컬러휠과 같은 지름이라 나란히 읽힌다
+  const R = size / 2 - SCOPE_PAD;
+  return { size, R, cx: size / 2, cy: size / 2 };
+}
 
-  const n = preview.GRID_N;
-  const size = colorwheel.SIZE;
-  const pad = 10;
-  const R = size / 2 - pad;
-  const cx = size / 2;
-  const cy = size / 2;
+/** 눈금(동심원·색상 방향)은 변하지 않으므로 문자열을 한 번만 만들어 둔다. */
+let scopeChromeHtml = null;
 
-  // 채도 눈금 — 동심원 2개. border-radius로만 그린다(rotate·SVG 불가).
+function buildScopeChrome() {
+  if (scopeChromeHtml !== null) return scopeChromeHtml;
+  const { R, cx, cy } = scopeGeom();
+  const parts = [];
   for (const f of [0.5, 1]) {
-    const ring = document.createElement("div");
-    ring.className = "sc-ring";
     const r = R * f;
-    ring.style.left = cx - r + "px";
-    ring.style.top = cy - r + "px";
-    ring.style.width = r * 2 + "px";
-    ring.style.height = r * 2 + "px";
-    host.appendChild(ring);
+    parts.push(
+      `<div class="sc-ring" style="left:${cx - r}px;top:${cy - r}px;width:${r * 2}px;height:${r * 2}px"></div>`
+    );
   }
-
-  // 색상 기준 방향. 컬러휠과 같은 각도 규약이라 위치가 그대로 대응한다.
   for (const [label, hue] of [["R", 0], ["Y", 60], ["G", 120], ["C", 180], ["B", 240], ["M", 300]]) {
     const [ox, oy] = colorwheel.polarOffset(hue, 1, R + 2);
-    const t = document.createElement("div");
-    t.className = "sc-axis";
-    t.textContent = label;
-    t.style.left = cx + ox - 3 + "px";
-    t.style.top = cy + oy - 6 + "px";
-    host.appendChild(t);
+    parts.push(`<div class="sc-axis" style="left:${cx + ox - 3}px;top:${cy + oy - 6}px">${label}</div>`);
   }
-
-  const step = (R * 2) / n;
-  const side = Math.ceil(step) + 1; // 칸 사이가 벌어지지 않게 살짝 크게
-  for (let gy = 0; gy < n; gy++) {
-    for (let gx = 0; gx < n; gx++) {
-      // 격자 중심을 [-1,1] 평면으로
-      const nx = ((gx + 0.5) / n) * 2 - 1;
-      const ny = ((gy + 0.5) / n) * 2 - 1;
-      if (nx * nx + ny * ny > 1.02) continue; // 원 밖은 아예 만들지 않는다
-
-      const hue = (Math.atan2(-ny, nx) * 180) / Math.PI;
-      const sat = Math.min(1, Math.hypot(nx, ny));
-      const rgb = colorwheel.hsvToRgb(hue, sat, 1); // 0~255를 돌려준다
-
-      const d = document.createElement("div");
-      d.className = "sc-cell";
-      d.style.left = cx + nx * R - side / 2 + "px";
-      d.style.top = cy + ny * R - side / 2 + "px";
-      d.style.width = side + "px";
-      d.style.height = side + "px";
-      d.style.background =
-        "rgb(" + Math.round(rgb[0]) + "," + Math.round(rgb[1]) + "," + Math.round(rgb[2]) + ")";
-      d.style.opacity = "0";
-      host.appendChild(d);
-      scopeCells.push({ el: d, i: gy * n + gx });
-    }
-  }
+  scopeChromeHtml = parts.join("");
+  return scopeChromeHtml;
 }
 
 function renderScope() {
-  buildScope();
-  if (!scopeCells) return;
+  const host = $("scope");
+  if (!host) return;
 
-  // 데이터가 없으면(문서를 닫았거나 렌더 실패) **전부 지운다.** 남겨 두면 이전
-  // 사진의 분포가 그대로 보인다.
   const data = preview.scope();
-  if (!data || !data.cells || !data.cells.length) {
-    clearScopeCells();
-    const emptyNote = $("scopeNote");
-    if (emptyNote) emptyNote.textContent = "문서를 열면 분포가 표시됩니다";
+  const cells = data && data.cells ? data.cells : [];
+  const note = $("scopeNote");
+
+  // 데이터가 없으면 눈금만 남긴다 — 이전 분포가 남지 않는다.
+  if (!cells.length) {
+    host.innerHTML = buildScopeChrome();
+    if (note) note.textContent = "문서를 열면 분포가 표시됩니다";
     return;
   }
 
-  // 격자 인덱스 → 밀도. 칸 수가 1024 이하라 맵이 가볍다.
-  const dens = new Map();
   const n = preview.GRID_N;
-  for (const c of data.cells) {
-    const gx = Math.min(n - 1, (c.x * n) | 0);
-    const gy = Math.min(n - 1, (c.y * n) | 0);
-    dens.set(gy * n + gx, c.d);
+  const { R, cx, cy } = scopeGeom();
+  const side = Math.ceil((R * 2) / n) + 1; // 칸 사이가 벌어지지 않게 살짝 크게
+  const parts = [buildScopeChrome()];
+
+  for (const c of cells) {
+    // 격자 좌표(0~1) → [-1,1] 평면
+    const nx = c.x * 2 - 1;
+    const ny = c.y * 2 - 1;
+    if (nx * nx + ny * ny > 1.02) continue; // 원 밖은 그리지 않는다
+
+    const hue = (Math.atan2(-ny, nx) * 180) / Math.PI;
+    const sat = Math.min(1, Math.hypot(nx, ny));
+    const rgb = colorwheel.hsvToRgb(hue, sat, 1); // 0~255를 돌려준다
+    const col =
+      "rgb(" + Math.round(rgb[0]) + "," + Math.round(rgb[1]) + "," + Math.round(rgb[2]) + ")";
+    // 하한을 두지 않는다. 하한이 있으면 한 픽셀짜리 칸도 무조건 보여 원이 채워진다.
+    parts.push(
+      `<div class="sc-cell" style="left:${(cx + nx * R - side / 2).toFixed(1)}px;` +
+        `top:${(cy + ny * R - side / 2).toFixed(1)}px;width:${side}px;height:${side}px;` +
+        `background:${col};opacity:${c.d.toFixed(3)}"></div>`
+    );
   }
 
-  for (const cell of scopeCells) {
-    const d = dens.get(cell.i);
-    // **하한을 두지 않는다.** 예전엔 0.12를 깔았는데, 그러면 한 픽셀만 있는 칸도
-    // 무조건 보여 원이 통째로 채워졌다. 희소한 칸은 희미한 것이 맞다.
-    cell.el.style.opacity = d === undefined ? "0" : String(d);
-  }
+  // **한 번의 교체.** 부분 반영이 불가능하므로 이전 칸이 남을 수 없다.
+  host.innerHTML = parts.join("");
 
-  const note = $("scopeNote");
   if (note) {
     note.textContent =
       "적용 결과 기준 · 무채색 제외 · 밀도는 상위 분위 기준 (계측기가 아니라 분포 모양을 보는 용도)";
   }
-}
-
-/** 모든 칸을 투명하게. 데이터가 없을 때 이전 분포가 남지 않게 한다. */
-function clearScopeCells() {
-  if (!scopeCells) return;
-  for (const cell of scopeCells) cell.el.style.opacity = "0";
 }
 
 /** 팔레트 스와치 div를 최초 1회 생성한다. 이후엔 style만 갱신한다. */

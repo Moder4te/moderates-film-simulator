@@ -2,7 +2,7 @@
   "manifestVersion": 5,
   "id": "com.filmsim.photoshop",
   "name": "Film Simulation — Engine",
-  "version": "2.9.2",
+  "version": "2.9.3",
   "main": "index.html",
   "host": [
     {
