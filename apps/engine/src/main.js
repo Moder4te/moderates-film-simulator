@@ -27,6 +27,7 @@ const gamut = require("./lib/core/color/gamut");
 const cubeexport = require("./lib/core/io/cube");
 const xmpexport = require("./lib/core/io/xmp");
 const apply = require("./src/apply");
+const exportfile = require("./src/exportfile");
 const ps = require("./lib/host/ps");
 const { entrypoints } = require("uxp");
 
@@ -1063,7 +1064,7 @@ function wire() {
     btn.disabled = true;
     try {
       setStatus("LUT 굽는 중...");
-      const name = await cubeexport.exportToFile(params, cubeOpts);
+      const name = await exportfile.exportCube(params, cubeOpts);
       setStatus(name ? `${name} 내보냄` : "취소됨");
     } catch (e) {
       setStatus(e.message || String(e), true);
@@ -1077,7 +1078,7 @@ function wire() {
     btn.disabled = true;
     try {
       setStatus("프로파일 만드는 중...");
-      const name = await xmpexport.exportOne(params, { space: "prophoto" });
+      const name = await exportfile.exportXmpOne(params, { space: "prophoto" });
       setStatus(name ? `${name} 내보냄` : "취소됨");
     } catch (e) {
       setStatus(e.message || String(e), true);
@@ -1092,7 +1093,7 @@ function wire() {
     try {
       const list = xmpexport.defaultSet(params);
       setStatus(`${list.length}개 프로파일 — 저장할 폴더를 고르세요`);
-      const r = await xmpexport.exportSet(list, { space: "prophoto" }, (done, total) => {
+      const r = await exportfile.exportXmpSet(list, { space: "prophoto" }, (done, total) => {
         if (done < total) setStatus(`프로파일 ${done + 1}/${total} 생성 중...`);
       });
       if (!r) return setStatus("취소됨");

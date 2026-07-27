@@ -91,6 +91,7 @@ step("동기화", () => {
 for (const [name, script] of [
   ["경계", "check-boundaries.js"],
   ["로드", "check-load.js"],
+  ["함수", "check-api.js"],
   ["정합성", "check-conformance.js"],
   ["톤", "check-tone.js"],
 ]) {
