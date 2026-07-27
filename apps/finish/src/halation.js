@@ -27,19 +27,40 @@ const ps = require("../lib/host/ps");
 const { play } = require("../lib/host/ps");
 const format = require("../lib/core/optics/format");
 
+/** HSV(V=1)로 틴트 색을 만든다. hue 0~60(붉은-오렌지)에서 R=1이 된다. */
+function hsvTint(hue, sat) {
+  const s = sat < 0 ? 0 : sat > 100 ? 1 : sat / 100;
+  const h = ((((hue % 360) + 360) % 360)) / 60;
+  const c = s;
+  const x = c * (1 - Math.abs((h % 2) - 1));
+  const m = 1 - c;
+  let r, g, b;
+  if (h < 1) { r = c; g = x; b = 0; }
+  else if (h < 2) { r = x; g = c; b = 0; }
+  else if (h < 3) { r = 0; g = c; b = x; }
+  else if (h < 4) { r = 0; g = x; b = c; }
+  else if (h < 5) { r = x; g = 0; b = c; }
+  else { r = c; g = 0; b = x; }
+  return [r + m, g + m, b + m];
+}
+
 /**
- * 할레이션 소스 = **적색 채널 구동** 하이라이트. 새 레이어에 putPixels한다.
+ * 할레이션 소스 = **적색 채널 구동** 하이라이트를 **오렌지-레드로 색칠해** 새
+ * 레이어에 putPixels한다.
  *
- * 예전엔 합성 휘도 >임계값으로 뽑았다. 근본 결함이었다 — 할레이션은 물리적으로
- * **적색 현상**(적색광이 유제를 통과해 베이스에서 반사)인데, 포화 적색 네온
- * (R255 G0 B0)은 휘도가 ~76뿐이라 임계에 안 걸려 아예 블룸을 안 했다. 그래서
- * 붉은 오염이 안 생겼다(작례 실측 대비 붉은 링 절반, 붉은 광원 2.8% 누락).
+ * 두 번 고쳤다.
  *
- * 이제 R 채널로 smoothstep 추출한다. 붉은·흰 광원(R 높음)은 잡히고 파랑·초록
- * 광원(R 낮음)은 안 잡힌다 — 할레이션이 붉은 이유 그 자체다. 강도만 회색으로
- * 담고 색(오렌지-레드)은 뒤의 colorize가 준다.
+ *   ① 예전엔 합성 휘도 >임계값으로 뽑았다 — 포화 적색 네온(휘도 ~76)이 임계에 안
+ *      걸려 아예 블룸을 안 했다. 그래서 R 채널로 추출한다(적색광이 베이스에서
+ *      반사되는 물리 그대로). 붉은·흰 광원은 잡고 파랑·초록은 무시한다.
+ *   ② 예전엔 강도를 **회색**으로 담고 뒤에서 colorize로 색을 입혔다. 그런데
+ *      colorize는 명도만 보고 레이어를 단색으로 덮어, 채널별 블러가 만든 색
+ *      분리(다크 레드 링)를 파괴하고 밋밋한 오렌지 안개로 만든다. 그래서 **소스
+ *      자체를 오렌지-레드로** 만든다. 채널 확산차(R 최대)가 그대로 살아 바깥은
+ *      순수 붉은 링, 안은 오렌지가 된다. 색은 tintHue/Sat에서 나온다.
  */
-async function buildRedSource(doc, threshold, prefix) {
+async function buildRedSource(doc, threshold, hue, sat, prefix) {
+  const tint = hsvTint(hue, sat);
   await play([ps.makePixelLayer(), ps.renameLayer(`${prefix} · Halation src`)]);
   const layerId = app.activeDocument.activeLayers[0].id;
 
@@ -67,9 +88,9 @@ async function buildRedSource(doc, threshold, prefix) {
       s = s < 0 ? 0 : s > 1 ? 1 : s;
       s = s * s * (3 - 2 * s);
       const v = s * maxV;
-      out[o] = v;
-      out[o + 1] = v;
-      out[o + 2] = v;
+      out[o] = v * tint[0];
+      out[o + 1] = v * tint[1];
+      out[o + 2] = v * tint[2];
       if (comps > 3) out[o + 3] = maxV; // 불투명
     }
 
@@ -133,22 +154,30 @@ async function apply(doc, halation, formatId, prefix) {
   const core = halation.core == null ? 60 : halation.core;
   const bleed = halation.bleed == null ? 50 : halation.bleed;
 
-  // 스케일 = { 반경 배율, 가중(0~1), 블렌드, 채도 배율 }. 가중은 strength에 곱해진다.
+  // 스케일 = { 반경 배율, 가중(0~1), 블렌드, 코어 화이트닝 여부 }.
   // 중간은 코어·블리딩을 이어 주는 다리라 둘의 평균으로 자동 산출한다.
   //
-  // 핫코어는 **Color Dodge + 거의 무채색**이다. 실제 할레이션의 코어는 뜨거운
-  // 흰색으로 날아가고, 붉은 색은 그 주변 헤일로다. colorize로 코어까지 오렌지로
-  // 물들이면 흰색이 못 돼 닷지가 흰색으로 못 태운다(코어가 약해 보이던 원인).
-  // 그래서 코어는 채도를 죽여(satMul 0.1) 흰색에 가깝게 두고 타이트하게(×0.3)
-  // 집중시킨다. 붉은 틴트는 중간·블리딩(Screen)이 담당한다.
+  //   · **Core**  — 타이트(×0.3), **Color Dodge**. 실제 할레이션의 코어는 뜨거운
+  //     흰색으로 날아간다. 소스는 오렌지-레드라 여기만 colorize로 채도를 죽여
+  //     흰색에 가깝게 만든다(whitenSat). 붉은 색은 주변 헤일로가 담당.
+  //   · **Mid**   — ×1.3, **Screen**. colorize 안 한다 — 소스 색(오렌지-레드) +
+  //     채널 확산차가 만든 링을 그대로 살린다.
+  //   · **Bleed** — ×4.0, **Linear Dodge(Add)**. Screen은 겹칠수록 붉은색을 살몬으로
+  //     희석하지만 Add는 에너지 합산이라 암부·중간톤 위로 채도 높은 붉은빛을 유지.
   const scales = [
-    { name: "Core", mul: 0.3, w: core / 100, blend: "colorDodge", satMul: 0.1 },
-    { name: "Mid", mul: 1.3, w: (core + bleed) / 200, blend: "screen", satMul: 0.6 },
-    { name: "Bleed", mul: 4.0, w: bleed / 100, blend: "screen", satMul: 1.0 },
+    { name: "Core", mul: 0.3, w: core / 100, blend: "colorDodge", whitenSat: halation.tintSaturation * 0.1 },
+    { name: "Mid", mul: 1.3, w: (core + bleed) / 200, blend: "screen", whitenSat: null },
+    { name: "Bleed", mul: 4.0, w: bleed / 100, blend: "linearDodge", whitenSat: null },
   ];
 
-  // 적색 구동 하이라이트 소스 한 장(회색 강도). 각 스케일이 여기서 복제돼 나간다.
-  const base = await buildRedSource(doc, halation.threshold, prefix);
+  // 적색 구동 + 오렌지-레드로 색칠한 하이라이트 소스 한 장. 각 스케일이 복제해 간다.
+  const base = await buildRedSource(
+    doc,
+    halation.threshold,
+    halation.tintHue,
+    halation.tintSaturation,
+    prefix
+  );
   const baseId = base.id;
 
   const channels = [
@@ -173,11 +202,12 @@ async function apply(doc, halation, formatId, prefix) {
       await play([ps.selectChannel(channel), ps.gaussianBlur(radius)]);
     }
 
-    await play([
-      ps.selectChannel("RGB"),
-      colorize(halation.tintHue, halation.tintSaturation * sc.satMul),
-      ps.setLayerBlend(sc.blend, clamp(opacity, 1, 100)),
-    ]);
+    const cmds = [ps.selectChannel("RGB")];
+    // 코어만 화이트닝(colorize로 채도↓). 중간·블리딩은 소스 색을 그대로 둔다 —
+    // colorize를 걸면 채널 확산차가 만든 붉은 링이 단색 안개로 뭉개진다.
+    if (sc.whitenSat != null) cmds.push(colorize(halation.tintHue, sc.whitenSat));
+    cmds.push(ps.setLayerBlend(sc.blend, clamp(opacity, 1, 100)));
+    await play(cmds);
   }
 
   // 추출 원본은 Normal 블랙이라 두면 원본 이미지를 덮는다. 삭제한다.
