@@ -146,6 +146,7 @@ function grainSize(doc, medium, iso) {
     px,
     pxPerMm,
     microns,
+    longEdge, // 격자 블러 해상도 배율 등에 쓴다(custom 기준 포함한 실제 값)
     subPixel,
     amountScale: subPixel ? Math.max(0.25, px) : 1,
   };

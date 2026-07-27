@@ -42,6 +42,14 @@ function gridSmoothForIso(iso) {
   return 0.5 + 0.5 * Math.log2(iso / 400);
 }
 
+// 위 값은 장축 9000px에서 맞춘 것이다. 마디 크기는 cell px에 비례하고 cell은
+// longEdge에 비례하므로, 저해상도면 블러도 같은 비율로 줄여야 한다. 안 줄이면
+// 작아진 입자에 고정 블러가 과해 뭉갠다(저해상도 출력 mush). 고해상도면 커진다.
+const GRID_SMOOTH_REF_EDGE = 9000;
+function gridSmoothPx(iso, longEdge) {
+  return gridSmoothForIso(iso) * ((longEdge || GRID_SMOOTH_REF_EDGE) / GRID_SMOOTH_REF_EDGE);
+}
+
 /**
  * 존 범위 [lo, hi]와 페더 폭으로 Blend If 4개 값을 만든다.
  * 페이드 인은 lo에서 lo+feather, 페이드 아웃은 hi-feather에서 hi.
@@ -192,7 +200,7 @@ async function applyGrain(doc, grain, medium, prefix) {
     clumpScale: cloud.clumpScale,
     seed: 1,
   });
-  const dims = { width, height, bytes: depth.bytes, gridSmooth: gridSmoothForIso(grain.iso) };
+  const dims = { width, height, bytes: depth.bytes, gridSmooth: gridSmoothPx(grain.iso, sizing.longEdge) };
 
   await addZone(doc, "Shadow", grain.shadow, grain.shadowRange, grain.feather, grainBuf, dims, prefix);
   await addZone(doc, "Midtone", grain.midtone, grain.midtoneRange, grain.feather, grainBuf, dims, prefix);
