@@ -115,9 +115,28 @@ async function seedIfEmpty() {
   medium.grain.midtone = 35;
   medium.halation.strength = 30;
 
+  // CineStill 800T — 강한 붉은 할레이션이 시그니처. 웹 작례 5장 실측으로 튜닝했다:
+  // 하이라이트 주변 붉은 링이 코어 바로 밖 3~7px(이미지폭 ~1.5%)에서 피크(R/G
+  // 1.5~1.9, R-B +0.4~0.5)를 이루고 ~5.5%까지 뻗는다. 색조 ~14°, 채도 ~65%.
+  // ⚠️ 이 필름의 청록 섀도·전체 색감은 **색이라 엔진 소관**이다. 여기 프리셋은
+  // 할레이션·그레인만 담는다(마감 스키마에 색이 없다). 색까지 원하면 엔진에서
+  // 800T 프로파일을 함께 쓴다.
+  const cine = defaultParams();
+  cine.name = "CineStill 800T";
+  cine.category = "Film";
+  cine.grain.iso = 800; // ISO 800
+  cine.halation.threshold = 185; // 네온까지 할레이션이 걸리게 임계 낮춤
+  cine.halation.strength = 80;
+  cine.halation.radius = 1.4; // bleed ×4 → ~5.6% 확산, 실측 범위와 일치
+  cine.halation.core = 70;
+  cine.halation.bleed = 85; // 넓은 붉은 헤일로가 강한 것이 특징
+  cine.halation.tintHue = 14;
+  cine.halation.tintSaturation = 90;
+
   await save(classic);
   await save(night);
   await save(medium);
+  await save(cine);
 }
 
 module.exports = { list, save, remove, exportToFile, importFromFile, seedIfEmpty };

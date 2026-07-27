@@ -32,6 +32,9 @@ tools/tds/
 # 패키징 스테이징 (tools/build-ccx.js가 만든다)
 build/
 
+# 참고용 작례 이미지 모음 (웹 수집물 — 저작권상 재배포 안 함, 분석용 로컬 전용)
+halation_sample/
+
 # 앱별 lib/ 는 tools/sync-libs.js가 core/·host/·shared/ 에서 복사해 만든다.
 # core/ 가 원본이고 여기는 산출물이다 — 직접 고치면 다음 sync에 지워진다.
 apps/*/lib/
