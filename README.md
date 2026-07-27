@@ -8,8 +8,9 @@
 
 기획 문서는 [SPEC.md](./SPEC.md), 설계 근거는 [v2plan.md](./v2plan.md) 참고.
 
-> **v2.0.0-beta** — 플러그인이 **둘로 나뉘었다.** 색은 엔진이, 입자와 산란은
-> 마감이 담당한다. 스캐너 파라미터는 아직 튜닝값이다.
+> **v2.0.0** — 플러그인이 **둘로 나뉘었다.** 색은 엔진이, 입자와 산란은 마감이
+> 담당한다. 필름 9종(주광 8 + 텅스텐 Vision3 500T) · CineStill 800T 프리셋 ·
+> 다중스케일 광학 할레이션. 스캐너 파라미터는 아직 튜닝값이다.
 > [현재 한계](#현재-한계-v14)와 [남은 작업](./TODO.md)을 먼저 읽을 것.
 
 ## 두 개의 플러그인
@@ -32,8 +33,10 @@
 ## 설치 (일반 사용자 — 개발자 툴 불필요)
 
 1. Photoshop 2023 (v24) 이상을 설치한다.
-2. [최신 `.ccx` 다운로드](https://github.com/Moder4te/moderates-film-simulator/releases/latest/download/com.filmsim.photoshop_PS.ccx)
-   — 항상 최신 릴리스의 `com.filmsim.photoshop_PS.ccx`를 곧바로 내려받는다.
+2. 최신 `.ccx`를 내려받는다 — 필요한 것만 받아도 된다.
+   - [엔진(색) `com.filmsim.photoshop_PS.ccx`](https://github.com/Moder4te/moderates-film-simulator/releases/latest/download/com.filmsim.photoshop_PS.ccx)
+   - [마감(할레이션·그레인) `com.filmsim.finish_PS.ccx`](https://github.com/Moder4te/moderates-film-simulator/releases/latest/download/com.filmsim.finish_PS.ccx)
+
    ([전체 릴리스 목록](https://github.com/Moder4te/moderates-film-simulator/releases))
 3. `.ccx`를 더블클릭한다. Adobe 플러그인 설치 관리자(Creative Cloud와 함께 설치됨)가
    설치를 진행한다. "확인되지 않은 게시자" 경고가 나오면 설치를 허용한다(자체 서명).
