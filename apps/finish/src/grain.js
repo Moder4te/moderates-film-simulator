@@ -182,8 +182,10 @@ async function applyDisplaceDiffusion(doc, grain, sizing, prefix) {
     const comps = px.imageData.components;
     const data = await px.imageData.getData({ chunky: true });
 
-    // 반경 = 입자 스케일 × 강도. 픽셀마다 탈상관이라 선이 휘지 않고 조각난다.
-    const radius = Math.max(0.5, sizing.px * (amt / 100) * 1.5);
+    // 흩어짐 반경 = **입자 크기 × 강도**. 물리적으로 맞다 — 한 점이 어느 입자에
+    // 걸리느냐로 흩어지므로 최대 이동이 입자 하나 크기다. 강도 100이면 딱 입자
+    // 하나, 그 아래면 비례해 줄어든다. 입자 크기를 키우면 흩어짐도 같이 커진다.
+    const radius = Math.max(0.5, sizing.px * (amt / 100));
     const out = displace.diffuseBuffer(data, width, height, comps, { radius });
 
     outImage = await imaging.createImageDataFromBuffer(out, {
