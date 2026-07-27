@@ -32,13 +32,14 @@ function opacityFor(strength) {
   return Math.max(1, (strength / 100) * 100);
 }
 
-// blob 격자 마디를 지우는 미세 블러. 입자 px의 작은 분수라 크리스프는 유지하되,
-// 대형 문서(입자 px가 커질 때) smoothstep 마디가 각져 보이는 것만 눌러준다.
-// 실측: 20000px에서 0.5px가 딱 맞았고 그때 cell≈3.3 → 0.15배. 0.3px 미만은 무의미.
-const GRID_SMOOTH = 0.15;
-function gridSmoothFor(px) {
-  const b = px * GRID_SMOOTH;
-  return b >= 0.3 ? b : 0;
+// blob 격자 마디를 지우는 미세 블러(px). 굵은 입자일수록 smoothstep 마디가 각져
+// 보여 더 눌러야 한다. 감도에 묶는다 — 감도가 곧 입자 크기이므로.
+//
+// 사용자 실측 튜닝: ISO 3200 → 2px, 1600 → 1.5px, 800 → 1px, 400 이하 → 0.
+// 400 위로 한 스톱마다 +0.5px = `0.5 + 0.5·log2(ISO/400)`.
+function gridSmoothForIso(iso) {
+  if (iso <= 400) return 0;
+  return 0.5 + 0.5 * Math.log2(iso / 400);
 }
 
 /**
@@ -191,7 +192,7 @@ async function applyGrain(doc, grain, medium, prefix) {
     clumpScale: cloud.clumpScale,
     seed: 1,
   });
-  const dims = { width, height, bytes: depth.bytes, gridSmooth: gridSmoothFor(sizing.px) };
+  const dims = { width, height, bytes: depth.bytes, gridSmooth: gridSmoothForIso(grain.iso) };
 
   await addZone(doc, "Shadow", grain.shadow, grain.shadowRange, grain.feather, grainBuf, dims, prefix);
   await addZone(doc, "Midtone", grain.midtone, grain.midtoneRange, grain.feather, grainBuf, dims, prefix);
