@@ -50,6 +50,31 @@ function validate(doc, params) {
   if (String(doc.mode) !== "RGBColorMode") {
     warnings.push(`문서 색상 모드가 ${doc.mode}입니다. RGB가 필요합니다.`);
   }
+
+  // ── 마감이 이미 얹혀 있는가 ──────────────────────────────────────────
+  //
+  // 색을 나중에 적용하면 **쌓임 순서는 맞는데 결과가 무의미하다.** 색 레이어는
+  // 마감 아래로 잘 들어가지만(`ps.anchorTopLevel`), 마감의 디퓨전은 적용 시점의
+  // 합성본을 구운 **불투명 스탬프**라 그 위를 덮는다. 실기에서 확인했다 —
+  // "잘 들어가는데 디퓨전 레이어가 이미 있어서 의미가 없다".
+  //
+  // 막지는 않는다. 사용자가 마감을 지우고 다시 할 수도, 그냥 둘 수도 있다.
+  // 다만 **왜 안 바뀌어 보이는지**는 알려 줘야 한다. 이 경고가 없으면 색이
+  // 적용되지 않았다고 오해한다.
+  const finish = ps.collectLayers(
+    doc.layers,
+    (l) => l.name && l.name.startsWith("FilmSim Finish"),
+    []
+  );
+  if (finish.length) {
+    warnings.push(
+      finish.some((l) => l.name.endsWith("· Diffusion"))
+        ? "마감 디퓨전이 이미 얹혀 있습니다. 그 레이어는 적용 시점의 합성본을 구운 것이라 " +
+            "새 색을 덮습니다 — 마감을 지우고 색을 먼저 적용하세요."
+        : "마감이 이미 얹혀 있습니다. 마감은 적용 시점의 색에서 계산되므로 " +
+            "색을 바꿨으면 마감도 다시 적용하세요."
+    );
+  }
   return warnings;
 }
 
