@@ -29,6 +29,121 @@ function walk(dir, fn) {
 
 const rel = (p) => path.relative(ROOT, p).replace(/\\/g, "/");
 
+/**
+ * **주석만** 공백으로 지운다. 문자열은 그대로 둔다. 길이와 줄바꿈을 보존하므로
+ * 인덱스와 행 번호가 원본과 그대로 맞는다.
+ *
+ * **왜 필요한가.** 이 파일의 규칙들은 소스에서 특정 이름을 찾는데, 그 이름이 주석에
+ * 설명으로 적혀 있으면 오탐이 난다. 실제로 `batchPlay`는 앱 소스 다섯 곳의 주석에
+ * "이건 host/ps.js가 소유한다"는 설명으로 등장한다 — 지우지 않으면 규칙 2를 이름
+ * 전체로 넓힐 수 없다.
+ *
+ * **문자열은 지우지 않는다.** 규칙 2는 `action["batchPlay"]`를 잡아야 하고 규칙 2.7은
+ * `colorSpace: "RGB"`를 봐야 한다. 둘 다 문자열 안에 있다. 다만 문자열을 **넘어가며**
+ * 읽어야 그 안의 `//`(URL 등)를 주석으로 오인하지 않는다.
+ *
+ * 한계 — 정규식 리터럴은 구분하지 않는다. `/.../` 안에 `//`나 `/*`가 들어가면 오작동
+ * 한다. 이 저장소에는 없고, 생기면 이 함수부터 고칠 것.
+ */
+function stripComments(src) {
+  const out = src.split("");
+  const blank = (from, to) => {
+    for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    const n = src[i + 1];
+    if (c === "/" && n === "/") {
+      let j = i + 2;
+      while (j < src.length && src[j] !== "\n") j++;
+      blank(i, j);
+      i = j;
+    } else if (c === "/" && n === "*") {
+      const j = src.indexOf("*/", i + 2);
+      const end = j < 0 ? src.length : j + 2;
+      blank(i, end);
+      i = end;
+    } else if (c === '"' || c === "'" || c === "`") {
+      // 내용은 남기고 건너뛰기만 한다 — 안의 `//`를 주석으로 오인하지 않기 위해서다.
+      let j = i + 1;
+      while (j < src.length) {
+        if (src[j] === "\\") { j += 2; continue; }
+        if (src[j] === c) break;
+        j++;
+      }
+      i = j + 1;
+    } else {
+      i++;
+    }
+  }
+  return out.join("");
+}
+
+/**
+ * `open` 위치의 `(` 와 짝이 맞는 `)` 사이를 돌려준다. 문자열 안의 괄호는 세지 않는다.
+ *
+ * **왜 필요한가.** "이 함수 어딘가에 `colorSpace: "RGB"`가 있는가"로는 부족하다.
+ * `preview.js`의 `renderOnce`에는 그 문자열이 **둘** 있다 — `getPixels`용과
+ * `createImageDataFromBuffer`용. `getPixels` 쪽만 지워도 검사가 통과했다.
+ * 음성 테스트로 잡았고, 그래서 **호출 인자 안**을 본다.
+ */
+function argsAt(src, open) {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < src.length) {
+        if (src[j] === "\\") { j += 2; continue; }
+        if (src[j] === c) break;
+        j++;
+      }
+      i = j;
+      continue;
+    }
+    if (c === "(") depth++;
+    else if (c === ")") {
+      depth--;
+      if (depth === 0) return src.slice(open + 1, i);
+    }
+  }
+  return src.slice(open); // 짝이 안 맞으면 뒤 전체 — 검사를 통과시키지 않는 쪽으로 흐른다
+}
+
+/**
+ * 최상위 `function`/`async function` 선언을 구간으로 잘라 돌려준다.
+ *
+ * **왜 함수 단위인가.** 파일 단위 판정은 "그 파일 어딘가에 한 번 나오면 전체가
+ * 그렇다"로 흐른다 — 규칙 2.7의 왕복 면제가 정확히 그랬다. 파일에 `putPixels`가
+ * 한 번만 있으면 그 파일의 **모든** `getPixels`가 검사에서 빠졌다.
+ *
+ * 파서를 쓰지 않는다. 이 저장소의 함수는 전부 열 0에서 `function`으로 시작해
+ * 열 0의 `}`로 끝나므로 그 규약만 읽는다. 규약이 깨지면 구간을 못 잡고, 못 잡은
+ * `getPixels`는 **파일 전체를 구간으로 보아 더 엄격하게** 판정된다(아래 호출부).
+ */
+function topLevelFunctions(src) {
+  const lines = src.split("\n");
+  const offs = [];
+  let acc = 0;
+  for (const l of lines) { offs.push(acc); acc += l.length + 1; }
+
+  const fns = [];
+  let cur = null;
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/.exec(lines[i]);
+    if (m && !cur) {
+      cur = { name: m[1], start: offs[i] };
+    } else if (cur && /^\}\s*$/.test(lines[i])) {
+      cur.end = offs[i] + lines[i].length;
+      cur.body = src.slice(cur.start, cur.end);
+      fns.push(cur);
+      cur = null;
+    }
+  }
+  return fns;
+}
+
 // ── 1. core/ 는 순수해야 한다 ───────────────────────────────────────────
 //
 // 호스트 API를 부르는 순간 노드에서 테스트할 수 없게 되고, 그러면 색 계산의
@@ -51,11 +166,22 @@ walk(path.join(ROOT, "core"), (p) => {
 // batchPlay 디스크립터는 문서화가 부실하고 오류 메시지가 엉뚱하다(UXP-NOTES 6.1).
 // 추측으로 쓴 디스크립터는 조용히 틀리거나 무관한 에러를 뱉는다. 그래서 호출을
 // 한곳에 모아 두고, 새 디스크립터는 반드시 **손으로 한 번 실행해 채록**한다.
+//
+// ⚠️ **이름 전체를 막는다.** 예전에는 `\baction\.batchPlay\s*\(` 하나였는데
+// `const { batchPlay } = action;` · `action["batchPlay"]` · `const bp = action.batchPlay;`
+// 어느 것으로도 뚫렸다. 앱은 `batchPlay`라는 이름을 **알 필요가 없다** — 디스크립터는
+// 전부 `host/ps.js`의 명명 함수를 거친다. 그러니 이름이 나오는 것 자체를 막는 편이
+// 뚫릴 구멍이 없다. 주석의 설명("batchPlay 호출은 host가 소유한다" — 앱 소스 다섯 곳에
+// 있다)은 stripComments가 걷어내므로 걸리지 않는다. 문자열은 남으므로
+// `action["batchPlay"]`는 잡힌다.
 walk(path.join(ROOT, "apps"), (p) => {
   if (rel(p).includes("/lib/")) return; // sync-libs가 복사한 것은 원본에서 이미 검사됨
-  const s = fs.readFileSync(p, "utf8");
-  if (/\baction\.batchPlay\s*\(/.test(s)) {
-    problems.push(`${rel(p)} — batchPlay 직접 호출 금지. host/ps.js의 명명 함수를 쓸 것.`);
+  const s = stripComments(fs.readFileSync(p, "utf8"));
+  if (/\bbatchPlay\b/.test(s)) {
+    const line = s.slice(0, s.search(/\bbatchPlay\b/)).split("\n").length;
+    problems.push(
+      `${rel(p)}:${line} — 앱에 batchPlay가 등장한다. 디스크립터는 host/ps.js의 명명 함수를 거칠 것(직접 호출도, 구조분해도 금지).`
+    );
   }
 });
 
@@ -96,22 +222,58 @@ walk(path.join(ROOT, "apps"), (p) => {
 // 읽어서 되쓰는 **왕복** 경로는 예외다. 같은 공간·심도로 돌려주므로 표시 변환이
 // 필요 없고, 심도는 lut.applyToBuffer 안에서 처리된다. 문제가 되는 것은 픽셀을
 // **밖으로 내보내거나 판정에 쓰는** 경로다.
+//
+// ⚠️ **면제는 함수 단위다.** 예전에는 파일에 `putPixels`가 한 번이라도 나오면 그
+// 파일 **전체**가 빠졌다. 왕복 경로와 픽셀을 밖으로 내보내는 경로가 한 파일에 같이
+// 생기는 날 조용히 통과한다 — 실제로 `grain.js`·`apply.js`는 이미 두 종류의 함수가
+// 한 파일에 있다. 이 저장소는 "검사가 조용히 no-op이 될 수 있다"를 이미 교훈으로
+// 적어 뒀다(RESOLVED.md).
+//
+// **요구 사항은 파일 단위로 둔다.** 정규화·변환은 헬퍼로 빼는 것이 정상이라
+// (`preview.js`는 `maxValueFor`를 `renderPixels`에서, `displayConverter`를
+// `renderOnce`에서 쓴다) 같은 함수 안을 요구하면 정상 코드를 막는다. 좁힌 것은
+// **면제**뿐이다 — 느슨하게 풀리던 쪽을 조인다.
 walk(path.join(ROOT, "apps"), (p) => {
   if (rel(p).includes("/lib/")) return;
-  const s = fs.readFileSync(p, "utf8");
+  const raw = fs.readFileSync(p, "utf8");
+  const s = stripComments(raw);
   if (!/imaging\.getPixels\s*\(/.test(s)) return;
 
-  if (!/colorSpace:\s*"RGB"/.test(s)) {
-    problems.push(`${rel(p)} — getPixels에 colorSpace: "RGB"가 없다. 그레이스케일·CMYK 문서에서 채널 수가 달라진다.`);
+  const fns = topLevelFunctions(s);
+  const readers = []; // getPixels를 부르는 구간
+
+  for (const m of s.matchAll(/imaging\.getPixels\s*\(/g)) {
+    const fn = fns.find((f) => m.index >= f.start && m.index < f.end);
+    // 함수 구간을 못 잡았으면 **파일 전체**를 구간으로 본다. 면제 조건이 넓어지는
+    // 것이 아니라 좁아진다 — 파일 전체에서 왕복이어야 면제된다.
+    const region = fn || { name: "(최상위)", body: s, start: 0, end: s.length };
+
+    // colorSpace는 **그 호출의 인자 안**을 본다. 함수 단위로 보면 같은 함수의 다른
+    // 호출(createImageDataFromBuffer)에 있는 것으로 통과한다 — 음성 테스트로 잡았다.
+    const line = s.slice(0, m.index).split("\n").length;
+    const args = argsAt(s, m.index + m[0].length - 1);
+    if (!/colorSpace:\s*"RGB"/.test(args)) {
+      problems.push(
+        `${rel(p)}:${line} — getPixels 인자에 colorSpace: "RGB"가 없다. 그레이스케일·CMYK 문서에서 채널 수가 달라진다.`
+      );
+    }
+    readers.push(region);
   }
 
-  if (/imaging\.putPixels\s*\(/.test(s)) return; // 왕복 경로
+  const seen = new Set();
+  for (const r of readers) {
+    if (seen.has(r.start)) continue;
+    seen.add(r.start);
+    const where = `${rel(p)} · ${r.name}()`;
 
-  if (!/maxValueFor\s*\(/.test(s)) {
-    problems.push(`${rel(p)} — getPixels 값을 쓰는데 심도 정규화가 없다. 16bit는 0~32768이다. lut.maxValueFor 참조.`);
-  }
-  if (!/displayConverter\s*\(/.test(s)) {
-    problems.push(`${rel(p)} — 문서 색공간 변환이 없다. ProPhoto 값을 sRGB로 옮기지 않으면 색이 어긋난다.`);
+    if (/imaging\.putPixels\s*\(/.test(r.body)) continue; // 이 함수는 왕복 경로
+
+    if (!/maxValueFor\s*\(/.test(s)) {
+      problems.push(`${where} — getPixels 값을 밖으로 쓰는데 파일에 심도 정규화가 없다. 16bit는 0~32768이다. lut.maxValueFor 참조.`);
+    }
+    if (!/displayConverter\s*\(/.test(s)) {
+      problems.push(`${where} — getPixels 값을 밖으로 쓰는데 파일에 색공간 변환이 없다. ProPhoto 값을 sRGB로 옮기지 않으면 색이 어긋난다.`);
+    }
   }
 });
 
