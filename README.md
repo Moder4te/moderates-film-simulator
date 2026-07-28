@@ -124,6 +124,20 @@ macOS    ~/Library/Application Support/Adobe/CameraRaw/Settings/
 Profile Browser의 **FilmSim** 그룹에 뜨고 강도 슬라이더도 붙는다.
 Lightroom · Lightroom Classic · Camera Raw 공통.
 
+#### Lightroom Classic 플러그인으로 설치하기
+
+프로파일 18종(필름 9 × 스캐너 2)을 담은 LrC 플러그인이 있다. 폴더를 직접 찾을
+필요 없이 메뉴에서 설치한다.
+
+1. 릴리스의 `FilmSim.lrplugin` 압축을 풀고 → **파일 > 플러그인 관리자 > 추가**
+2. **라이브러리 > 플러그인 추가 기능 > 필름 프로파일 설치**
+3. **Lightroom을 다시 시작한다** — 프로파일은 실행 시점에만 읽힌다
+
+> 이 플러그인은 **색을 계산하지 않는다.** 프로파일을 담아 옮겨 줄 뿐이다.
+> LrC SDK는 픽셀에 접근할 수 없어(Develop 렌더링에 끼어들 방법이 없다) 필름 룩을
+> 넣는 길이 프로파일뿐이고, 프로파일은 재시작해야 읽히므로 색 엔진을 Lua로 옮겨도
+> 얻을 것이 없다. 저장소에서 직접 만들려면 `node tools/build-lrplugin.js`.
+
 <details>
 <summary><b>대안 — Camera Raw 대화상자로 .cube에서 만들기</b> (다른 앱에서도 .cube를 쓸 때)</summary>
 
