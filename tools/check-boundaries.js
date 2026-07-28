@@ -159,26 +159,54 @@ for (const app of ["engine", "finish"]) {
   }
 }
 
-// ── 6. 엔진 색 재적용이 중복되면 안 된다 ────────────────────────────────
+// ── 6. 재적용이 중복되면 안 된다 (두 앱 모두) ───────────────────────────
 //
-// 두 가지가 깨지면 재적용 시 색이 누적되거나 마감(할레이션·그레인)이 색 레이어에
+// 세 가지가 깨지면 재적용 시 결과가 누적되거나 마감(할레이션·그레인)이 색 레이어에
 // 구워져 두 벌이 된다. 실기로만 드러나 회귀를 놓치기 쉬우므로 정적으로 못 박는다.
 //
-//   (a) pipeline.run이 clearOwnLayers를 부른다 — 이전 색 레이어를 안 지우면 누적.
-//   (b) applyLut이 getPixels **전에** 다른 FilmSim 레이어를 숨긴다 — 합성본에
+//   (a) pipeline.run이 clearOwnLayers를 부른다 — 이전 결과를 안 지우면 누적.
+//   (b) clearOwnLayers가 그룹 안까지 재귀로 훑는다(ps.collectLayers) — 사용자가
+//       결과를 그룹에 넣어 두면 최상위 검색은 못 찾는다.
+//   (c) applyLut이 getPixels **전에** 다른 FilmSim 레이어를 숨긴다 — 합성본에
 //       마감이 섞여 있으면 색에 구워진다. 숨겼으면 반드시 되돌린다.
-(function checkEngineReapply() {
-  const pipe = path.join(ROOT, "apps/engine/src/pipeline.js");
-  const ap = path.join(ROOT, "apps/engine/src/apply.js");
-  if (fs.existsSync(pipe)) {
-    const s = fs.readFileSync(pipe, "utf8");
+//
+// ⚠️ (b)는 원래 엔진에만 걸려 있었다. **더 파괴적인 쪽인 마감이 빠져 있었다** —
+// 엔진 산출물은 픽셀 레이어 한 장이라 지우고 다시 하면 되지만, 마감의 디퓨전은
+// 그 시점 합성본을 구워 놓아 되돌릴 지점이 없다. 검사를 양쪽에 건다.
+(function checkReapply() {
+  for (const app of ["engine", "finish"]) {
+    const p = path.join(ROOT, `apps/${app}/src/pipeline.js`);
+    if (!fs.existsSync(p)) continue;
+    const s = fs.readFileSync(p, "utf8");
     if (!/async function clearOwnLayers\(/.test(s) || !/await clearOwnLayers\(/.test(s)) {
-      problems.push("apps/engine/src/pipeline.js — run이 clearOwnLayers를 부르지 않는다. 재적용 색이 누적된다.");
+      problems.push(`apps/${app}/src/pipeline.js — run이 clearOwnLayers를 부르지 않는다. 재적용이 누적된다.`);
     }
-    if (!/l\.layers/.test(s)) {
-      problems.push("apps/engine/src/pipeline.js — clearOwnLayers가 그룹 안(l.layers)을 재귀로 훑지 않는다. 중첩된 색 레이어를 못 지운다.");
+    if (!/ps\.collectLayers\(/.test(s)) {
+      problems.push(
+        `apps/${app}/src/pipeline.js — clearOwnLayers가 그룹 안까지 재귀로 훑지 않는다(ps.collectLayers 미사용). 중첩된 레이어를 못 지운다.`
+      );
     }
   }
+
+  // (b') 반대 방향. `groupOwnLayers`는 **최상위만** 봐야 한다. 목적이 "방금 만든
+  // 레이어들"을 묶는 것이라, 짝을 맞춘답시고 재귀로 바꾸면 사용자가 다른 그룹에
+  // 넣어 둔 과거 마감 레이어까지 끌어내 묶는다. 사람 눈에는 일관성 개선처럼 보이는
+  // 변경이라 못 박아 둔다.
+  (function checkGroupNotRecursive() {
+    const p = path.join(ROOT, "apps/finish/src/pipeline.js");
+    if (!fs.existsSync(p)) return;
+    const s = fs.readFileSync(p, "utf8");
+    const i = s.indexOf("async function groupOwnLayers(");
+    if (i < 0) return;
+    const body = s.slice(i, s.indexOf("\n}", i));
+    if (/collectLayers\(/.test(body)) {
+      problems.push(
+        "apps/finish/src/pipeline.js — groupOwnLayers는 최상위만 묶어야 한다. 재귀로 훑으면 사용자가 다른 그룹에 넣어 둔 과거 마감 레이어까지 끌어내 묶는다."
+      );
+    }
+  })();
+
+  const ap = path.join(ROOT, "apps/engine/src/apply.js");
   if (fs.existsSync(ap)) {
     const s = fs.readFileSync(ap, "utf8");
     const hide = s.indexOf(".visible = false");
@@ -215,4 +243,6 @@ if (problems.length) {
   for (const p of problems) console.error("  " + p);
   process.exit(1);
 }
-console.log("경계 검사 통과 — core 순수 / batchPlay 격리 / 마감 앱 색 없음 / 접두사 분리");
+console.log(
+  "경계 검사 통과 — core 순수 / batchPlay 격리 / 마감 앱 색 없음 / 접두사 분리 / 재적용 비누적(양 앱)"
+);

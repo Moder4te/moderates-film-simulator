@@ -80,15 +80,6 @@ function imgEl() {
   return document.getElementById("pvImage");
 }
 
-/** layers 트리를 재귀로 훑어 pred를 만족하는 레이어를 모은다(그룹 안까지). */
-function collectLayers(layers, pred, out) {
-  for (const l of layers || []) {
-    if (pred(l)) out.push(l);
-    const kids = l.layers;
-    if (kids && kids.length) collectLayers(kids, pred, out);
-  }
-  return out;
-}
 
 function clamp255(v) {
   return v < 0 ? 0 : v > 255 ? 255 : v;
@@ -205,7 +196,7 @@ async function renderOnce(params) {
       });
       let px;
       try {
-        const foreign = collectLayers(
+        const foreign = ps.collectLayers(
           doc.layers,
           (l) => l.name && l.name.startsWith("FilmSim"),
           []

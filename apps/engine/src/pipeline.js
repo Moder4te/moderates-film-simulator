@@ -19,16 +19,6 @@ const apply = require("./apply");
 
 const PREFIX = "FilmSim Color";
 
-/** layers 트리를 재귀로 훑어 pred를 만족하는 레이어를 모은다(그룹 안까지). */
-function collectLayers(layers, pred, out) {
-  for (const l of layers || []) {
-    if (pred(l)) out.push(l);
-    const kids = l.layers;
-    if (kids && kids.length) collectLayers(kids, pred, out);
-  }
-  return out;
-}
-
 /**
  * 이 플러그인이 이전에 만든 레이어/그룹을 제거한다. 재적용이 쌓이지 않게 한다.
  *
@@ -41,7 +31,7 @@ function collectLayers(layers, pred, out) {
  */
 async function clearOwnLayers(doc) {
   for (let guard = 0; guard < 16; guard++) {
-    const targets = collectLayers(doc.layers, (l) => l.name && l.name.startsWith(PREFIX), []);
+    const targets = ps.collectLayers(doc.layers, (l) => l.name && l.name.startsWith(PREFIX), []);
     if (targets.length === 0) break;
     for (const layer of targets) {
       try {

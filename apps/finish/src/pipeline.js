@@ -30,20 +30,43 @@ const grain = require("./grain");
 
 const PREFIX = "FilmSim Finish";
 
-/** 이 플러그인이 이전에 만든 레이어/그룹을 제거한다. 엔진 것은 건드리지 않는다. */
+/**
+ * 이 플러그인이 이전에 만든 레이어/그룹을 제거한다. 엔진 것은 건드리지 않는다.
+ *
+ * **재귀로 훑는다.** 최상위만 보면 마감 그룹이 다른 그룹 안에 들어가 있을 때
+ * (사용자가 정리하려고 묶는 것은 정상 사용이다) 못 찾아 재적용마다 그레인·할레이션이
+ * 누적된다. 그리고 **마감은 엔진보다 이게 더 급하다** — 엔진 산출물은 픽셀 레이어
+ * 한 장이라 지우고 다시 하면 되지만, 마감의 디퓨전은 그 시점 합성본을 이미 구워
+ * 놓아서 되돌릴 지점이 없다. 게다가 마감은 `groupOwnLayers`로 **자기가 그룹을
+ * 만든다** — 중첩 가능성을 스스로 만들어 놓고 중첩을 못 찾고 있었다.
+ *
+ * 그룹의 delete()는 그룹만 해제(ungroup)하고 안의 레이어를 꺼낸다. 그래서 대상이
+ * 없어질 때까지 반복한다 — 첫 회에 그룹이 풀리고 다음 회에 개별 레이어가 지워진다.
+ * 해제로 무효가 된 참조는 무시한다. 하나 던지는 것으로 재적용 전체가 멈추면 안 된다.
+ */
 async function clearOwnLayers(doc) {
-  for (let guard = 0; guard < 12; guard++) {
-    const targets = doc.layers.filter((l) => l.name.startsWith(PREFIX));
+  for (let guard = 0; guard < 16; guard++) {
+    const targets = ps.collectLayers(doc.layers, (l) => l.name && l.name.startsWith(PREFIX), []);
     if (targets.length === 0) break;
     for (const layer of targets) {
-      await layer.delete();
+      try {
+        await layer.delete();
+      } catch (e) {
+        /* 그룹 해제로 이미 사라진 참조 — 다음 반복에서 다시 훑는다 */
+      }
     }
   }
 }
 
-/** 방금 만든 레이어들을 하나의 그룹으로 묶는다. 그룹째 켜고 끄거나 강도 조절 가능. */
+/**
+ * 방금 만든 레이어들을 하나의 그룹으로 묶는다. 그룹째 켜고 끄거나 강도 조절 가능.
+ *
+ * ⚠️ **여기는 재귀로 만들지 말 것.** 목적이 "방금 만든 최상위 레이어들"을 묶는
+ * 것이다. `clearOwnLayers`와 짝을 맞추려고 `ps.collectLayers`로 바꾸면, 사용자가
+ * 다른 그룹 안에 넣어 둔 과거 마감 레이어까지 끌어내 묶어 버린다.
+ */
 async function groupOwnLayers(doc) {
-  const targets = doc.layers.filter((l) => l.name.startsWith(PREFIX));
+  const targets = doc.layers.filter((l) => l.name && l.name.startsWith(PREFIX));
   if (targets.length < 1) return;
   const ref = targets.map((l) => ({ _ref: "layer", _id: l.id }));
   await ps.play([{ _obj: "select", _target: ref, makeVisible: false }]);

@@ -32,6 +32,34 @@ async function modal(commandName, fn) {
   return core.executeAsModal(fn, { commandName });
 }
 
+/**
+ * layers 트리를 재귀로 훑어 pred를 만족하는 레이어를 모은다(그룹 안까지).
+ *
+ * **왜 재귀여야 하나.** `doc.layers`는 최상위만 준다. 사용자가 플러그인 결과를
+ * 그룹 안으로 끌어넣는 것은 정상 사용이고(정리하려고 묶는다), 그 뒤로는 최상위
+ * 검색이 그것을 못 찾는다. 재적용할 때마다 이전 결과가 남아 색·그레인·할레이션이
+ * **누적된다.**
+ *
+ * **왜 여기 있나.** 같은 함수가 엔진 세 곳에 복사돼 있었고 마감에는 아예 없었다.
+ * 그래서 마감만 최상위 검색으로 남아 위 결함을 그대로 안고 있었다 — 이 저장소가
+ * 가장 자주 낸 결함이 "구현이 둘이 되면 갈라진다"이다. 인자로 받은 트리를 훑을
+ * 뿐 호스트를 부르지 않는 순수 함수지만, 두 앱이 이미 `host/ps`를 받아 가므로
+ * 여기 두면 반입 목록(`tools/sync-libs.js`)을 건드리지 않고 한 벌로 합쳐진다.
+ *
+ * @param {Array} layers  훑을 트리 (보통 `doc.layers`)
+ * @param {function} pred  (layer) => boolean
+ * @param {Array} out  누산기. 호출자가 `[]`를 준다
+ * @returns {Array} out
+ */
+function collectLayers(layers, pred, out) {
+  for (const l of layers || []) {
+    if (pred(l)) out.push(l);
+    const kids = l.layers;
+    if (kids && kids.length) collectLayers(kids, pred, out);
+  }
+  return out;
+}
+
 const TARGET_LAYER = { _ref: "layer", _enum: "ordinal", _value: "targetEnum" };
 
 /** 현재 선택된 레이어의 이름을 바꾼다. */
@@ -261,6 +289,7 @@ module.exports = {
   modal,
   documentProfile,
   foregroundRgb,
+  collectLayers,
   TARGET_LAYER,
   renameLayer,
   setLayerBlend,

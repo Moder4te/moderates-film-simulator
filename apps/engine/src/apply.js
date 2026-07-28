@@ -20,16 +20,6 @@ const lut = require("../lib/core/color/lut");
 /** 모든 FilmSim 레이어의 공통 접두사. 색·마감 양쪽이 이걸로 시작한다. */
 const FILMSIM = "FilmSim";
 
-/** layers 트리를 재귀로 훑어 pred를 만족하는 레이어를 모은다(그룹 안까지). */
-function collectLayers(layers, pred, out) {
-  for (const l of layers || []) {
-    if (pred(l)) out.push(l);
-    const kids = l.layers;
-    if (kids && kids.length) collectLayers(kids, pred, out);
-  }
-  return out;
-}
-
 
 /**
  * 문서가 전제를 만족하는지 본다. 막지는 않고 경고만 돌려준다.
@@ -80,7 +70,7 @@ async function applyLut(doc, table, size, prefix) {
   // 마감을 먼저 얹은 뒤 색을 적용하면 그 스탬프된 픽셀은 이미 확정돼 되돌릴 수
   // 없다 — 격리로 중복은 막아도, 디퓨전에 구워진 원본색까지 새로 칠하지는 못한다.
   // 올바른 순서는 색 → 마감이다(README 현재 한계). 설계상 남겨둔 한계점.
-  const foreign = collectLayers(
+  const foreign = ps.collectLayers(
     app.activeDocument.layers,
     (l) => l.name && l.name.startsWith(FILMSIM) && !l.name.startsWith(prefix),
     []
