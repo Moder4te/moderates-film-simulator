@@ -54,8 +54,17 @@ local function findProfile(film, scannerName)
   return nil
 end
 
+-- 필름 룩이 올라앉을 **바탕 프로필**.
+--
+-- `CameraProfile`과 `Look`은 별개 층이다. Look만 갈아 끼우면 밑에 깔린 카메라
+-- 프로필(예: Camera BW)이 그대로 남아 **두 색이 섞인다.** 프로필 찾아보기에서 손으로
+-- 고를 때는 Lightroom이 바탕까지 같이 맞춰 주므로 이 문제가 안 보인다.
+--
+-- 값은 실측이다 — 손으로 적용한 사진의 `CameraProfile`이 이것이었다.
+local BASE_PROFILE = "Adobe Standard"
+
 --- 선택한 사진들에 Look을 적용한다. 실패해도 멈추지 않고 건수를 돌려준다.
-local function applyToSelection(profile, amount)
+local function applyToSelection(profile, amount, resetBase)
   local catalog = LrApplication.activeCatalog()
   local photos = catalog:getTargetPhotos()
   if #photos == 0 then return 0, 0, {}, nil end
@@ -111,9 +120,10 @@ local function applyToSelection(profile, amount)
   catalog:withWriteAccessDo("FilmSim 프로파일 적용", function()
     for _, photo in ipairs(photos) do
       local good, err = LrTasks.pcall(function()
-        -- 현재 설정을 읽어 Look만 갈아 끼운다(통째로 덮어쓰면 다른 조정이 날아간다).
+        -- 현재 설정을 읽어 필요한 키만 갈아 끼운다(통째로 덮어쓰면 다른 조정이 날아간다).
         local s = photo:getDevelopSettings()
         s.Look = look
+        if resetBase then s.CameraProfile = BASE_PROFILE end
         photo:applyDevelopSettings(s, label)
       end)
       if good then
@@ -150,6 +160,7 @@ LrTasks.startAsyncTask(function()
     props.film = filmList[1]
     props.scanner = scannerList[1]
     props.amount = 1.0
+    props.resetBase = true
 
     local contents = f:column({
       bind_to_object = props,
@@ -180,6 +191,17 @@ LrTasks.startAsyncTask(function()
             transform = function(v) return math.floor((v or 0) * 100 + 0.5) .. "%" end,
           }),
         }),
+      }),
+
+      f:checkbox({
+        title = "카메라 프로필을 " .. BASE_PROFILE .. "로 맞춤",
+        value = LrView.bind("resetBase"),
+      }),
+      f:static_text({
+        title = "끄면 사진에 걸린 카메라 프로필 위에 필름 룩이 덧입혀져 색이 섞입니다.",
+        width_in_chars = 34,
+        height_in_lines = 2,
+        text_color = LrColor(0.5, 0.5, 0.5),
       }),
 
       -- 폭·높이를 글자 기준으로 잡아 줄바꿈 위치를 못 박는다. 안 그러면 이 한 줄이
@@ -218,7 +240,7 @@ LrTasks.startAsyncTask(function()
       return
     end
 
-    local ok, failed, err = applyToSelection(profile, props.amount)
+    local ok, failed, err = applyToSelection(profile, props.amount, props.resetBase)
 
     if failed > 0 then
       LrDialogs.message(
@@ -231,8 +253,23 @@ LrTasks.startAsyncTask(function()
 
     -- 호출이 성공했다고 값이 남았다는 뜻은 아니다. 되읽어서 확인한다 — 이게 없으면
     -- "적용했다는데 사진이 그대로"인 상황에서 어디가 문제인지 구분할 수 없다.
-    local after = photos[1]:getDevelopSettings().Look
+    local settings = photos[1]:getDevelopSettings()
+    local after = settings.Look
     if type(after) == "table" and after.UUID == profile.uuid then
+      -- 바탕 프로필도 확인한다. 카메라에 따라 이 이름이 없을 수 있고, 그러면
+      -- Lightroom이 조용히 무시해 원래 프로필 위에 룩이 덧입혀진다 — 색이 섞인다.
+      if props.resetBase and settings.CameraProfile ~= BASE_PROFILE then
+        LrDialogs.message(
+          "필름 룩은 걸렸지만 바탕 프로필이 그대로입니다",
+          "요청한 바탕: " .. BASE_PROFILE .. "\n" ..
+            "남은 바탕: " .. tostring(settings.CameraProfile) .. "\n\n" ..
+            "이 카메라에는 그 이름의 프로필이 없는 것으로 보입니다. 지금 색은 " ..
+            "원래 카메라 프로필 위에 필름 룩이 덧입혀진 상태입니다.\n\n" ..
+            "현상 모듈에서 바탕 프로필을 직접 골라 주세요.",
+          "warning"
+        )
+        return
+      end
       LrDialogs.showBezel(profile.name .. " — " .. ok .. "장 적용")
       return
     end
