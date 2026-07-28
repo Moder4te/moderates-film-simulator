@@ -152,9 +152,18 @@ const H_WHITE = Math.log10(1 / ANCHOR);
 /**
  * 노광 보정 0에서 v=1이 만드는 선형 포지티브 값.
  * 화이트포인트 이득을 노광과 무관하게 고정하기 위한 기준.
+ *
+ * **`channelResponse`와 곡선을 만드는 방식이 다르다.** 여기는 `pchip`을 직접 쓰고,
+ * 저쪽은 그것을 `tabulate`한다(안쪽 루프에서 픽셀마다 부르므로 표가 필요하다).
+ * 전 필름 × 3층에서 두 값의 상대 차이는 **최대 1.3e-6** — 8bit 한 단계의 0.03%,
+ * 격자 간격 2.2e-3 logH에서 pchip이 그만큼 매끄럽다는 뜻이다.
+ *
+ * 맞추지 않고 둔다. 화이트포인트 기준으로는 표를 거치지 않은 쪽이 오히려 정확하고,
+ * 맞추면 전 필름의 LUT 값이 그 크기만큼 움직여 얻는 것 없이 기준선만 흔들린다.
+ * (예전 주석은 "channelResponse와 같은 곡선을 써야 한다"였는데 코드가 그렇지 않았다.)
  */
 function referencePeak(points, printGamma) {
-  const f = pchip(monotonic(points)); // channelResponse와 같은 곡선을 써야 한다
+  const f = pchip(monotonic(points));
   return ANCHOR * Math.pow(10, printGamma * (f(H_WHITE + MID_GRAY_OFFSET) - f(MID_GRAY_OFFSET)));
 }
 

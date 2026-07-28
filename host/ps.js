@@ -24,7 +24,6 @@ async function play(commands) {
   return result;
 }
 
-
 /**
  * 모달 실행 래퍼. 중첩 호출을 피하기 위해 파이프라인 최상단에서 한 번만 감싼다.
  */
@@ -225,6 +224,29 @@ function activeDocument() {
 }
 
 /**
+ * Photoshop 전경색을 [r,g,b] 0~255로 읽는다. 없으면 null.
+ *
+ * 스포이드 대용이다 — **UXP 패널은 문서 캔버스 클릭을 받지 못한다.** 패널 안
+ * `<img>`에서 좌표를 잡는 방법도 있으나 표시 영역과 이미지 좌표가 어긋나는지
+ * 확인되지 않았다. 사용자가 Photoshop 스포이드로 찍고 이 값을 가져오는 쪽이
+ * 좌표 문제가 아예 없고 캔버스에서 직접 찍을 수 있다.
+ */
+function foregroundRgb() {
+  try {
+    const c = app.foregroundColor;
+    if (!c || !c.rgb) return null;
+    const { red, green, blue } = c.rgb;
+    if (typeof red !== "number") return null;
+    return [red, green, blue];
+  } catch (e) {
+    return null;
+  }
+}
+
+/** 프로파일 이름이 실릴 수 있는 속성 후보. `documentProfile`이 순서대로 본다. */
+const PROFILE_KEYS = ["colorProfileName", "colorProfile", "profile"];
+
+/**
  * 활성 문서의 색 프로파일 이름. 읽지 못하면 null.
  *
  * 표시용 색 변환기를 고르는 데 쓴다 — UXP는 `<img>`를 sRGB로 간주해 그리므로
@@ -248,28 +270,6 @@ function activeDocument() {
  * null을 돌려주고, 그러면 색 변환을 건너뛴다 — 미리보기가 조금 어긋날 뿐
  * 멈추지는 않는다.
  */
-const PROFILE_KEYS = ["colorProfileName", "colorProfile", "profile"];
-
-/**
- * Photoshop 전경색을 [r,g,b] 0~255로 읽는다. 없으면 null.
- *
- * 스포이드 대용이다 — **UXP 패널은 문서 캔버스 클릭을 받지 못한다.** 패널 안
- * `<img>`에서 좌표를 잡는 방법도 있으나 표시 영역과 이미지 좌표가 어긋나는지
- * 확인되지 않았다. 사용자가 Photoshop 스포이드로 찍고 이 값을 가져오는 쪽이
- * 좌표 문제가 아예 없고 캔버스에서 직접 찍을 수 있다.
- */
-function foregroundRgb() {
-  try {
-    const c = app.foregroundColor;
-    if (!c || !c.rgb) return null;
-    const { red, green, blue } = c.rgb;
-    if (typeof red !== "number") return null;
-    return [red, green, blue];
-  } catch (e) {
-    return null;
-  }
-}
-
 function documentProfile() {
   try {
     const doc = app.activeDocument;

@@ -28,8 +28,21 @@ const format = require("../lib/core/optics/format");
 const displace = require("../lib/core/optics/displace");
 const grainfield = require("../lib/core/optics/grainfield");
 
+/**
+ * 그레인 강도(0~100) → 레이어 불투명도(%).
+ *
+ * 그대로 넘긴다. 하한 1%만 둔다 — 0%면 Photoshop이 레이어를 아예 안 그려, 강도를
+ * 0으로 두고 왜 그레인 레이어만 남는지 헷갈리는 상태가 된다.
+ *
+ * 예전에는 `(strength / 100) * 100`이라고 적혀 있었다. "무언가 환산이 일어난다"고
+ * 읽히지만 실제로는 항등이다 — **정확히 항등은 아니다.** 나누고 곱하는 사이에
+ * 부동소수점 오차가 남아 정수 8개(7·14·28·29·55·…)에서 `28.999999999999996` 같은
+ * 값이 나왔다. Photoshop이 불투명도를 내부 0~255로 양자화하므로 0~100 전 구간에서
+ * 결과가 달라지는 지점은 **없고**(확인함), 그래도 사용자가 고른 값을 그대로 넘기는
+ * 지금 쪽이 맞다.
+ */
 function opacityFor(strength) {
-  return Math.max(1, (strength / 100) * 100);
+  return Math.max(1, strength);
 }
 
 // blob 격자 마디를 지우는 미세 블러(px). 굵은 입자일수록 smoothstep 마디가 각져
