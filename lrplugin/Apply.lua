@@ -67,71 +67,34 @@ local function applyToSelection(profile, amount)
     UUID = profile.uuid,
   }
 
-  -- ── 넣는 길을 둘 준비한다 ────────────────────────────────────────────
+  -- ── 길은 하나만 쓴다 ─────────────────────────────────────────────────
   --
-  -- `applyDevelopSettings`는 **비문서화**다. 없거나 거부하는 환경이면 모든 장이 같은
-  -- 이유로 실패한다. 그래서 문서화된 프리셋 경로(`addDevelopPresetForPlugin` +
-  -- `applyDevelopPreset`)를 대안으로 함께 들고, 되는 쪽을 쓴다.
+  -- 한때 `addDevelopPresetForPlugin` + `applyDevelopPreset`를 대안으로 뒀는데,
+  -- **실기에서 사진을 망가뜨렸다.** `{ Look = ... }`만 담은 프리셋을 적용하면
+  -- Look은 그대로인 채 다른 설정만 헤집어 놓는다(강한 그린 캐스트로 나타났다).
+  -- 되지도 않으면서 원본 편집을 망치는 경로라 뺐다 — 안 되는 기능이 낫다.
   --
-  -- 프리셋은 루프 밖에서 한 번만 만든다. 인자 순서도 확실하지 않아 pcall로 감싸고,
-  -- 못 만들면 그 경로를 아예 빼 버린다 — 되는 길 하나면 충분하다.
-  local preset
-  pcall(function()
-    preset = LrApplication.addDevelopPresetForPlugin(_PLUGIN, label, { Look = look })
-  end)
+  -- 남은 `applyDevelopSettings`는 비문서화다. 실패하면 이유를 그대로 보여준다.
+  local ok, failed, firstError = 0, 0, nil
 
-  local attempts = {
-    {
-      id = "applyDevelopSettings",
-      run = function(photo)
+  catalog:withWriteAccessDo("FilmSim 프로파일 적용", function()
+    for _, photo in ipairs(photos) do
+      local good, err = pcall(function()
         -- 현재 설정을 읽어 Look만 갈아 끼운다(통째로 덮어쓰면 다른 조정이 날아간다).
         local s = photo:getDevelopSettings()
         s.Look = look
         photo:applyDevelopSettings(s, label)
-      end,
-    },
-  }
-  if preset then
-    attempts[#attempts + 1] = {
-      id = "applyDevelopPreset",
-      run = function(photo) photo:applyDevelopPreset(preset, _PLUGIN) end,
-    }
-  end
-
-  -- 오류는 경로별로 첫 것만 남긴다. 사진 수만큼 쌓아 봐야 같은 문장이 반복될 뿐이다.
-  local ok, failed, errors, used = 0, 0, {}, nil
-
-  catalog:withWriteAccessDo("FilmSim 프로파일 적용", function()
-    for _, photo in ipairs(photos) do
-      local done = false
-      for _, a in ipairs(attempts) do
-        -- 한 번 통한 경로가 정해지면 그 뒤로는 그것만 쓴다.
-        if used == nil or used == a.id then
-          local good, err = pcall(a.run, photo)
-          if good then
-            used = a.id
-            done = true
-            break
-          end
-          errors[a.id] = errors[a.id] or tostring(err)
-        end
+      end)
+      if good then
+        ok = ok + 1
+      else
+        failed = failed + 1
+        firstError = firstError or tostring(err)
       end
-      if done then ok = ok + 1 else failed = failed + 1 end
     end
   end)
 
-  return ok, failed, errors, used
-end
-
---- 경로별 오류를 사람이 읽을 수 있게 편다.
-local function errorReport(errors)
-  local lines = {}
-  for id, msg in pairs(errors) do
-    lines[#lines + 1] = id .. ": " .. msg
-  end
-  if #lines == 0 then return "(이유 없음)" end
-  table.sort(lines)
-  return table.concat(lines, "\n")
+  return ok, failed, firstError
 end
 
 LrTasks.startAsyncTask(function()
@@ -212,12 +175,12 @@ LrTasks.startAsyncTask(function()
       return
     end
 
-    local ok, failed, errors, used = applyToSelection(profile, props.amount)
+    local ok, failed, err = applyToSelection(profile, props.amount)
 
     if failed > 0 then
       LrDialogs.message(
         ok .. "장 적용, " .. failed .. "장 실패",
-        profile.name .. "\n\n" .. errorReport(errors),
+        profile.name .. "\n\n오류: " .. (err or "(이유 없음)"),
         "warning"
       )
       return
@@ -234,7 +197,6 @@ LrTasks.startAsyncTask(function()
     LrDialogs.message(
       "설정은 넘겼는데 값이 남지 않았습니다",
       ok .. "장 처리했지만 되읽으니 Look이 바뀌지 않았습니다.\n\n" ..
-        "쓴 경로: " .. tostring(used) .. "\n" ..
         "보낸 UUID: " .. profile.uuid .. "\n" ..
         "남은 Look: " .. (type(after) == "table" and tostring(after.UUID) or type(after)) .. "\n\n" ..
         "프로파일이 설치·재시작되지 않았거나, Look 테이블 모양이 맞지 않습니다.\n" ..
