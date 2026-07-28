@@ -78,11 +78,22 @@ for (const p of set) {
     console.error(`UUID를 못 찾았습니다: ${file}`);
     process.exit(1);
   }
+
+  // RGBTable도 같이 뽑는다. **이게 실제 색 변환을 가리키는 키다.**
+  // UUID만 넘기면 Lightroom이 프로파일을 찾아 이름·강도까지는 표시하지만
+  // 색은 걸리지 않는다 — 실기에서 확인했다(RESOLVED 참조).
+  const t = text.match(/crs:RGBTable="([^"]+)"/);
+  if (!t) {
+    console.error(`RGBTable을 못 찾았습니다: ${file}`);
+    process.exit(1);
+  }
+
   catalog.push({
     film: films.byId(p.film.id).displayName,
     scanner: scanner.byId(p.film.scanner).displayName,
     name,
     uuid: m[1],
+    rgbTable: t[1],
     file,
   });
 }
@@ -96,6 +107,7 @@ const rows = catalog.map(
     ", scanner = " + luaStr(c.scanner) +
     ", name = " + luaStr(c.name) +
     ", uuid = " + luaStr(c.uuid) +
+    ", rgbTable = " + luaStr(c.rgbTable) +
     ", file = " + luaStr(c.file) + " },"
 );
 const lua = [
@@ -124,6 +136,18 @@ const dangling = catalog.filter((c) => !onDisk.has(c.file));
 if (dangling.length > 0) {
   console.error(`카탈로그가 없는 파일을 가리킵니다:\n  ${dangling.map((c) => c.file).join("\n  ")}`);
   process.exit(1);
+}
+
+// RGBTable ID는 표 내용에서 나온다. 두 조합이 같은 ID를 가지면 색이 실제로 같다는
+// 뜻이다 — 필름이나 스캐너 단계가 결과에 반영되지 않은 것이라 조용히 넘길 수 없다.
+const byTable = new Map();
+for (const c of catalog) {
+  const prev = byTable.get(c.rgbTable);
+  if (prev) {
+    console.error(`색이 같은 조합이 있습니다:\n  ${prev}\n  ${c.name}\n  RGBTable ${c.rgbTable}`);
+    process.exit(1);
+  }
+  byTable.set(c.rgbTable, c.name);
 }
 
 // 팝업은 필름 × 스캐너 격자다. 빠진 칸이 있으면 고를 수는 있는데 적용이 안 된다.

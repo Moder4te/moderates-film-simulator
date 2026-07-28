@@ -62,20 +62,33 @@ local function applyToSelection(profile, amount)
 
   local label = "FilmSim: " .. profile.name
 
-  -- Name·Amount·UUID 세 개만 넣었을 때 **이름과 강도 슬라이더는 제대로 떴는데 색이
-  -- 걸리지 않았다.** 이름이 떴다는 건 Lightroom이 UUID로 프로파일을 찾았다는 뜻이라,
-  -- 부족한 건 참조가 아니라 그 참조를 렌더링에 물리는 쪽이다.
+  -- ── 이 모양은 추측이 아니라 실측이다 ────────────────────────────────
   --
-  -- 그래서 프로파일 파일(`crs:` 속성)이 실제로 선언하는 값을 그대로 채운다. 지어내지
-  -- 않고 생성물에서 가져온 값이다 — `tools/build-lrplugin.js`가 굽는 XMP 헤더 참조.
+  -- 프로필 찾아보기에서 손으로 적용한 사진의 `getDevelopSettings().Look`을 그대로
+  -- 떠서(=Inspect.lua) 맞춘 것이다. 그 전에는 XMP가 선언하는 속성을 보고 유추했는데,
+  -- **그건 파일 쪽 형식이지 Lightroom 내부가 기대하는 형식이 아니었다.**
+  --
+  -- 결정적인 차이는 **`Parameters.RGBTable`** 하나였다. UUID만 넘기면 Lightroom이
+  -- 프로파일을 찾아 이름과 강도 슬라이더까지는 정상으로 보여 주지만 색은 걸리지
+  -- 않는다 — 실제 색 변환을 가리키는 것이 이 키라서다.
+  --
+  -- 지역화 필드(Group·ShortName·SortName)는 `{ ["x-default"] = ... }` 꼴이다.
+  -- 문자열로 넣으면 안 된다.
   local look = {
-    Name = profile.name,
     Amount = amount,
+    Name = profile.name,
     UUID = profile.uuid,
-    Cluster = "",
-    SupportsAmount = true,
-    SupportsMonochrome = true,
-    SupportsOutputReferred = true,
+    Group = { ["x-default"] = "FilmSim" },
+    ShortName = { ["x-default"] = "FilmSim" },
+    SortName = { ["x-default"] = profile.name },
+    Parameters = {
+      ConvertToGrayscale = false,
+      FilterList = {},
+      PointColors = {},
+      ProcessVersion = "15.4",
+      RGBTable = profile.rgbTable,
+      Version = "18.3",
+    },
   }
 
   -- ── 길은 하나만 쓴다 ─────────────────────────────────────────────────
@@ -190,6 +203,18 @@ LrTasks.startAsyncTask(function()
     if not profile then
       LrDialogs.message("그 조합의 프로파일이 없습니다",
         props.film .. " · " .. props.scanner, "warning")
+      return
+    end
+
+    -- 낡은 카탈로그(RGBTable을 싣기 전 빌드)면 색이 걸리지 않는 Look이 조용히
+    -- 들어간다. 이름은 제대로 뜨고 강도 슬라이더도 움직여서 더 헷갈린다.
+    if not profile.rgbTable then
+      LrDialogs.message(
+        "카탈로그가 낡았습니다",
+        "Profiles.lua에 RGBTable이 없습니다. 이 상태로 적용하면 이름만 붙고 " ..
+          "색은 걸리지 않습니다.\n\n`node tools/build-lrplugin.js`로 다시 빌드하세요.",
+        "critical"
+      )
       return
     end
 

@@ -266,6 +266,24 @@
 - **진단이 통한 이유** 적용 후 `Look.UUID`를 **되읽어 대조**하는 검사를 넣어 뒀다.
   "호출 성공"과 "값이 남음"이 다르다는 걸 이 검사가 갈라 줬다
 
+### LrC — 이름은 붙는데 색이 안 걸린다: `Parameters.RGBTable`
+
+- **증상** 적용 성공으로 뜨고 프로파일 **이름도 강도 슬라이더도 정상**인데 색만 그대로
+- **원인** `Look`에 `Name`·`Amount`·`UUID`만 넣었다. UUID로 프로파일을 **찾기는** 하므로
+  이름과 강도는 제대로 표시된다. 그런데 **실제 색 변환을 가리키는 것은
+  `Parameters.RGBTable`** 이고 Lightroom은 그걸 UUID에서 되찾아 주지 않는다
+- **고침** 빌드가 생성된 XMP에서 `crs:RGBTable`을 뽑아 `Profiles.lua`에 싣고,
+  Apply가 `Parameters`에 넣는다. 지역화 필드(Group·ShortName·SortName)는
+  `{ ["x-default"] = ... }` 꼴 — 문자열로 넣으면 안 된다
+- **어떻게 알아냈나** 손으로 적용한 사진과 플러그인으로 적용한 사진의
+  `getDevelopSettings().Look`을 **떠서 나란히 비교**했다(`Inspect.lua`).
+  차이는 `RGBTable` 하나였다
+- **교훈** 그 전까지는 **XMP가 선언하는 속성을 보고 유추**했는데, 그건 파일 쪽 형식이지
+  Lightroom 내부가 기대하는 형식이 아니다. `Cluster`·`Supports*`를 채워 넣은 시도는
+  전부 헛다리였다 — **정답은 파일이 아니라 실행 중인 상태에 있었다**
+- **재발 방지** 카탈로그에 `rgbTable`이 없으면 Apply가 적용을 거부한다(낡은 빌드).
+  빌드는 두 조합이 같은 RGBTable을 갖는 경우도 막는다 — 색이 실제로 같다는 뜻이라
+
 ### LrC — 맨 `pcall`이 SDK 호출을 죽인다
 
 - **증상** `applyDevelopSettings` 실패 사유가
