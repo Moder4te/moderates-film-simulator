@@ -16,6 +16,8 @@
 local LrApplication = import "LrApplication"
 local LrDialogs = import "LrDialogs"
 local LrTasks = import "LrTasks"
+local LrView = import "LrView"
+local LrFunctionContext = import "LrFunctionContext"
 
 --- 테이블을 사람이 읽을 수 있게 편다. 깊이를 제한해 거대한 값에서 멈추지 않게 한다.
 local function dump(value, indent, depth)
@@ -49,17 +51,34 @@ LrTasks.startAsyncTask(function()
   end
 
   local s = photos[1]:getDevelopSettings()
-  local parts = {}
+  local text = table.concat({
+    "-- 플랫폼: " .. (WIN_ENV and "Windows" or "macOS"),
+    "Look = " .. dump(s.Look),
+    "",
+    "CameraProfile = " .. dump(s.CameraProfile),
+    "ProcessVersion = " .. dump(s.ProcessVersion),
+  }, "\n")
 
-  parts[#parts + 1] = "Look = " .. dump(s.Look)
-  parts[#parts + 1] = ""
-  parts[#parts + 1] = "CameraProfile = " .. dump(s.CameraProfile)
-  parts[#parts + 1] = "ProcessVersion = " .. dump(s.ProcessVersion)
-
-  LrDialogs.message(
-    "이 사진의 프로파일 설정",
-    table.concat(parts, "\n") ..
-      "\n\n(Apply.lua가 만드는 Look 테이블과 대조해 보세요)",
-    "info"
-  )
+  -- ⚠️ `LrDialogs.message`를 쓰지 않는다. **이 값은 복사해 가는 것이 목적**인데
+  -- 알림창 본문은 선택이 안 되고, macOS에서는 긴 본문이 잘리기까지 한다.
+  -- 스크롤되는 편집 필드에 넣어 두면 양쪽에서 다 읽고 복사할 수 있다.
+  LrFunctionContext.callWithContext("filmsimInspect", function(context)
+    local f = LrView.osFactory()
+    LrDialogs.presentModalDialog({
+      title = "이 사진의 프로파일 설정",
+      contents = f:column({
+        spacing = f:control_spacing(),
+        f:static_text({ title = "Apply.lua가 만드는 Look 테이블과 대조해 보세요." }),
+        f:edit_field({
+          value = text,
+          width_in_chars = 52,
+          height_in_lines = 16,
+          -- 잠그지 않는다. 비활성 필드에서 복사가 되는지 확실하지 않고, 여기서
+          -- 고친 값은 아무 데도 쓰이지 않으니 열어 두는 쪽이 안전하다.
+        }),
+      }),
+      actionVerb = "닫기",
+      cancelVerb = "< exclude >", -- 취소 버튼을 없앤다. 닫는 길이 하나면 충분하다.
+    })
+  end)
 end)

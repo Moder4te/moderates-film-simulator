@@ -20,6 +20,7 @@ local LrDialogs = import "LrDialogs"
 local LrTasks = import "LrTasks"
 local LrView = import "LrView"
 local LrBinding = import "LrBinding"
+local LrColor = import "LrColor"
 local LrFunctionContext = import "LrFunctionContext"
 
 -- `dofile`이 아니라 `require`다. Lightroom은 플러그인 폴더를 모듈 경로에 넣어 주지만
@@ -109,20 +110,24 @@ LrTasks.startAsyncTask(function()
 
       f:static_text({ title = "선택한 사진 " .. #photos .. "장에 적용합니다." }),
 
+      -- ⚠️ 폭을 픽셀로 박지 않는다. macOS는 기본 폰트가 Windows보다 넓어서 딱 맞춘
+      -- 픽셀 값이 거기서 잘린다. `LrView.share`는 가장 넓은 라벨에 맞춰 레이아웃
+      -- 시점에 정해지고, `width_in_chars`는 글자 수로 잡는다 — 둘 다 폰트를 따라간다.
+      -- 팝업은 폭을 주지 않으면 가장 긴 항목에 맞춰 스스로 늘어난다.
       f:row({
-        f:static_text({ title = "필름", width = 60 }),
-        f:popup_menu({ value = LrView.bind("film"), items = popupItems(filmList), width = 220 }),
+        f:static_text({ title = "필름", alignment = "right", width = LrView.share("label") }),
+        f:popup_menu({ value = LrView.bind("film"), items = popupItems(filmList) }),
       }),
       f:row({
-        f:static_text({ title = "스캐너", width = 60 }),
-        f:popup_menu({ value = LrView.bind("scanner"), items = popupItems(scannerList), width = 220 }),
+        f:static_text({ title = "스캐너", alignment = "right", width = LrView.share("label") }),
+        f:popup_menu({ value = LrView.bind("scanner"), items = popupItems(scannerList) }),
       }),
       f:row({
-        f:static_text({ title = "강도", width = 60 }),
-        f:slider({ value = LrView.bind("amount"), min = 0, max = 1, width = 160 }),
+        f:static_text({ title = "강도", alignment = "right", width = LrView.share("label") }),
+        f:slider({ value = LrView.bind("amount"), min = 0, max = 1, fill_horizontal = 1 }),
         -- 슬라이더 값을 그대로 붙이면 0.7300000000001처럼 나온다. 백분율로 다듬는다.
         f:static_text({
-          width = 44,
+          width_in_chars = 4,
           title = LrView.bind({
             key = "amount",
             transform = function(v) return math.floor((v or 0) * 100 + 0.5) .. "%" end,
@@ -130,9 +135,13 @@ LrTasks.startAsyncTask(function()
         }),
       }),
 
+      -- 폭·높이를 글자 기준으로 잡아 줄바꿈 위치를 못 박는다. 안 그러면 이 한 줄이
+      -- 대화상자 폭을 결정해 버리고, 그 폭이 플랫폼마다 달라진다.
       f:static_text({
         title = "프로파일이 아직 설치·재시작되지 않았다면 화면이 바뀌지 않습니다.",
-        text_color = import("LrColor")(0.5, 0.5, 0.5),
+        width_in_chars = 34,
+        height_in_lines = 2,
+        text_color = LrColor(0.5, 0.5, 0.5),
       }),
     })
 

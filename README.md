@@ -129,9 +129,25 @@ Lightroom · Lightroom Classic · Camera Raw 공통.
 프로파일 18종(필름 9 × 스캐너 2)을 담은 LrC 플러그인이 있다. 폴더를 직접 찾을
 필요 없이 메뉴에서 설치한다.
 
-1. 릴리스의 `FilmSim.lrplugin` 압축을 풀고 → **파일 > 플러그인 관리자 > 추가**
-2. **라이브러리 > 플러그인 추가 기능 > 필름 프로파일 설치**
-3. **Lightroom을 다시 시작한다** — 프로파일은 실행 시점에만 읽힌다
+Windows · macOS 공통이다.
+
+1. 릴리스의 `FilmSim.lrplugin` 압축을 푼다
+2. **파일 > 플러그인 관리자 > 추가** → 압축을 푼 **`FilmSim.lrplugin` 폴더 자체를 선택**
+   (폴더 안으로 들어가 `Info.lua`를 고르는 것이 아니다. macOS에서는 이 폴더가 하나의
+   묶음으로 보이므로 그대로 고르면 된다)
+3. **라이브러리 > 플러그인 추가 기능 > 필름 프로파일 설치**
+4. **Lightroom을 다시 시작한다** — 프로파일은 실행 시점에만 읽힌다
+
+설치되는 위치. 직접 찾아갈 일은 없지만(설치 창의 **폴더 열기** 버튼이 열어 준다):
+
+```
+Windows  %APPDATA%\Adobe\CameraRaw\Settings\
+macOS    ~/Library/Application Support/Adobe/CameraRaw/Settings/
+```
+
+> **macOS에서 폴더가 안 보인다면** `~/Library`가 Finder 기본 숨김이라 그렇다.
+> Finder에서 `Cmd+Shift+G` 를 누르고 위 경로를 붙여 넣으면 들어갈 수 있다.
+> 폴더가 아예 없으면 플러그인이 만든다.
 
 그다음부터는 프로필 찾아보기를 뒤질 필요 없이 메뉴에서 바로 고른다.
 

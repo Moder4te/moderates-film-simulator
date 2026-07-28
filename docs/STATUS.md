@@ -75,6 +75,17 @@
 빌드: `node tools/build-lrplugin.js` → `dist/FilmSim.lrplugin/`.
 UUID는 생성된 `.xmp`에서 직접 뽑는다 — 따로 계산하면 파일과 어긋나 조용히 실패한다.
 
+**Windows · macOS 공통 설계.** 갈라지는 지점과 처리:
+
+| 지점 | 처리 |
+|---|---|
+| 설정 폴더 경로 | `home` + `WIN_ENV` 분기. `%APPDATA%\Adobe\CameraRaw\Settings` / `~/Library/Application Support/…` |
+| 폴더가 없을 때 | **만든다.** 폴더 선택으로 넘기면 macOS는 `~/Library`가 숨김이라 막다른 길 |
+| 폴더를 열어 보고 싶을 때 | 설치 완료 창의 **폴더 열기** → `LrShell.revealInShell` |
+| 대화상자 치수 | 픽셀 대신 `LrView.share` · `width_in_chars`. macOS 기본 폰트가 더 넓어 고정 픽셀은 잘린다 |
+| Inspect 덤프 | 알림창이 아니라 편집 필드. 복사해 가는 게 목적인데 macOS 알림은 긴 본문을 자른다 |
+| 파일 이름 | `xmp.fileNameFor`가 ASCII만 남기고 `\/:*?"<>|` 제거 — 양쪽 파일시스템에서 안전 |
+
 ## 알려진 한계
 
 ### 설계상 남겨둔 것
@@ -113,8 +124,11 @@ UUID는 생성된 `.xmp`에서 직접 뽑는다 — 따로 계산하면 파일�
 
 - 엔진 재적용 시 레이어 격리·복원(`.visible` 토글, `.move`)
 - 미리보기 격리가 undo 히스토리를 오염시키지 않는지
-- **LrC 플러그인 전체.** Lua는 여기서 실행할 수단이 없다 — 문법조차 검사되지 않는다.
+- **LrC 플러그인 전체.** Lua 인터프리터가 없어 **문법은 검사되지 않는다.** `check.js`가
+  보는 것은 BOM과 UTF-8 인코딩뿐이다(둘 다 Lightroom을 켜야만 드러나는 실패라 넣었다).
   확인 항목: 플러그인 로드 · 메뉴 노출 · 설치 후 재시작 시 프로파일 등장 · 적용 반영.
+  **macOS는 실기 확인이 전혀 없다** — 위 표는 SDK 문서와 플랫폼 동작에 근거한 설계지
+  검증된 결과가 아니다.
   특히 **`Look` 테이블 모양은 비문서화 추정**이다(`Name`/`Amount`/`UUID`). 안 먹으면
   프로파일을 손으로 한 번 적용한 뒤 `Inspect.lua`로 실제 값을 보고 맞춘다.
 

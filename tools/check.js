@@ -43,13 +43,27 @@ function walk(dir, fn) {
 step("문법 · BOM", () => {
   let bad = 0;
   const seen = [];
-  for (const dir of ["core", "host", "shared", "apps", "tools"]) {
+  const lua = [];
+  for (const dir of ["core", "host", "shared", "apps", "tools", "lrplugin"]) {
     walk(path.join(ROOT, dir), (p) => {
       if (p.includes(`${path.sep}lib${path.sep}`)) return; // 원본에서 이미 본다
       const raw = fs.readFileSync(p);
       if (raw[0] === 0xef && raw[1] === 0xbb && raw[2] === 0xbf) {
         console.error(`  BOM: ${path.relative(ROOT, p)}`);
         bad++;
+      }
+      if (p.endsWith(".lua")) {
+        lua.push(p);
+        // Lua 인터프리터가 없어 문법은 못 본다. 대신 **여기서 확인 가능한 것**만
+        // 못 박는다. 위 BOM 검사가 Lua에도 걸리는데, Lua 5.1은 BOM을 건너뛰지 않고
+        // `unexpected symbol`로 죽는다 — 그리고 그건 Lightroom을 켜야만 드러난다.
+        //
+        // 인코딩도 본다. 메뉴 제목과 안내문이 전부 한글이라, 깨진 바이트가 섞이면
+        // 대화상자가 통째로 읽을 수 없게 된다.
+        if (Buffer.compare(Buffer.from(raw.toString("utf8"), "utf8"), raw) !== 0) {
+          console.error(`  UTF-8 아님: ${path.relative(ROOT, p)}`);
+          bad++;
+        }
       }
       if (p.endsWith(".js")) {
         seen.push(p);
@@ -80,7 +94,9 @@ step("문법 · BOM", () => {
       bad++;
     }
   }
-  console.log(`  JS ${seen.length}개 · manifest 2개 · HTML 2개 검사, 문제 ${bad}건`);
+  console.log(
+    `  JS ${seen.length}개 · manifest 2개 · HTML 2개 · Lua ${lua.length}개(BOM·인코딩만) 검사, 문제 ${bad}건`
+  );
   return bad === 0;
 });
 
