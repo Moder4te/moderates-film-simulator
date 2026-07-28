@@ -20,8 +20,11 @@ jobs:
       matrix:
         node: [20, 24]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # @v5 — @v4는 내부적으로 Node 20에서 돌고 GitHub이 그것을 걷어내는 중이라
+      # 매 실행마다 deprecation 경고가 붙었다. 우리가 검사하는 노드 버전(아래 matrix)과는
+      # 별개 이야기다 — 그쪽은 20을 계속 지원 하한으로 둔다.
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
       - run: node tools/check.js
