@@ -947,7 +947,11 @@ async function onApply() {
       const warnings = apply.validate(ps.activeDocument(), params);
       if (warnings.length) warning = " (" + warnings.join(" ") + ")";
     } catch (e) {
-      /* 문서 없음 등은 아래 파이프라인이 제대로 보고한다 */
+      // 문서 없음 등은 아래 파이프라인이 제대로 보고하므로 여기서 막지 않는다.
+      // 다만 **조용히 삼키지는 않는다** — 검사가 터져서 경고가 사라진 것과
+      // 경고할 것이 없던 것은 화면에서 구분되지 않는다. 실제로 그 차이를 못 가려
+      // 한 번 헤맸다.
+      console.error("경고 검사 실패", e);
     }
     await pipeline.applyToActiveDocument(params);
     setStatus("적용 완료" + warning);
