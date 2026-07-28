@@ -13,7 +13,10 @@
  * 호출자가 executeAsModal 안에 있어야 한다.
  */
 
-const { app, action, imaging } = require("photoshop");
+// `action`은 원래부터 안 쓰였고(디스크립터는 전부 host/ps.js를 거친다), `app`은
+// 격리 대상을 `doc`에서 모으도록 바꾸면서 안 쓰이게 됐다. 안 쓰는 `action`을 남겨
+// 두는 것은 경계 검사 규칙 2가 막으려는 직접 batchPlay 호출을 손닿는 곳에 두는 것과 같다.
+const { imaging } = require("photoshop");
 const ps = require("../lib/host/ps");
 const lut = require("../lib/core/color/lut");
 
@@ -70,8 +73,13 @@ async function applyLut(doc, table, size, prefix) {
   // 마감을 먼저 얹은 뒤 색을 적용하면 그 스탬프된 픽셀은 이미 확정돼 되돌릴 수
   // 없다 — 격리로 중복은 막아도, 디퓨전에 구워진 원본색까지 새로 칠하지는 못한다.
   // 올바른 순서는 색 → 마감이다(README 현재 한계). 설계상 남겨둔 한계점.
+  //
+  // 격리 대상은 **`doc`에서** 모은다. 픽셀을 `doc.id`에서 읽으므로 같은 문서여야
+  // 한다. 예전에는 `app.activeDocument.layers`에서 모았는데, 지금은 호출자가
+  // 활성 문서만 넘겨 결과가 같을 뿐 **계약이 어긋나 있었다.** 마감처럼 배치를
+  // 붙이는 순간(폴더의 문서를 차례로 열어 처리) 조용히 엉뚱한 문서를 숨긴다.
   const foreign = ps.collectLayers(
-    app.activeDocument.layers,
+    doc.layers,
     (l) => l.name && l.name.startsWith(FILMSIM) && !l.name.startsWith(prefix),
     []
   );
@@ -81,8 +89,12 @@ async function applyLut(doc, table, size, prefix) {
   }
 
   try {
+    // ⚠️ **`ps.play` 디스크립터는 활성 문서에 작용한다.** 여기서 만든 레이어를
+    // `doc`에서 되읽는 것은 그 전제를 명시하는 것이지 배치 안전을 만드는 것이
+    // 아니다 — `doc`이 활성이 아니면 makePixelLayer가 애초에 엉뚱한 문서에
+    // 레이어를 만든다. 배치화한다면 문서를 먼저 활성으로 만들어야 한다.
     await ps.play([ps.makePixelLayer(), ps.renameLayer(`${prefix} · Color`)]);
-    const colorLayer = app.activeDocument.activeLayers[0];
+    const colorLayer = doc.activeLayers[0];
     const layerId = colorLayer.id;
 
     const px = await imaging.getPixels({ documentID: doc.id, colorSpace: "RGB" });

@@ -200,75 +200,96 @@ async function apply(doc, halation, formatId, prefix) {
 
   let shrinkOk = true; // 축소가 한 번이라도 실패하면 이후 전부 풀해상도로
 
-  for (const sc of scales) {
-    const opacity = halation.strength * sc.w;
-    if (opacity < 1) continue; // 기여가 없는 스케일은 건너뛴다
+  // ── 불투명 전면 레이어의 수명 ────────────────────────────────────────────
+  //
+  // `base`와, 블렌드 모드를 아직 못 받은 복제본은 **Normal 블렌드의 불투명 검정**이라
+  // 문서 위에 남으면 원본 이미지를 통째로 덮는다. 아래 루프의 `play()`(축소·채널
+  // 필터·블렌드) 중 하나라도 던지면 정리에 도달하지 못한다.
+  //
+  // 되돌리기 한 번(`pipeline.applyToActiveDocument`가 suspendHistory로 묶는다)이면
+  // 사라지고 배치 경로는 저장 전에 문서를 닫으므로 데이터 손실은 아니다. 그래도
+  // 화면이 통째로 검게 덮이는 것은 사용자가 "망가졌다"고 읽는다.
+  //
+  // `pending`은 **블렌드 모드를 아직 못 받은** 복제본이다. 마지막 play가 성공하면
+  // screen 계열이 되어 더는 덮지 않으므로 null로 푼다.
+  let pending = null;
+  try {
+    for (const sc of scales) {
+      const opacity = halation.strength * sc.w;
+      if (opacity < 1) continue; // 기여가 없는 스케일은 건너뛴다
 
-    // 추출 원본을 다시 선택해 복제한다(직전 루프가 활성 레이어를 바꿔 놨다).
-    await play([selectLayer(baseId)]);
-    const dup = await base.duplicate();
-    await play([selectLayer(dup.id), ps.renameLayer(`${prefix} · Halation ${sc.name}`)]);
+      // 추출 원본을 다시 선택해 복제한다(직전 루프가 활성 레이어를 바꿔 놨다).
+      await play([selectLayer(baseId)]);
+      const dup = await base.duplicate();
+      pending = dup;
+      await play([selectLayer(dup.id), ps.renameLayer(`${prefix} · Halation ${sc.name}`)]);
 
-    // 축소해서 계산한다(위 shrink 주석 참조). transform이 안 먹는 환경이면 조용히
-    // 풀해상도로 돌아간다 — 느릴 뿐 결과는 같다. 한 번 실패하면 이후 스케일도 시도하지
-    // 않는다(같은 이유로 실패할 것이고, **축소만 되고 복원이 안 되는 상태가 최악**이다).
-    let shrink = shrinkOk ? sc.shrink : 1;
-    if (shrink > 1) {
-      try {
-        await play([ps.scaleLayer(100 / shrink)]);
-      } catch (e) {
-        console.error("할레이션 축소 실패 — 풀해상도로 진행합니다", e);
-        shrinkOk = false;
-        shrink = 1;
+      // 축소해서 계산한다(위 shrink 주석 참조). transform이 안 먹는 환경이면 조용히
+      // 풀해상도로 돌아간다 — 느릴 뿐 결과는 같다. 한 번 실패하면 이후 스케일도 시도하지
+      // 않는다(같은 이유로 실패할 것이고, **축소만 되고 복원이 안 되는 상태가 최악**이다).
+      let shrink = shrinkOk ? sc.shrink : 1;
+      if (shrink > 1) {
+        try {
+          await play([ps.scaleLayer(100 / shrink)]);
+        } catch (e) {
+          console.error("할레이션 축소 실패 — 풀해상도로 진행합니다", e);
+          shrinkOk = false;
+          shrink = 1;
+        }
       }
-    }
 
-    // 채널별 확산 — 스케일 배율 × 채널 차등(R 최대). 사실상 0인 채널은 건너뛴다.
-    // 축소본에서 돌므로 반경도 같은 비율로 줄인다.
-    //
-    // **원반(disk).** 할레이션은 렌즈 앞 안개가 아니라 베이스 뒷면에서 튕겨 나온
-    // 빛의 궤적이라, 종형 가우시안이 아니라 특정 반경까지 꽉 찬 뒤 경계에서 떨어지는
-    // 원반이다(사용자 육안 확인). Maximum으로 팽창시켜 원반을 만들고 작은 가우시안
-    // 으로 가장자리만 소프트하게 한다. disk=0이면 순수 가우시안.
-    //
-    // ⚠️ **상한을 축소 배율로 환산한다.** Maximum은 100px 상한인데, 축소본에서는 그
-    // 100px이 원본 기준 100×shrink px에 해당한다. 상한을 그대로 두면 축소한 스케일만
-    // 원반이 훨씬 커져 **룩이 바뀐다.** 성능 개선은 결과를 바꾸지 않아야 한다 — 바뀌면
-    // 속도가 깨뜨린 것인지 의도된 차이인지 구분할 수 없다. (상한을 풀고 싶으면
-    // 그것은 별도의 의도적 변경으로 다룬다.)
-    // 상한 70 — 그 위로 올리면 소프트 엣지가 너무 얇아져 원반이 인공적으로 보인다.
-    // 슬라이더 최대와 같은 값이라, 구 프리셋에 70을 넘는 값이 들어 있어도 여기서 잘린다.
-    const diskFrac = clamp((halation.disk == null ? 0 : halation.disk) / 100, 0, MAX_DISK / 100);
-    const diskCap = 100 / shrink; // 원본 기준 100px에 해당하는 축소본 반경
-    for (const [channel, factor] of channels) {
-      const radius = (baseRadius * sc.mul * factor) / shrink;
-      if (radius < 0.15) continue;
-      const cmds = [ps.selectChannel(channel)];
-      if (diskFrac > 0 && radius * diskFrac >= 1) {
-        let dr = radius * diskFrac;
-        let gr = radius * (1 - diskFrac);
-        if (dr > diskCap) { gr += dr - diskCap; dr = diskCap; } // 초과분은 블러로
-        cmds.push(ps.maximumFilter(dr));
-        if (gr >= 0.15) cmds.push(ps.gaussianBlur(gr));
-      } else {
-        cmds.push(ps.gaussianBlur(radius));
+      // 채널별 확산 — 스케일 배율 × 채널 차등(R 최대). 사실상 0인 채널은 건너뛴다.
+      // 축소본에서 돌므로 반경도 같은 비율로 줄인다.
+      //
+      // **원반(disk).** 할레이션은 렌즈 앞 안개가 아니라 베이스 뒷면에서 튕겨 나온
+      // 빛의 궤적이라, 종형 가우시안이 아니라 특정 반경까지 꽉 찬 뒤 경계에서 떨어지는
+      // 원반이다(사용자 육안 확인). Maximum으로 팽창시켜 원반을 만들고 작은 가우시안
+      // 으로 가장자리만 소프트하게 한다. disk=0이면 순수 가우시안.
+      //
+      // ⚠️ **상한을 축소 배율로 환산한다.** Maximum은 100px 상한인데, 축소본에서는 그
+      // 100px이 원본 기준 100×shrink px에 해당한다. 상한을 그대로 두면 축소한 스케일만
+      // 원반이 훨씬 커져 **룩이 바뀐다.** 성능 개선은 결과를 바꾸지 않아야 한다 — 바뀌면
+      // 속도가 깨뜨린 것인지 의도된 차이인지 구분할 수 없다. (상한을 풀고 싶으면
+      // 그것은 별도의 의도적 변경으로 다룬다.)
+      // 상한 70 — 그 위로 올리면 소프트 엣지가 너무 얇아져 원반이 인공적으로 보인다.
+      // 슬라이더 최대와 같은 값이라, 구 프리셋에 70을 넘는 값이 들어 있어도 여기서 잘린다.
+      const diskFrac = clamp((halation.disk == null ? 0 : halation.disk) / 100, 0, MAX_DISK / 100);
+      const diskCap = 100 / shrink; // 원본 기준 100px에 해당하는 축소본 반경
+      for (const [channel, factor] of channels) {
+        const radius = (baseRadius * sc.mul * factor) / shrink;
+        if (radius < 0.15) continue;
+        const cmds = [ps.selectChannel(channel)];
+        if (diskFrac > 0 && radius * diskFrac >= 1) {
+          let dr = radius * diskFrac;
+          let gr = radius * (1 - diskFrac);
+          if (dr > diskCap) { gr += dr - diskCap; dr = diskCap; } // 초과분은 블러로
+          cmds.push(ps.maximumFilter(dr));
+          if (gr >= 0.15) cmds.push(ps.gaussianBlur(gr));
+        } else {
+          cmds.push(ps.gaussianBlur(radius));
+        }
+        await play(cmds);
       }
+
+      const cmds = [ps.selectChannel("RGB")];
+      // 원래 크기로 되돌린다. 여기서 실패하면 이 스케일만 작게 남으므로 조용히 넘기지
+      // 않고 알린다(축소는 성공했는데 확대가 실패하는 경우는 사실상 없다).
+      if (shrink > 1) cmds.push(ps.scaleLayer(shrink * 100));
+      // 코어만 화이트닝(colorize로 채도↓). 중간·블리딩은 소스 색을 그대로 둔다 —
+      // colorize를 걸면 채널 확산차가 만든 붉은 링이 단색 안개로 뭉개진다.
+      if (sc.whitenSat != null) cmds.push(colorize(halation.tintHue, sc.whitenSat));
+      cmds.push(ps.setLayerBlend(sc.blend, clamp(opacity, 1, 100)));
       await play(cmds);
+      pending = null; // 블렌드가 걸렸다 — 더는 원본을 덮지 않는다
     }
-
-    const cmds = [ps.selectChannel("RGB")];
-    // 원래 크기로 되돌린다. 여기서 실패하면 이 스케일만 작게 남으므로 조용히 넘기지
-    // 않고 알린다(축소는 성공했는데 확대가 실패하는 경우는 사실상 없다).
-    if (shrink > 1) cmds.push(ps.scaleLayer(shrink * 100));
-    // 코어만 화이트닝(colorize로 채도↓). 중간·블리딩은 소스 색을 그대로 둔다 —
-    // colorize를 걸면 채널 확산차가 만든 붉은 링이 단색 안개로 뭉개진다.
-    if (sc.whitenSat != null) cmds.push(colorize(halation.tintHue, sc.whitenSat));
-    cmds.push(ps.setLayerBlend(sc.blend, clamp(opacity, 1, 100)));
-    await play(cmds);
+  } finally {
+    // 추출 원본은 Normal 블랙이라 두면 원본 이미지를 덮는다. 삭제한다.
+    // 삭제가 던져도 나머지 하나는 반드시 시도한다.
+    if (pending) {
+      try { await pending.delete(); } catch (e) { /* 이미 사라진 참조 */ }
+    }
+    try { await base.delete(); } catch (e) { /* 이미 사라진 참조 */ }
   }
-
-  // 추출 원본은 Normal 블랙이라 두면 원본 이미지를 덮는다. 삭제한다.
-  await base.delete();
 }
 
 module.exports = { apply };

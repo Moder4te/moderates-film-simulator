@@ -216,33 +216,48 @@ async function renderOnce(params) {
         }
         await ctx.hostControl.resumeHistory(history);
       }
-      const w = px.imageData.width;
-      const h = px.imageData.height;
-      const comps = px.imageData.components;
-      const data = await px.imageData.getData({ chunky: true });
+      // ── imageData 수명 ─────────────────────────────────────────────────
+      //
+      // `imageData`는 네이티브 버퍼를 잡는다. `dispose()`를 못 부르면 그대로 샌다.
+      // **여기는 슬라이더를 만질 때마다 도는 경로**라, 예외 한 번이 아니라 예외가
+      // 나는 상태(색역 밖 파라미터 등)로 슬라이더를 끄는 동안 계속 쌓인다.
+      //
+      // `apply.js`·`grading.js`·`halation.js`·`grain.js`는 전부 try/finally로 지키는데
+      // 여기만 직선 코드였다. `renderPixels`나 `createImageDataFromBuffer`가 던지면
+      // 아래 dispose에 도달하지 못한다.
+      let rgbID = null;
+      try {
+        const w = px.imageData.width;
+        const h = px.imageData.height;
+        const comps = px.imageData.components;
+        const data = await px.imageData.getData({ chunky: true });
 
-      const rgb = renderPixels(data, comps, w * h, params, table, size, toDisplay);
+        const rgb = renderPixels(data, comps, w * h, params, table, size, toDisplay);
 
-      const rgbID = await imaging.createImageDataFromBuffer(rgb, {
-        width: w,
-        height: h,
-        components: 3,
-        componentSize: 8,
-        colorSpace: "RGB",
-      });
-      const enc = await imaging.encodeImageData({ imageData: rgbID, base64: true });
+        rgbID = await imaging.createImageDataFromBuffer(rgb, {
+          width: w,
+          height: h,
+          components: 3,
+          componentSize: 8,
+          colorSpace: "RGB",
+        });
+        const enc = await imaging.encodeImageData({ imageData: rgbID, base64: true });
 
-      // 렌더 도중 문서가 바뀌었으면 낡은 프레임으로 덮어쓰지 않는다.
-      // (덮어쓰면 새 문서 위에 이전 사진이 남는다)
-      const stillCurrent = app.documents.length && app.activeDocument.id === docId;
-      if (stillCurrent) {
-        img.src = "data:image/jpeg;base64," + enc;
-        img.style.display = "block";
-        if (empty) empty.style.display = "none";
+        // 렌더 도중 문서가 바뀌었으면 낡은 프레임으로 덮어쓰지 않는다.
+        // (덮어쓰면 새 문서 위에 이전 사진이 남는다)
+        const stillCurrent = app.documents.length && app.activeDocument.id === docId;
+        if (stillCurrent) {
+          img.src = "data:image/jpeg;base64," + enc;
+          img.style.display = "block";
+          if (empty) empty.style.display = "none";
+        }
+      } finally {
+        // dispose 자체가 던져도 나머지 하나는 반드시 푼다.
+        if (rgbID) {
+          try { rgbID.dispose(); } catch (e) { /* 이미 풀린 버퍼 */ }
+        }
+        try { px.imageData.dispose(); } catch (e) { /* 이미 풀린 버퍼 */ }
       }
-
-      rgbID.dispose();
-      px.imageData.dispose();
     },
     { commandName: "미리보기 렌더" }
   );
