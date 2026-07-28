@@ -200,9 +200,16 @@ function applyToBuffer(data, comps, pixelCount, lut, size) {
     let r = tmp[0] * maxV;
     let g = tmp[1] * maxV;
     let b = tmp[2] * maxV;
-    out[j] = r < 0 ? 0 : r > maxV ? maxV : r;
-    out[j + 1] = g < 0 ? 0 : g > maxV ? maxV : g;
-    out[j + 2] = b < 0 ? 0 : b > maxV ? maxV : b;
+    // ⚠️ **반올림한다.** 정수 타입 배열에 float을 대입하면 0 쪽으로 **버려진다.**
+    // 채널마다 평균 −0.5LSB 편향이고, 이 경로만 그랬다 — `core/optics/tone.js`는
+    // 이미 같은 자리에서 `(q+0.5)|0`으로 반올림한다. 즉 **네 산출 경로 중
+    // putPixels만 다르게 양자화**하고 있었고, 정합성 검사의 putPixels 최대차가
+    // 그 차이를 포함하고 있었다.
+    // 클램프가 음수를 먼저 걷어내므로 양수 구간이고, 거기서 `(v+0.5)|0`은
+    // Math.round와 같고 훨씬 싸다(tone.js와 같은 규약).
+    out[j] = r < 0 ? 0 : r > maxV ? maxV : (r + 0.5) | 0;
+    out[j + 1] = g < 0 ? 0 : g > maxV ? maxV : (g + 0.5) | 0;
+    out[j + 2] = b < 0 ? 0 : b > maxV ? maxV : (b + 0.5) | 0;
   }
   return out;
 }

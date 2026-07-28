@@ -87,5 +87,37 @@ const f2 = tone.apply(flat, 3, NF, { maxV: 255, gamma: 2.2, dither: true, seed: 
 for (let i = 0; i < NF; i++) { s1 += f1[i * 3]; s2 += f2[i * 3]; }
 check("디더가 평균값을 밀지 않음", Math.abs(s1 / NF - s2 / NF) < 0.6, `편향 ${Math.abs(s1 / NF - s2 / NF).toFixed(3)}`);
 
+// 8 디더가 행 주기로 반복되지 않는가 — **표 길이가 2의 거듭제곱이면 반복한다**
+//
+// 표 위치는 픽셀마다 3씩 전진하므로 폭 W인 이미지에서 한 행은 3W씩 건너뛴다.
+// 표 길이가 65536이고 W가 2048이면 32행마다 3·2048·32 = 196608 ≡ 0 (mod 65536),
+// 즉 **32행 뒤 디더가 정확히 제자리로 돌아와 잡음이 그대로 반복된다.**
+// 2048·4096은 내보내기 폭으로 흔하다.
+//
+// 균일한 회색 판에서는 디더가 유일한 변동원이라, 두 행이 같으면 반복이다.
+// 표 길이를 소수(65537)로 두면 3W와 인수를 공유할 수 없어 주기가 사라진다.
+{
+  const WI = 2048, ROWS = 40, LAG = 32; // LAG = 65536 / (3W) 가 정수가 되는 지점
+  const plate = new Uint8Array(WI * ROWS * 3);
+  plate.fill(100);
+  const d = tone.apply(plate, 3, WI * ROWS, { maxV: 255, gamma: 2.2, dither: true, seed: 7 }, { ...Z, exposure: 0.33 });
+
+  let worst = 0, worstRow = -1;
+  for (let r = 0; r + LAG < ROWS; r++) {
+    const a = (r * WI) * 3, b = ((r + LAG) * WI) * 3;
+    let same = 0;
+    for (let x = 0; x < WI * 3; x++) if (d[a + x] === d[b + x]) same++;
+    const frac = same / (WI * 3);
+    if (frac > worst) { worst = frac; worstRow = r; }
+  }
+  // 옛 구현에서는 1.000(완전 동일)이 나온다. 무관한 두 행은 값이 두어 단계에
+  // 몰려 있어 우연 일치가 꽤 높으므로(0.6 근처) 여유를 두고 0.9로 잡는다.
+  check(
+    "디더가 행 주기로 반복되지 않는다",
+    worst < 0.9,
+    `폭 ${WI} · ${LAG}행 간격 최대 일치 ${worst.toFixed(3)} (행 ${worstRow})`
+  );
+}
+
 console.log(pass ? "\n✅ 전 항목 통과" : "\n❌ 실패 항목 있음");
 process.exit(pass ? 0 : 1);
