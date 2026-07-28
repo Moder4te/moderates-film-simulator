@@ -86,15 +86,28 @@ function selectLayer(id) {
  * 모드·불투명도·마스크가 결과에 다시 곱해져, 읽을 때의 전제(최상단에 Normal로
  * 얹힌다)와 어긋난다.
  *
- * ⚠️ **`doc.layers[0]`이 최상단이라는 전제**를 쓴다. 그리고 그것이 그룹일 때
- * Photoshop이 새 레이어를 그룹 **위에** 만든다는 전제도 함께 쓴다(패널에서 접힌
- * 그룹을 고르고 새 레이어를 누를 때의 동작). 둘 다 실기로만 확인된다 —
- * 검증 절차는 `docs/REVIEW-2026-07-28.md`.
+ * ⚠️ **그룹은 앵커로 쓸 수 없다.** 그룹을 선택한 상태로 `make layer`를 하면 새
+ * 레이어가 그룹 **위가 아니라 안에** 생긴다. 패널에서 접힌 그룹을 고르고 새 레이어를
+ * 누르는 것과 다르다 — 처음에 그 UI 동작을 그대로 가정했다가 틀렸다.
+ * 실측(UXP-NOTES 2.4): `doc.layers` = `[그룹 2(자식 8), 배경]`에서 `그룹 2`를 선택하고
+ * `make layer` → 자식 9, 만든 레이어의 `parent`가 `그룹 2`.
+ *
+ * 그래서 **그룹이 아닌 최상위 레이어**를 고른다. 아래에서부터 찾으므로 보통 배경이다.
+ * `doc.layers`는 위→아래 순서다(같은 실측에서 확인).
+ *
+ * 최상위가 전부 그룹이면 앵커가 없어 아무것도 하지 않는다. 그 문서에서는 산출물이
+ * 여전히 그룹 안에 생긴다 — 드문 경우라 남겨 두되, 만나면 "만든 뒤 밖으로 옮기는"
+ * 방식으로 바꿔야 한다.
  */
 async function anchorTopLevel(doc) {
   const tops = doc.layers;
   if (!tops || tops.length === 0) return;
-  await play([selectLayer(tops[0].id)]);
+  let anchor = null;
+  for (let i = tops.length - 1; i >= 0; i--) {
+    if (!tops[i].layers) { anchor = tops[i]; break; } // .layers가 있으면 그룹이다
+  }
+  if (!anchor) return;
+  await play([selectLayer(anchor.id)]);
 }
 
 /** 현재 선택된 레이어의 이름을 바꾼다. */
