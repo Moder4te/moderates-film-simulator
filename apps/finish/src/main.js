@@ -282,7 +282,15 @@ async function onBatch() {
       (done, total, name) => setStatus(`${done}/${total} — ${name}`)
     );
     if (!result) return setStatus("취소됨");
-    const fail = result.failed.length ? ` / 실패 ${result.failed.length}` : "";
+    // 실패는 **사유까지** 보여 준다. 원본 덮어쓰기 차단이 여기로 오는데(batch.js의
+    // isSameFile), 개수만 띄우면 사용자는 왜 막혔는지 모른 채 원본이 안전하다는
+    // 사실도 모른다. UXP 콘솔은 개발자만 본다.
+    let fail = "";
+    if (result.failed.length) {
+      const f = result.failed[0];
+      const more = result.failed.length > 1 ? ` 외 ${result.failed.length - 1}건` : "";
+      fail = ` / 실패 ${result.failed.length} — ${f.file}: ${f.error}${more}`;
+    }
     setStatus(`${result.succeeded}/${result.total} 완료${fail}`, result.failed.length > 0);
     if (result.failed.length) console.error("배치 실패", result.failed);
   } catch (e) {

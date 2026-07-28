@@ -8,10 +8,11 @@
  *
  *   1. 문법·BOM      파일이 파싱되는가. manifest BOM은 플러그인을 아예 못 올린다
  *   2. 경계          층이 지켜지는가. core 순수 / batchPlay 격리 / 마감 앱에 색 없음
- *   3. 로드          두 앱이 예외 없이 뜨는가. 없는 id를 참조하지 않는가
- *   4. 정합성        네 산출 경로가 같은 색을 내는가
+ *   3. 경로          배치가 원본을 덮어쓸 길이 없는가 (되돌릴 수 없는 유일한 결함)
+ *   4. 로드          두 앱이 예외 없이 뜨는가. 없는 id를 참조하지 않는가
+ *   5. 정합성        네 산출 경로가 같은 색을 내는가
  *
- * 3·4번은 `lib/`를 읽으므로 sync-libs를 먼저 돌린다.
+ * 4·5번은 `lib/`를 읽으므로 sync-libs를 먼저 돌린다.
  */
 
 const { execFileSync, spawnSync } = require("child_process");
@@ -123,6 +124,7 @@ step("동기화", () => {
 
 for (const [name, script] of [
   ["경계", "check-boundaries.js"],
+  ["경로", "check-paths.js"],
   ["로드", "check-load.js"],
   ["함수", "check-api.js"],
   ["정합성", "check-conformance.js"],

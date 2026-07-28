@@ -301,6 +301,14 @@
         vertical-align: middle;
       }
 
+      .batch-note {
+        margin-top: 6px;
+        font-size: 10px;
+        line-height: 1.45;
+        opacity: 0.55;
+        word-break: keep-all;
+      }
+
       #status {
         min-height: 15px;
         margin-top: 8px;
@@ -544,6 +552,11 @@
       <div style="height: 6px"></div>
       <div class="btn-row">
         <sp-button id="btnBatch" size="s" variant="secondary">폴더 배치 적용</sp-button>
+      </div>
+      <div class="batch-note">
+        원본 폴더와 출력 폴더를 차례로 고른다. 출력 폴더는 원본 폴더 <b>바깥</b>에 둘 것 —
+        하위 폴더 포함을 켜면 다음 실행에서 이전 산출물까지 대상이 된다.
+        출력 파일이 원본 그 파일이 되는 경우는 저장 직전에 막고 실패 목록에 남긴다.
       </div>
 
       <div id="status"></div>
