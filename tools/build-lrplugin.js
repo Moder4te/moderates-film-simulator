@@ -145,6 +145,45 @@ for (const f of ["Info.lua", "Install.lua", "Apply.lua", "Inspect.lua", "Profile
   }
 }
 
+// ── 메뉴 검사 ──────────────────────────────────────────────────────────
+// 라이브러리 메뉴는 **라이브러리 모듈에 있을 때만** 나온다. 파일 메뉴는 어디서나
+// 나온다. 그래서 항목이 한쪽에만 있으면 다른 모듈에서 그 기능이 사라진다 —
+// 진단 항목을 라이브러리에만 뒀다가 정작 현상 모듈에서 못 찾은 적이 있다.
+const info = fs.readFileSync(path.join(OUT, "Info.lua"), "utf8");
+
+function menuFiles(key) {
+  const i = info.indexOf(key);
+  if (i < 0) return null;
+  const end = info.indexOf("\n  },", i);
+  if (end < 0) return null;
+  return [...info.slice(i, end).matchAll(/file\s*=\s*"([^"]+)"/g)].map((m) => m[1]);
+}
+
+const menus = { LrLibraryMenuItems: menuFiles("LrLibraryMenuItems"), LrExportMenuItems: menuFiles("LrExportMenuItems") };
+for (const [key, list] of Object.entries(menus)) {
+  if (!list || list.length === 0) {
+    console.error(`Info.lua에서 ${key}를 읽지 못했습니다.`);
+    process.exit(1);
+  }
+  for (const f of list) {
+    if (!fs.existsSync(path.join(OUT, f))) {
+      console.error(`${key}가 없는 파일을 가리킵니다: ${f}`);
+      process.exit(1);
+    }
+  }
+}
+
+const onlyLib = menus.LrLibraryMenuItems.filter((f) => !menus.LrExportMenuItems.includes(f));
+const onlyExp = menus.LrExportMenuItems.filter((f) => !menus.LrLibraryMenuItems.includes(f));
+if (onlyLib.length || onlyExp.length) {
+  console.error(
+    "두 메뉴의 항목이 다릅니다 — 한쪽에만 있으면 다른 모듈에서 사라집니다.\n" +
+      (onlyLib.length ? `  라이브러리에만: ${onlyLib.join(", ")}\n` : "") +
+      (onlyExp.length ? `  파일에만: ${onlyExp.join(", ")}\n` : "")
+  );
+  process.exit(1);
+}
+
 const rel = path.relative(ROOT, OUT).replace(/\\/g, "/");
 console.log(`${rel}`);
 console.log(`  프로파일 ${written.length}개  ${(bytes / 1024 / 1024).toFixed(1)}MB`);

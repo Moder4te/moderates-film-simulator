@@ -27,10 +27,13 @@ return {
     { title = "필름 프로파일 설치…", file = "Install.lua" },
     { title = "이 사진의 프로파일 설정 보기", file = "Inspect.lua" },
   },
-  -- 파일 > 플러그인 추가 기능에도 둔다(찾는 자리가 사람마다 다르다).
+  -- ⚠️ 파일 메뉴에도 **같은 항목을 전부** 둔다. 라이브러리 메뉴는 라이브러리 모듈에
+  -- 있을 때만 나오는데, 프로파일을 손으로 고르는 일은 현상 모듈에서 한다 —
+  -- 진단 항목을 라이브러리에만 뒀더니 정작 필요한 자리에서 보이지 않았다.
   LrExportMenuItems = {
     { title = "필름 룩 적용…", file = "Apply.lua" },
     { title = "필름 프로파일 설치…", file = "Install.lua" },
+    { title = "이 사진의 프로파일 설정 보기", file = "Inspect.lua" },
   },
 
   LrPluginInfoUrl = "https://github.com/Moder4te/moderates-film-simulator",
