@@ -60,6 +60,21 @@
 **시드 프리셋** (`apps/finish/src/presets.js`) — 프리셋 폴더가 **비어 있을 때만** 심어진다:
 `35mm Classic` · `Night Halation` · `120 Fine` · `CineStill 800T`
 
+### Lightroom Classic 플러그인 — `lrplugin`
+
+색을 계산하지 않는다. 엔진이 구운 `.xmp` 18종(필름 9 × 스캐너 2)을 담아 설치·적용만 한다.
+이유는 `lrplugin/Info.lua` 주석 — SDK가 픽셀에 접근할 수 없고 프로파일은 실행 시점에만 읽힌다.
+
+| 파일 | 하는 일 |
+|---|---|
+| `Install.lua` | 담긴 프로파일을 CameraRaw/Settings에 복사. 표준 경로 실패 시 폴더 선택 |
+| `Apply.lua` | 필름·스캐너 팝업 + 강도. 선택한 사진의 `Look`만 교체(다른 조정 보존) |
+| `Inspect.lua` | 현재 사진의 `Look`/`CameraProfile` 덤프 — 적용이 안 먹을 때 대조용 |
+| `Profiles.lua` | **자동 생성** 카탈로그(이름·UUID·파일). SDK가 프로파일을 이름으로 조회 못 해서 필요 |
+
+빌드: `node tools/build-lrplugin.js` → `dist/FilmSim.lrplugin/`.
+UUID는 생성된 `.xmp`에서 직접 뽑는다 — 따로 계산하면 파일과 어긋나 조용히 실패한다.
+
 ## 알려진 한계
 
 ### 설계상 남겨둔 것
@@ -98,6 +113,10 @@
 
 - 엔진 재적용 시 레이어 격리·복원(`.visible` 토글, `.move`)
 - 미리보기 격리가 undo 히스토리를 오염시키지 않는지
+- **LrC 플러그인 전체.** Lua는 여기서 실행할 수단이 없다 — 문법조차 검사되지 않는다.
+  확인 항목: 플러그인 로드 · 메뉴 노출 · 설치 후 재시작 시 프로파일 등장 · 적용 반영.
+  특히 **`Look` 테이블 모양은 비문서화 추정**이다(`Name`/`Amount`/`UUID`). 안 먹으면
+  프로파일을 손으로 한 번 적용한 뒤 `Inspect.lua`로 실제 값을 보고 맞춘다.
 
 **실기에서 확인된 디스크립터** — 추측이 아니라 실제로 돈 것들이다:
 `maximum`(원반) · `transform`(축소 피라미드) · `app.foregroundColor`(스포이드).

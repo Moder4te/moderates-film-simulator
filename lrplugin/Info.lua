@@ -21,12 +21,15 @@ return {
   LrToolkitIdentifier = "com.filmsim.profiles",
   LrPluginName = "FilmSim 프로파일",
 
-  -- 라이브러리 > 플러그인 추가 기능 메뉴에 붙는다.
+  -- 라이브러리 > 플러그인 추가 기능. 적용을 먼저 두는 이유는 설치가 한 번뿐이기 때문이다.
   LrLibraryMenuItems = {
+    { title = "필름 룩 적용…", file = "Apply.lua" },
     { title = "필름 프로파일 설치…", file = "Install.lua" },
+    { title = "이 사진의 프로파일 설정 보기", file = "Inspect.lua" },
   },
-  -- 파일 > 플러그인 추가 기능에도 같은 항목을 둔다(찾는 자리가 사람마다 다르다).
+  -- 파일 > 플러그인 추가 기능에도 둔다(찾는 자리가 사람마다 다르다).
   LrExportMenuItems = {
+    { title = "필름 룩 적용…", file = "Apply.lua" },
     { title = "필름 프로파일 설치…", file = "Install.lua" },
   },
 
