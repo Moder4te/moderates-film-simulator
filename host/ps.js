@@ -61,6 +61,42 @@ function collectLayers(layers, pred, out) {
 
 const TARGET_LAYER = { _ref: "layer", _enum: "ordinal", _value: "targetEnum" };
 
+/** id로 레이어를 선택한다. `makeVisible: false` — 선택만 하고 가시성은 안 건드린다. */
+function selectLayer(id) {
+  return {
+    _obj: "select",
+    _target: [{ _ref: "layer", _id: id }],
+    makeVisible: false,
+  };
+}
+
+/**
+ * 새 레이어가 **문서 최상위**에 생기도록 삽입 지점을 맞춘다.
+ *
+ * ⚠️ **왜 필요한가.** `makePixelLayer`(`make layer`)는 위치를 지정하지 않아 **활성
+ * 레이어 옆에** 만든다. 그래서 산출물이 사용자가 무엇을 선택해 뒀는지에 따라 다른
+ * 곳에 놓인다 — 실기에서 확인했다.
+ *
+ *   - 재적용 시 `clearOwnLayers`가 이전 그룹을 지우면 선택이 남은 그룹으로 떨어진다
+ *   - 그러면 새 레이어가 **그 그룹 안**에 생긴다
+ *   - `groupOwnLayers`는 문서 최상위만 보므로 못 찾고, **그룹이 아예 안 만들어진다**
+ *
+ * 자리만의 문제가 아니다. 마감·엔진 둘 다 **합성본을 읽어** 굽는다
+ * (`stampVisible` · `getPixels`). 산출물이 다른 그룹 안에 들어가면 그 그룹의 블렌드
+ * 모드·불투명도·마스크가 결과에 다시 곱해져, 읽을 때의 전제(최상단에 Normal로
+ * 얹힌다)와 어긋난다.
+ *
+ * ⚠️ **`doc.layers[0]`이 최상단이라는 전제**를 쓴다. 그리고 그것이 그룹일 때
+ * Photoshop이 새 레이어를 그룹 **위에** 만든다는 전제도 함께 쓴다(패널에서 접힌
+ * 그룹을 고르고 새 레이어를 누를 때의 동작). 둘 다 실기로만 확인된다 —
+ * 검증 절차는 `docs/REVIEW-2026-07-28.md`.
+ */
+async function anchorTopLevel(doc) {
+  const tops = doc.layers;
+  if (!tops || tops.length === 0) return;
+  await play([selectLayer(tops[0].id)]);
+}
+
 /** 현재 선택된 레이어의 이름을 바꾼다. */
 function renameLayer(name) {
   return {
@@ -290,6 +326,8 @@ module.exports = {
   documentProfile,
   foregroundRgb,
   collectLayers,
+  selectLayer,
+  anchorTopLevel,
   TARGET_LAYER,
   renameLayer,
   setLayerBlend,

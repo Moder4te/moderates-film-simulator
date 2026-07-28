@@ -83,6 +83,10 @@ async function groupOwnLayers(doc) {
 async function run(doc, params) {
   const medium = params.medium || { format: "35mm", reference: "document" };
   await clearOwnLayers(doc);
+  // 삽입 지점을 최상위로 맞춘다. **clearOwnLayers 뒤여야 한다** — 그것이 이전
+  // 그룹을 지우면서 선택을 남은 그룹으로 떨어뜨리고, 그 상태로 만들면 산출물이
+  // 그 그룹 안에 갇힌다(그러면 groupOwnLayers가 못 찾아 그룹이 아예 안 생긴다).
+  await ps.anchorTopLevel(doc);
   // 그레이딩 → 디퓨전 → 할레이션 → 그레인. 디퓨전이 할레이션보다 먼저여야 할레이션이
   // 독립 레이어로 남아 토글 가능하다(grain.applyDiffusion 주석 참조).
   await grading.apply(doc, params.tone, PREFIX);

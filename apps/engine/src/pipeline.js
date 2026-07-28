@@ -55,6 +55,12 @@ async function run(doc, params) {
   // 그레이딩을 보여주는데 적용은 아무것도 하지 않았다.
   if (!film.hasEffect(params)) return;
 
+  // 삽입 지점을 최상위로 맞춘다. **clearOwnLayers 뒤여야 한다** — 그것이 이전
+  // 색 레이어를 지우면서 선택을 남은 그룹으로 떨어뜨리고, 그 상태로 만들면 색
+  // 레이어가 그 그룹 안에 갇힌다. 그러면 그룹의 블렌드·불투명도·마스크가 결과에
+  // 다시 곱해져, getPixels가 읽은 합성본을 전제로 구운 색과 어긋난다.
+  await ps.anchorTopLevel(doc);
+
   const size = (params.film && params.film.lutSize) || 33;
   const table = film.buildForParams(params, size);
   await apply.applyLut(doc, table, size, PREFIX);

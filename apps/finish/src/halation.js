@@ -131,15 +131,6 @@ function colorize(hue, saturation) {
   };
 }
 
-/** id로 레이어를 선택한다(가시성은 그대로). 활성 레이어를 명시적으로 고정한다. */
-function selectLayer(id) {
-  return {
-    _obj: "select",
-    _target: [{ _ref: "layer", _id: id }],
-    makeVisible: false,
-  };
-}
-
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
 /** 원반화 상한. 그 위는 소프트 엣지가 얇아져 인공적으로 보인다(실기 확인). */
@@ -219,10 +210,10 @@ async function apply(doc, halation, formatId, prefix) {
       if (opacity < 1) continue; // 기여가 없는 스케일은 건너뛴다
 
       // 추출 원본을 다시 선택해 복제한다(직전 루프가 활성 레이어를 바꿔 놨다).
-      await play([selectLayer(baseId)]);
+      await play([ps.selectLayer(baseId)]);
       const dup = await base.duplicate();
       pending = dup;
-      await play([selectLayer(dup.id), ps.renameLayer(`${prefix} · Halation ${sc.name}`)]);
+      await play([ps.selectLayer(dup.id), ps.renameLayer(`${prefix} · Halation ${sc.name}`)]);
 
       // 축소해서 계산한다(위 shrink 주석 참조). transform이 안 먹는 환경이면 조용히
       // 풀해상도로 돌아간다 — 느릴 뿐 결과는 같다. 한 번 실패하면 이후 스케일도 시도하지
