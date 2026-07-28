@@ -38,9 +38,9 @@ tools/    check(.js 문법·BOM) check-boundaries check-paths check-load check-a
 | # | 불변식 | 깨지면 |
 |---|---|---|
 | 1 | `core/`가 `photoshop`/`uxp`/DOM을 부르지 않는다 | 노드 검증 불가 |
-| 2 | `batchPlay` 직접 호출은 `host/` 안에만 | 디스크립터가 흩어져 추적 불가 |
+| 2 | 앱에 `batchPlay`라는 **이름이 나오지 않는다** | 디스크립터가 흩어져 추적 불가 |
 | 2.5 | 디스크립터를 여러 개 내는 헬퍼(`stampVisible`)는 `...`로 펼쳐 쓴다 | 배경이 덮여 원본 소실 |
-| 2.7 | `getPixels` 값은 심도 정규화 + 색공간 변환 후 쓴다 (왕복 경로는 예외) | 16bit·ProPhoto에서 색 붕괴 |
+| 2.7 | `getPixels` 값은 심도 정규화 + 색공간 변환 후 쓴다 (왕복 **함수**는 예외) | 16bit·ProPhoto에서 색 붕괴 |
 | 3 | 마감 앱은 `core/color`를 참조하지 않는다 | 분리 취지 소멸 |
 | 4 | 두 앱의 레이어 접두사가 겹치지 않는다 | 한쪽이 다른 쪽 결과를 지움 |
 | 5 | 앱 진입 모듈이 앱 밖(`../`)을 참조하지 않는다 | 패키징 시 파일 누락 |
@@ -62,6 +62,17 @@ tools/    check(.js 문법·BOM) check-boundaries check-paths check-load check-a
 `shared/paths.js`의 `samePath`에 걸려 있는데, 그 함수가 `apps/finish/src/batch.js`
 안에 있으면 노드에서 못 부른다(맨 위에서 `photoshop`·`uxp`를 require한다). 검사할 수
 있는 자리에 두는 것까지가 방어의 일부다.
+
+**규칙 2·2.7의 판정 단위** — 둘 다 원래 파일 단위였고 둘 다 뚫려 있었다.
+
+- 규칙 2는 `action.batchPlay(` 형태만 봐서 `const { batchPlay } = action;`으로
+  통과했다. 지금은 **이름이 나오는 것 자체**를 막는다(주석은 제외 — `stripComments`).
+- 규칙 2.7의 왕복 면제는 파일에 `putPixels`가 한 번만 있으면 그 파일의 모든
+  `getPixels`를 빼 줬다. 지금은 **함수 단위**다. 다만 **요구 사항은 파일 단위로**
+  둔다 — 정규화·변환을 헬퍼로 빼는 것이 정상이라(`preview.js`) 같은 함수 안을
+  요구하면 정상 코드를 막는다. 좁힌 것은 면제뿐이다.
+- `colorSpace: "RGB"`는 **그 호출의 인자 안**을 본다. 함수 단위로 보면 같은 함수의
+  다른 호출에 있는 것으로 통과한다 — 음성 테스트로 잡았다.
 
 `tools/check-conformance.js`는 값이 아니라 **구조**도 본다 — "엔진 함수를 부르는 곳이
 몇 군데인가"를 세어, 각 경로에 같은 변환을 복붙한 구조를 잡아낸다.
