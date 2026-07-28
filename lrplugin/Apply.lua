@@ -75,11 +75,18 @@ local function applyToSelection(profile, amount)
   -- 되지도 않으면서 원본 편집을 망치는 경로라 뺐다 — 안 되는 기능이 낫다.
   --
   -- 남은 `applyDevelopSettings`는 비문서화다. 실패하면 이유를 그대로 보여준다.
+  --
+  -- ⚠️ **`pcall`이 아니라 `LrTasks.pcall`이다.** Lua 5.1은 C 함수 경계를 넘어
+  -- yield하지 못하는데 `pcall`이 바로 그 C 함수다. SDK의 비동기 호출을 평범한
+  -- pcall로 감싸면 호출 자체가
+  --   "Yielding is not allowed within a C or metamethod call"
+  -- 로 죽는다 — 오류를 잡으려고 넣은 것이 오류를 만든다. `LrTasks.pcall`은
+  -- 이 경우를 위해 있는 yield 안전 버전이다.
   local ok, failed, firstError = 0, 0, nil
 
   catalog:withWriteAccessDo("FilmSim 프로파일 적용", function()
     for _, photo in ipairs(photos) do
-      local good, err = pcall(function()
+      local good, err = LrTasks.pcall(function()
         -- 현재 설정을 읽어 Look만 갈아 끼운다(통째로 덮어쓰면 다른 조정이 날아간다).
         local s = photo:getDevelopSettings()
         s.Look = look

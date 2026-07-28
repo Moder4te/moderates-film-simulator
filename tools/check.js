@@ -64,6 +64,23 @@ step("문법 · BOM", () => {
           console.error(`  UTF-8 아님: ${path.relative(ROOT, p)}`);
           bad++;
         }
+
+        // 맨 `pcall`은 금지다. Lua 5.1은 C 함수 경계를 넘어 yield하지 못하는데
+        // `pcall`이 그 C 함수라, SDK의 비동기 호출을 감싸면 호출 자체가
+        // "Yielding is not allowed within a C or metamethod call"로 죽는다.
+        // 실기에서 한 번 밟았고, Lightroom을 켜야만 드러나는 종류라 여기서 막는다.
+        raw
+          .toString("utf8")
+          .split(/\r?\n/)
+          .forEach((line, i) => {
+            const code = line.split("--")[0]; // 주석에 적은 설명은 보지 않는다
+            if (/(?<!LrTasks\.)\bpcall\s*\(/.test(code)) {
+              console.error(
+                `  맨 pcall: ${path.relative(ROOT, p)}:${i + 1} — LrTasks.pcall을 쓸 것`
+              );
+              bad++;
+            }
+          });
       }
       if (p.endsWith(".js")) {
         seen.push(p);
@@ -95,7 +112,7 @@ step("문법 · BOM", () => {
     }
   }
   console.log(
-    `  JS ${seen.length}개 · manifest 2개 · HTML 2개 · Lua ${lua.length}개(BOM·인코딩만) 검사, 문제 ${bad}건`
+    `  JS ${seen.length}개 · manifest 2개 · HTML 2개 · Lua ${lua.length}개(BOM·인코딩·맨 pcall) 검사, 문제 ${bad}건`
   );
   return bad === 0;
 });

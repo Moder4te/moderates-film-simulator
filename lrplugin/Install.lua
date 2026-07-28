@@ -53,7 +53,8 @@ local function resolveTargetDir()
     return dir
   end
 
-  pcall(function() LrFileUtils.createAllDirectories(dir) end)
+  -- pcall이 아니라 LrTasks.pcall — 이유는 Apply.lua의 같은 자리 주석 참조.
+  LrTasks.pcall(function() LrFileUtils.createAllDirectories(dir) end)
   if LrFileUtils.exists(dir) == "directory" then
     return dir
   end
@@ -115,7 +116,7 @@ LrTasks.startAsyncTask(function()
   for _, src in ipairs(profiles) do
     local name = LrPathUtils.leafName(src)
     local dst = LrPathUtils.child(target, name)
-    local ok, err = pcall(function()
+    local ok, err = LrTasks.pcall(function()
       -- LrFileUtils.copy는 대상이 있으면 실패한다. 덮어쓰려면 먼저 지운다.
       if LrFileUtils.exists(dst) then
         LrFileUtils.delete(dst)
