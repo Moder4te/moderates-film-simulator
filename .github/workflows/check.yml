@@ -1,0 +1,32 @@
+# 전체 검사를 push·PR마다 돌린다.
+#
+# 왜 이제야. 검사 스위트(`tools/check.js` — 문법·BOM·경계·경로·로드·함수·정합성·톤)가
+# 이만큼 갖춰져 있는데 **순전히 수동**이었다. 고치고 돌리는 것을 잊으면 그대로 들어간다.
+# 외부 의존성이 0이라(`package.json`조차 없다) 워크플로 파일 한 장이면 끝난다.
+#
+# `sync-libs`를 따로 부르지 않는다 — `check.js`가 두 번째 단계에서 스스로 돌린다.
+
+name: check
+
+on: [push, pull_request]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # 20은 지원 하한, 24는 실제 개발 환경. 둘 다 도는 것을 확인해야
+      # "내 노드에서는 됐는데"가 안 생긴다. 검사가 3초라 두 벌이 부담이 아니다.
+      matrix:
+        node: [20, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node tools/check.js
+
+      # 검사가 추적 중인 파일을 건드리면 안 된다. `apps/*/lib/`는 산출물이라
+      # `.gitignore`에 있는데, 그 선언이 깨지면 여기서 드러난다.
+      - name: 작업 트리가 깨끗한가
+        run: git diff --exit-code
