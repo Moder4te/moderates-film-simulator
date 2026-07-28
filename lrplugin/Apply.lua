@@ -61,10 +61,21 @@ local function applyToSelection(profile, amount)
   if #photos == 0 then return 0, 0, {}, nil end
 
   local label = "FilmSim: " .. profile.name
+
+  -- Name·Amount·UUID 세 개만 넣었을 때 **이름과 강도 슬라이더는 제대로 떴는데 색이
+  -- 걸리지 않았다.** 이름이 떴다는 건 Lightroom이 UUID로 프로파일을 찾았다는 뜻이라,
+  -- 부족한 건 참조가 아니라 그 참조를 렌더링에 물리는 쪽이다.
+  --
+  -- 그래서 프로파일 파일(`crs:` 속성)이 실제로 선언하는 값을 그대로 채운다. 지어내지
+  -- 않고 생성물에서 가져온 값이다 — `tools/build-lrplugin.js`가 굽는 XMP 헤더 참조.
   local look = {
     Name = profile.name,
     Amount = amount,
     UUID = profile.uuid,
+    Cluster = "",
+    SupportsAmount = true,
+    SupportsMonochrome = true,
+    SupportsOutputReferred = true,
   }
 
   -- ── 길은 하나만 쓴다 ─────────────────────────────────────────────────

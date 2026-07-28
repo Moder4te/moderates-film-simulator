@@ -29,7 +29,9 @@ local function dump(value, indent, depth)
     end
     return tostring(value)
   end
-  if depth >= 3 then return "{…}" end
+  -- Look 안에 Parameters·Group이 또 테이블로 들어가므로 3단으로는 안쪽이 잘린다.
+  -- 잘리는 그 자리가 정작 알고 싶은 곳이다.
+  if depth >= 5 then return "{…}" end
 
   local keys = {}
   for k in pairs(value) do keys[#keys + 1] = tostring(k) end
