@@ -196,6 +196,8 @@ engine 2.8.0  피부톤 의사 색역 + 피부 보호 + 스포이드
        .github/workflows/check.yml — push·PR마다 전체 검사
 core   putPixels 경로만 버림하던 양자화 → 반올림 (정합성 5.15e-5 → 2.48e-5)
        디더 표 길이를 소수로 — 폭이 2의 거듭제곱일 때의 행 주기 제거
+       정리 3건 (opacityFor · referencePeak 주석 · PROFILE_KEYS 위치)
+       → REVIEW-2026-07-28.md의 전 항목 처리 완료. 실기 검증만 남았다
 engine 2.7.0  Vision3 500T + 텅스텐 밸런스
        2.7.3  색 재적용 중복 방지 + 정적 회귀 가드
        2.7.4  미리보기 중복 표시 수정

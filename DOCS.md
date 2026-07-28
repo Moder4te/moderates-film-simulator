@@ -40,7 +40,7 @@
 | [`docs/DECISIONS.md`](./docs/DECISIONS.md) | 확정된 설계 결정과 **그 근거** · 실측으로 확정된 제약 | 근거 |
 | [`docs/RESOLVED.md`](./docs/RESOLVED.md) | 해결된 이슈 아카이브 — 증상 → 원인 → 교훈 | 이력 |
 | [`docs/UXP-NOTES.md`](./docs/UXP-NOTES.md) | Photoshop UXP 실측 지식 · 함정 · 검증 방법론 | 플랫폼 |
-| [`docs/REVIEW-2026-07-28.md`](./docs/REVIEW-2026-07-28.md) | 전수 코드 검사 내역 — 남은 항목과 처리 결과 | 검사 |
+| [`docs/REVIEW-2026-07-28.md`](./docs/REVIEW-2026-07-28.md) | 전수 코드 검사 내역 — **전 항목 처리 완료**. 남은 것은 실기 검증 절차뿐 | 검사 |
 | [`LICENSE.md`](./LICENSE.md) | PolyForm Noncommercial 1.0.0 | 법률 |
 | [`tools/README.md`](./tools/README.md) | TDS 곡선 추출기 사용법과 함정 | 도구 |
 | [`tools/tds-catalog.md`](./tools/tds-catalog.md) | 필름 TDS 문서 목록(등급별) | 데이터 |
