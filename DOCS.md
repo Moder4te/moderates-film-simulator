@@ -40,6 +40,7 @@
 | [`docs/DECISIONS.md`](./docs/DECISIONS.md) | 확정된 설계 결정과 **그 근거** · 실측으로 확정된 제약 | 근거 |
 | [`docs/RESOLVED.md`](./docs/RESOLVED.md) | 해결된 이슈 아카이브 — 증상 → 원인 → 교훈 | 이력 |
 | [`docs/UXP-NOTES.md`](./docs/UXP-NOTES.md) | Photoshop UXP 실측 지식 · 함정 · 검증 방법론 | 플랫폼 |
+| [`docs/REVIEW-2026-07-28.md`](./docs/REVIEW-2026-07-28.md) | 전수 코드 검사 내역 — 남은 항목과 처리 결과 | 검사 |
 | [`LICENSE.md`](./LICENSE.md) | PolyForm Noncommercial 1.0.0 | 법률 |
 | [`tools/README.md`](./tools/README.md) | TDS 곡선 추출기 사용법과 함정 | 도구 |
 | [`tools/tds-catalog.md`](./tools/tds-catalog.md) | 필름 TDS 문서 목록(등급별) | 데이터 |
@@ -54,6 +55,7 @@
 | [`docs/archive/v2plan.md`](./docs/archive/v2plan.md) | v2 설계 문서(1362줄) | 실측 로그·판단 착오 기록의 원본. 핵심은 DECISIONS로 옮김 |
 | [`docs/archive/SPEC.md`](./docs/archive/SPEC.md) | v1 원본 기능 명세 | 프로젝트 출발점. **CMYK 그레이딩 등은 v2에서 폐기됨** |
 | [`docs/archive/v2questions.md`](./docs/archive/v2questions.md) | v2 설계 질문지 + 답변 | 결정의 출처. 답변은 DECISIONS에 반영됨 |
+| [`docs/archive/v1.3/`](./docs/archive/v1.3/) | v1.3 단일 플러그인 원본(2,686줄) | v2에서 엔진·마감으로 갈라지기 전의 마지막 형태. **고치지 말 것** — 현행 수정은 `apps/`에만 |
 
 ## 갱신 규칙
 

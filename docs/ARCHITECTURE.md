@@ -12,8 +12,8 @@ core/     순수 계산. photoshop·uxp·DOM 접근 금지 (검사로 강제)
   optics/   format grainfield displace tone
   io/       cube xmp xmpcodec        직렬화만. 파일 쓰기는 앱이 한다
 host/     UXP 경계. batchPlay 디스크립터는 여기서만
-  ps.js
-shared/   ui/cslider
+  ps.js     collectLayers(레이어 트리 재귀 탐색)도 여기 한 벌만 둔다
+shared/   ui/cslider  paths(경로 비교 — 배치 원본 보호의 뿌리)
 apps/
   engine/   필름 엔진 플러그인 (색)
     src/    main params pipeline apply preview colorwheel photoanalysis presets
@@ -21,7 +21,7 @@ apps/
   finish/   마감 플러그인 (광학)
     src/    main params pipeline grading halation grain batch presets
     lib/    ← core/optics · host · shared 만. 색이 없다
-tools/    check(.js 문법·BOM) check-boundaries check-load check-api
+tools/    check(.js 문법·BOM) check-boundaries check-paths check-load check-api
           check-conformance check-tone · sync-libs build-ccx extract_tds_curves.py
 ```
 
@@ -44,13 +44,24 @@ tools/    check(.js 문법·BOM) check-boundaries check-load check-api
 | 3 | 마감 앱은 `core/color`를 참조하지 않는다 | 분리 취지 소멸 |
 | 4 | 두 앱의 레이어 접두사가 겹치지 않는다 | 한쪽이 다른 쪽 결과를 지움 |
 | 5 | 앱 진입 모듈이 앱 밖(`../`)을 참조하지 않는다 | 패키징 시 파일 누락 |
-| 6 | 엔진 재적용 격리 (아래) | 색 중복 적용 |
+| 6 | 재적용 격리 — **두 앱 모두** (아래) | 색·그레인·할레이션 중복 적용 |
 
-**규칙 6 상세** — 세 가지를 함께 본다.
+**규칙 6 상세** — 네 가지를 함께 본다. 앞의 둘은 **엔진과 마감 양쪽**에 건다.
 
 - `pipeline.run`이 `clearOwnLayers`를 부른다 (안 부르면 재적용이 누적)
-- `clearOwnLayers`가 **재귀**로 훑는다 (`l.layers` — 그룹 안 레이어를 못 지우면 누적)
+- `clearOwnLayers`가 **재귀**로 훑는다 (`ps.collectLayers` — 그룹 안 레이어를 못 지우면 누적)
+- 마감의 `groupOwnLayers`는 **재귀로 훑지 않는다** — 방금 만든 최상위만 묶는 것이
+  목적이라, 짝을 맞추는 개선처럼 보이는 재귀화가 과거 마감 레이어를 끌어내 묶는다
 - `applyLut`·`preview`가 **`getPixels` 전에** FilmSim 레이어를 숨기고 **반드시 복원**한다
+
+규칙 6은 원래 엔진에만 걸려 있었다. **더 파괴적인 쪽인 마감이 빠져 있었다** — 엔진
+산출물은 픽셀 레이어 한 장이라 지우고 다시 하면 되지만, 마감의 디퓨전은 그 시점
+합성본을 구워 놓아 되돌릴 지점이 없다(→ [`RESOLVED.md`](./RESOLVED.md)).
+
+`tools/check-paths.js`는 **배치가 원본 사진을 덮어쓸 길이 없는지** 본다. 방어가
+`shared/paths.js`의 `samePath`에 걸려 있는데, 그 함수가 `apps/finish/src/batch.js`
+안에 있으면 노드에서 못 부른다(맨 위에서 `photoshop`·`uxp`를 require한다). 검사할 수
+있는 자리에 두는 것까지가 방어의 일부다.
 
 `tools/check-conformance.js`는 값이 아니라 **구조**도 본다 — "엔진 함수를 부르는 곳이
 몇 군데인가"를 세어, 각 경로에 같은 변환을 복붙한 구조를 잡아낸다.
