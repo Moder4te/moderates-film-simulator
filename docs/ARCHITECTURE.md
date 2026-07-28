@@ -74,6 +74,14 @@ tools/    check(.js 문법·BOM) check-boundaries check-paths check-load check-a
 - `colorSpace: "RGB"`는 **그 호출의 인자 안**을 본다. 함수 단위로 보면 같은 함수의
   다른 호출에 있는 것으로 통과한다 — 음성 테스트로 잡았다.
 
+**양자화 규약** — 정수 버퍼로 나가는 자리는 **반드시 반올림한다**. 정수 타입 배열에
+float을 대입하면 조용히 버려져 채널당 평균 −0.5LSB 편향이 생긴다. 양수 구간에서
+`(v+0.5)|0`이 `Math.round`와 같고 훨씬 싸다 — `core/color/lut.js`와
+`core/optics/tone.js`가 같은 규약을 쓴다.
+
+**디더 표 길이는 소수(65537)다.** 2의 거듭제곱이면 이미지 폭과 인수를 공유해
+행 주기로 잡음이 반복된다(폭 2048 → 32행). `check-tone.js`가 매번 재측정한다.
+
 `tools/check-conformance.js`는 값이 아니라 **구조**도 본다 — "엔진 함수를 부르는 곳이
 몇 군데인가"를 세어, 각 경로에 같은 변환을 복붙한 구조를 잡아낸다.
 
