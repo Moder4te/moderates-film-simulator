@@ -261,10 +261,60 @@ function pearson(a, b) {
 
 const PERFORATION_PITCH_UM = 4750; // ISO 1007, 35mm 퍼포레이션 피치 4.75mm
 
-// 상/하단 퍼포레이션 스트립에서 밝기 변화가 가장 큰 행을 찾고, 그 행에서
-// 문턱값 교차로 구멍 시작 위치를 찾아 평균 간격을 잰다.
+// 최대 허용 불규칙도 — 진짜 퍼포레이션은 ISO 1007 규격 피치라 간격이 거의 일정하다.
+// 사진 속 실제 디테일(신호등·표지판 등)이 섞이면 이 비율이 확 뛴다.
+const PERFORATION_MAX_IRREGULARITY = 0.15;
+const PERFORATION_MIN_EDGES = 3;
+
+// 밴드 안에서 표준편차가 가장 큰 행 K개를 뽑아 각각 엣지를 찾고, 그중
+// 간격이 가장 일정한(=진짜 주기적인) 행을 고른다. "표준편차 1등 행"만 보면
+// 그 행이 하필 퍼포레이션 구멍 세로 범위를 벗어나 있거나, 사진 속 디테일
+// (신호등·표지판)이 우연히 더 큰 표준편차를 만들 때 속는다 — 여러 후보 행을
+// 간격 규칙성으로 다시 거르면 그 실수를 잡는다.
+function bestPeriodicRow(img, y0, y1, threshold) {
+  const { width, data } = img;
+  const rowStats = [];
+  for (let y = y0; y < y1; y++) {
+    const row = new Float64Array(width);
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 3;
+      row[x] = (data[i] + data[i + 1] + data[i + 2]) / 3;
+    }
+    rowStats.push({ y, row, s: std(row) });
+  }
+  rowStats.sort((a, b) => b.s - a.s);
+
+  const K = Math.min(15, rowStats.length);
+  let best = null;
+  for (let k = 0; k < K; k++) {
+    const { y, row } = rowStats[k];
+    let lo = Infinity, hi = -Infinity;
+    for (let x = 0; x < width; x++) { if (row[x] < lo) lo = row[x]; if (row[x] > hi) hi = row[x]; }
+    const mid = (lo + hi) / 2;
+    const edges = [];
+    for (let x = 1; x < width; x++) {
+      if (row[x - 1] < mid && row[x] >= mid) edges.push(x); // 어두움→밝음(구멍 시작) 상승 엣지
+    }
+    if (edges.length < PERFORATION_MIN_EDGES) continue;
+    const spacings = [];
+    for (let i = 1; i < edges.length; i++) spacings.push(edges[i] - edges[i - 1]);
+    const meanSpacing = spacings.reduce((a, b2) => a + b2, 0) / spacings.length;
+    const spacingStd = std(Float64Array.from(spacings));
+    const irregularity = spacingStd / meanSpacing;
+    if (!best || irregularity < best.irregularity) {
+      best = { y, edges, meanSpacing, spacingStd, irregularity };
+    }
+    if (irregularity <= PERFORATION_MAX_IRREGULARITY) break; // 충분히 규칙적이면 더 안 뒤진다
+  }
+  return best;
+}
+
+// 상/하단 퍼포레이션 스트립에서 캘리브레이션을 잰다. 표준편차 1등 행 하나만
+// 믿지 않고 후보 K개 중 간격이 가장 규칙적인 행을 골라, 사진 속 실제 디테일
+// (신호등·표지판 등)을 퍼포레이션으로 착각하는 걸 막는다(2026-08-02 실측 —
+// 검증 없이 믿었을 때 간격 78~86개, 표준편차가 평균 간격보다 큰 쓰레기가 나왔다).
 function findPerforationPitch(img) {
-  const { width, height, data } = img;
+  const { height } = img;
   const bandHeight = Math.round(height * 0.12); // 상/하단 12%를 퍼포레이션 후보 영역으로
   const bands = [
     { name: "top", y0: 0, y1: bandHeight },
@@ -273,36 +323,23 @@ function findPerforationPitch(img) {
 
   const results = [];
   for (const band of bands) {
-    let bestY = -1, bestStd = -1;
-    // luminance = (R+G+B)/3, 행 단위 표준편차가 최대인 행이 구멍 경계를 가로지른다
-    for (let y = band.y0; y < band.y1; y++) {
-      const row = new Float64Array(width);
-      for (let x = 0; x < width; x++) {
-        const i = (y * width + x) * 3;
-        row[x] = (data[i] + data[i + 1] + data[i + 2]) / 3;
-      }
-      const s = std(row);
-      if (s > bestStd) { bestStd = s; bestY = y; }
+    const best = bestPeriodicRow(img, band.y0, band.y1);
+    if (!best) {
+      results.push({ band: band.name, valid: false, reason: `엣지 ${PERFORATION_MIN_EDGES}개 이상인 행을 못 찾음` });
+      continue;
     }
-    if (bestY < 0) continue;
-    const row = new Float64Array(width);
-    for (let x = 0; x < width; x++) {
-      const i = (bestY * width + x) * 3;
-      row[x] = (data[i] + data[i + 1] + data[i + 2]) / 3;
-    }
-    let lo = Infinity, hi = -Infinity;
-    for (let x = 0; x < width; x++) { if (row[x] < lo) lo = row[x]; if (row[x] > hi) hi = row[x]; }
-    const mid = (lo + hi) / 2;
-    const edges = [];
-    for (let x = 1; x < width; x++) {
-      if (row[x - 1] < mid && row[x] >= mid) edges.push(x); // 어두움→밝음(구멍 시작) 상승 엣지
-    }
-    if (edges.length < 2) continue;
-    const spacings = [];
-    for (let i = 1; i < edges.length; i++) spacings.push(edges[i] - edges[i - 1]);
-    const meanSpacing = spacings.reduce((a, b2) => a + b2, 0) / spacings.length;
-    const spacingStd = std(Float64Array.from(spacings));
-    results.push({ band: band.name, row: bestY, edgesFound: edges.length, pitchPx: meanSpacing, pitchStdPx: spacingStd, firstEdgeX: edges[0] });
+    const valid = best.irregularity <= PERFORATION_MAX_IRREGULARITY;
+    results.push({
+      band: band.name,
+      row: best.y,
+      edgesFound: best.edges.length,
+      pitchPx: best.meanSpacing,
+      pitchStdPx: best.spacingStd,
+      irregularity: best.irregularity,
+      firstEdgeX: best.edges[0],
+      valid,
+      reason: valid ? null : `간격 불규칙도 ${(best.irregularity * 100).toFixed(0)}% > ${PERFORATION_MAX_IRREGULARITY * 100}% — 실제 퍼포레이션이 아니라 사진 속 디테일일 가능성`,
+    });
   }
   return results;
 }
@@ -459,12 +496,22 @@ function main() {
   const imgA = readPPM(args.files[0]);
   const imgB = args.files[1] ? readPPM(args.files[1]) : null;
 
-  // 캘리브레이션·PSF는 프레임 전체 광학 조건이라 밀도 단계마다 한 번만 잰다
+  // 캘리브레이션·PSF는 프레임 전체 광학 조건이라 밀도 단계마다 한 번만 잰다.
+  // valid:false인 밴드(실제 퍼포레이션이 아니라 사진 디테일로 의심되는 경우)는
+  // umPerPx·PSF 계산에서 뺀다 — 틀린 걸 조용히 쓰느니 null이 낫다.
   const perforations = findPerforationPitch(imgA);
-  const umPerPx = perforations.length
-    ? PERFORATION_PITCH_UM / (perforations.reduce((s, p) => s + p.pitchPx, 0) / perforations.length)
-    : null;
-  const psf = perforations.length ? measurePSF(imgA, perforations[0]) : null;
+  const validBands = perforations.filter((p) => p.valid);
+  let umPerPx = null, calibrationWarning = null;
+  if (validBands.length === 0) {
+    calibrationWarning = "유효한 퍼포레이션 밴드가 없다 — umPerPx·PSF 전부 null";
+  } else {
+    umPerPx = PERFORATION_PITCH_UM / (validBands.reduce((s, p) => s + p.pitchPx, 0) / validBands.length);
+    if (validBands.length === 2) {
+      const diff = Math.abs(validBands[0].pitchPx - validBands[1].pitchPx) / validBands[0].pitchPx;
+      if (diff > 0.05) calibrationWarning = `상/하단 피치가 ${(diff * 100).toFixed(1)}% 어긋난다 — 기울어졌거나 둘 중 하나가 틀렸을 수 있다`;
+    }
+  }
+  const psf = validBands.length ? measurePSF(imgA, validBands[0]) : null;
 
   const win = Math.min(40, args.size / 4);
   const zones = args.patches.map((patch) => {
@@ -477,7 +524,7 @@ function main() {
 
   const report = {
     input: { a: args.files[0], b: args.files[1] || null, size: args.size, highpassSigma: args.sigma },
-    calibration: { umPerPx, perforations },
+    calibration: { umPerPx, warning: calibrationWarning, perforations },
     psf,
     zones,
   };
