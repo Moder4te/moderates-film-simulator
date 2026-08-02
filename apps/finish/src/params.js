@@ -80,14 +80,18 @@ function defaultParams() {
 
     grain: {
       enabled: true,
-      // 존별 강도 0~100
+      // 존별 강도 0~100. (명부는 Overlay 이득 손실 부분보상 HIGHLIGHT_GAIN이
+      // 적용된 뒤의 값 — apps/finish/src/grain.js)
       shadow: 25,
       midtone: 45,
       highlight: 15,
-      // 존 경계 (0~255 루미넌스). 인접 존과 페더 구간에서 겹친다.
-      shadowRange: [0, 85],
-      midtoneRange: [60, 195],
-      highlightRange: [170, 255],
+      // 존 경계 교차점 2개(0~255 루미넌스, G4). 암부↔중간톤(crossover1) ·
+      // 중간톤↔명부(crossover2). 세 존 범위는 여기서 core/optics/grainzones의
+      // zoneRanges가 유도한다 — 겹침·구멍이 원천적으로 불가능하고 톤에 관계없이
+      // 가중치 합이 항상 1이다. (예전엔 존마다 독립 범위 6개를 하드코딩해 커버리지
+      // 합이 182%까지 벌어졌었다 — tools/check-grain.js가 이 성질을 값으로 지킨다)
+      crossover1: 85,
+      crossover2: 170,
       feather: 40,
       // 필름 감도 ISO 50~3200 → 필름면 유효 입자 지름 4~25µm. 감도가 곧 입자
       // 크기다(빠른 필름일수록 굵다). 기본 400 = 10µm(표준). format.micronsForIso.
@@ -98,10 +102,14 @@ function defaultParams() {
       diffuseDisplace: true,
       // 다이클라우드 덩어리 세기 0~100. 큰 상관길이 밀도 요동(클럼프 옥타브).
       clump: 30,
-      // 채널별 입자 크기 분화 0~100. 유제층 3겹 재현(청색 조대). rgb 모드에서만 유효.
+      // 채널별 입자 **진폭** 분화 0~100(청색 시끄럽게). rgb 모드에서만 유효.
+      // ⚠️ 크기 분화(G2)는 아직 실측이 없어 항등이다 — core/optics/format.js
+      // dyeClouds의 cellScale 참고. 이 값은 진폭만 바꾼다.
       dyeSpread: 50,
-      // "mono" | "rgb"
-      colorMode: "mono",
+      // "mono" | "rgb" — 채널이 필드를 공유(랩 스캐너 룩, 상관 1.0) / 채널마다
+      // 독립 필드(카메라 스캔 룩, 상관 ≈0). 기본을 rgb로 둔다 — 목표가 카메라
+      // 스캔이고 mono가 오히려 반대(G1, docs/PLAN-GRAIN-2026-08-02.md).
+      colorMode: "rgb",
     },
   };
 }

@@ -10,9 +10,13 @@
  *   2. 경계          층이 지켜지는가. core 순수 / batchPlay 격리 / 마감 앱에 색 없음
  *   3. 경로          배치가 원본을 덮어쓸 길이 없는가 (되돌릴 수 없는 유일한 결함)
  *   4. 로드          두 앱이 예외 없이 뜨는가. 없는 id를 참조하지 않는가
- *   5. 정합성        네 산출 경로가 같은 색을 내는가
+ *   5. 함수          앱이 부르는 모듈 함수가 실제로 존재하는가
+ *   6. 정합성        네 산출 경로가 같은 색을 내는가
+ *   7. 톤            마감 그레이딩의 항등·단조성·중립 보존·디더
+ *   8. 그레인        G1(채널상관)·G4(존 가중치 합)·G5(격자점수) 등을 값으로 못 박는다
+ *      (docs/PLAN-GRAIN-2026-08-02.md "## 검증")
  *
- * 4·5번은 `lib/`를 읽으므로 sync-libs를 먼저 돌린다.
+ * 4번 이후는 `lib/`를 읽으므로 sync-libs를 먼저 돌린다.
  */
 
 const { execFileSync, spawnSync } = require("child_process");
@@ -129,6 +133,7 @@ for (const [name, script] of [
   ["함수", "check-api.js"],
   ["정합성", "check-conformance.js"],
   ["톤", "check-tone.js"],
+  ["그레인", "check-grain.js"],
 ]) {
   step(name, () => {
     const r = spawnSync(process.execPath, [path.join(__dirname, script)], { stdio: "inherit" });
