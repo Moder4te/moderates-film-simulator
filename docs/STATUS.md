@@ -205,7 +205,11 @@ finish 2.18.0  그레인 물리 개선 중 실측치 없이 되는 부분(G1·G4
                부분보상(HIGHLIGHT_GAIN) · 옥타브 회전으로 격자 인공물 완화.
                G2·G3는 손잡이만(cellScale·ZONE_SCALE 항등 1) — 상수는 M1
                실측 대기. tools/check-grain.js 신설, check.js에 편입.
-               → Node 검사까지만 확인, **실기(Photoshop) 미확인**
+               → **1차 실기 확인(2026-08-03)**: 존 슬라이더가 실제로 일한다
+               (G4 목표 달성). 자유도가 커진 만큼 특정 수치는 어색함 —
+               CASUAL/ADVANCED 모드 분리 아이디어로 이어짐(TODO.md 아이디어).
+               HIGHLIGHT_GAIN 개별 체감·프리셋 마이그레이션은 아직 미확인
+               (마이그레이션은 프리셋이 테스트 단계라 의도적으로 보류 중)
 lrplugin      프로파일 배포 플러그인 (설치 + 필름·스캐너 선택 적용)
               macOS 대응 · 맨 pcall 제거 · RGBTable · 바탕 프로필
               → 적용까지 Windows 실기 확인. macOS 미확인
