@@ -348,11 +348,17 @@ function measurePSF(img, band) {
 // ---------------------------------------------------------------- CLI
 
 function parseArgs(argv) {
-  const args = { files: [], size: 512, sigma: 8, out: null };
+  const args = { files: [], size: 512, sigma: 8, out: null, patches: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--patch") { const [cy, cx] = argv[++i].split(",").map(Number); args.patch = { cy, cx }; }
-    else if (a === "--size") args.size = parseInt(argv[++i], 10);
+    if (a === "--patch") {
+      const [cy, cx] = argv[++i].split(",").map(Number);
+      args.patches.push({ cy, cx });
+    } else if (a === "--zone") {
+      // --zone <이름>,<cy>,<cx> — 밀도 단계에 라벨을 붙인다 (G3용)
+      const [label, cy, cx] = argv[++i].split(",");
+      args.patches.push({ cy: Number(cy), cx: Number(cx), label });
+    } else if (a === "--size") args.size = parseInt(argv[++i], 10);
     else if (a === "--sigma") args.sigma = parseFloat(argv[++i]);
     else if (a === "--out") args.out = argv[++i];
     else args.files.push(a);
@@ -360,45 +366,25 @@ function parseArgs(argv) {
   return args;
 }
 
-function main() {
-  const args = parseArgs(process.argv.slice(2));
-  if (args.files.length < 1 || !args.patch) {
-    console.error("사용법: node tools/measure-scan.js <a.ppm> [b.ppm] --patch <cy>,<cx> [--size 512] [--sigma 8] [--out out.json]");
-    process.exit(1);
-  }
-  if ((Math.log2(args.size) % 1) !== 0) {
-    console.error(`--size는 2의 거듭제곱이어야 한다 (FFT). 받은 값: ${args.size}`);
-    process.exit(1);
-  }
-
-  const imgA = readPPM(args.files[0]);
-  const imgB = args.files[1] ? readPPM(args.files[1]) : null;
-
-  const size = args.size;
-  const y0 = args.patch.cy - size / 2, x0 = args.patch.cx - size / 2;
+// 한 패치(밀도 단계 1곳)의 전 채널 측정. calibration/psf는 이미지 전체에서
+// 한 번만 재 밀도 단계마다 재사용한다 — 광학은 프레임 안에서 안 바뀐다.
+function measurePatch(imgA, imgB, patch, size, sigma, win, psf) {
+  const y0 = patch.cy - size / 2, x0 = patch.cx - size / 2;
   if (y0 < 0 || x0 < 0 || y0 + size > imgA.height || x0 + size > imgA.width) {
-    console.error(`패치가 이미지 밖으로 나간다: y0=${y0} x0=${x0} size=${size} image=${imgA.width}x${imgA.height}`);
-    process.exit(1);
+    throw new Error(`패치가 이미지 밖: y0=${y0} x0=${x0} size=${size} image=${imgA.width}x${imgA.height}`);
   }
-
-  const perforations = findPerforationPitch(imgA);
-  const umPerPx = perforations.length
-    ? PERFORATION_PITCH_UM / (perforations.reduce((s, p) => s + p.pitchPx, 0) / perforations.length)
-    : null;
-  const psf = perforations.length ? measurePSF(imgA, perforations[0]) : null;
 
   const channels = ["R", "G", "B"];
   const patchesA = {}, highpassA = {};
   for (let c = 0; c < 3; c++) {
     patchesA[channels[c]] = cropChannel(imgA, c, y0, x0, size);
-    highpassA[channels[c]] = highpass(patchesA[channels[c]], size, args.sigma);
+    highpassA[channels[c]] = highpass(patchesA[channels[c]], size, sigma);
   }
 
-  const win = Math.min(40, size / 4);
   const report = {
-    input: { a: args.files[0], b: args.files[1] || null, patch: args.patch, size, highpassSigma: args.sigma },
-    calibration: { umPerPx, perforations },
-    psf,
+    label: patch.label || null,
+    patch: { cy: patch.cy, cx: patch.cx },
+    meanLevel: { R: mean(patchesA.R), G: mean(patchesA.G), B: mean(patchesA.B) },
     channels: {},
     crossChannelCorrelation: {},
   };
@@ -419,7 +405,7 @@ function main() {
     const patchesB = {}, highpassB = {};
     for (let c = 0; c < 3; c++) {
       patchesB[channels[c]] = cropChannel(imgB, c, y0, x0, size);
-      highpassB[channels[c]] = highpass(patchesB[channels[c]], size, args.sigma);
+      highpassB[channels[c]] = highpass(patchesB[channels[c]], size, sigma);
     }
     report.sensorNoise = {};
     report.filmRms = {};
@@ -436,12 +422,10 @@ function main() {
     report.amplitudeRatio = { R: report.filmRms.R / g, G: 1, B: report.filmRms.B / g };
 
     const gLen = report.channels.G.crossFrameCorrLenPx;
-    const sizeRatioRaw = {
-      R: report.channels.R.crossFrameCorrLenPx / gLen,
-      G: 1,
-      B: report.channels.B.crossFrameCorrLenPx / gLen,
+    report.sizeRatio = {
+      raw: { R: report.channels.R.crossFrameCorrLenPx / gLen, G: 1, B: report.channels.B.crossFrameCorrLenPx / gLen },
+      caCorrected: null,
     };
-    report.sizeRatio = { raw: sizeRatioRaw, caCorrected: null };
     if (psf && psf.R != null && psf.G != null && psf.B != null) {
       // 상관길이에서 PSF를 구적으로 뺀다 (렌즈 흐림 ≠ 그레인 구조)
       const corr = (lenPx, sigmaPsf) => Math.sqrt(Math.max(lenPx * lenPx - sigmaPsf * sigmaPsf, 0));
@@ -451,6 +435,52 @@ function main() {
       report.sizeRatio.caCorrected = { R: gC ? rC / gC : null, G: 1, B: gC ? bC / gC : null };
     }
   }
+
+  return report;
+}
+
+function mean(arr) {
+  let s = 0;
+  for (let i = 0; i < arr.length; i++) s += arr[i];
+  return s / arr.length;
+}
+
+function main() {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.files.length < 1 || args.patches.length < 1) {
+    console.error("사용법: node tools/measure-scan.js <a.ppm> [b.ppm] --patch <cy>,<cx> [--zone shadow,<cy>,<cx> ...] [--size 512] [--sigma 8] [--out out.json]");
+    process.exit(1);
+  }
+  if ((Math.log2(args.size) % 1) !== 0) {
+    console.error(`--size는 2의 거듭제곱이어야 한다 (FFT). 받은 값: ${args.size}`);
+    process.exit(1);
+  }
+
+  const imgA = readPPM(args.files[0]);
+  const imgB = args.files[1] ? readPPM(args.files[1]) : null;
+
+  // 캘리브레이션·PSF는 프레임 전체 광학 조건이라 밀도 단계마다 한 번만 잰다
+  const perforations = findPerforationPitch(imgA);
+  const umPerPx = perforations.length
+    ? PERFORATION_PITCH_UM / (perforations.reduce((s, p) => s + p.pitchPx, 0) / perforations.length)
+    : null;
+  const psf = perforations.length ? measurePSF(imgA, perforations[0]) : null;
+
+  const win = Math.min(40, args.size / 4);
+  const zones = args.patches.map((patch) => {
+    try {
+      return measurePatch(imgA, imgB, patch, args.size, args.sigma, win, psf);
+    } catch (e) {
+      return { label: patch.label || null, patch, error: e.message };
+    }
+  });
+
+  const report = {
+    input: { a: args.files[0], b: args.files[1] || null, size: args.size, highpassSigma: args.sigma },
+    calibration: { umPerPx, perforations },
+    psf,
+    zones,
+  };
 
   const json = JSON.stringify(report, null, 2);
   if (args.out) { fs.writeFileSync(args.out, json); console.error(`→ ${args.out}`); }
