@@ -15,6 +15,7 @@
 | 이미 고친 버그인지 확인 | [`docs/RESOLVED.md`](./docs/RESOLVED.md) | 정적 |
 | UXP·Photoshop API 함정 | [`docs/UXP-NOTES.md`](./docs/UXP-NOTES.md) | 정적 |
 | 필름 데이터 추가 | [`tools/README.md`](./tools/README.md) + [`tools/tds-catalog.md`](./tools/tds-catalog.md) | 정적 |
+| 그레인 물리 작업(G1~G5·M1) 재개 | [`docs/PLAN-GRAIN-2026-08-02.md`](./docs/PLAN-GRAIN-2026-08-02.md) | 동적 |
 | 사용자용 설명 | [`README.md`](./README.md) | 동적 |
 
 ## 전체 목록
@@ -28,6 +29,7 @@
 | [`docs/STATUS.md`](./docs/STATUS.md) | 현재 버전 · 동작하는 것 · **알려진 한계** · 미검증 항목 | 기능 추가/한계 발견 시 |
 | [`TODO.md`](./TODO.md) | **미해결 작업만.** 우선순위 · 착수법 · 완료 기준 | 항목 해결/추가 시 |
 | [`README.md`](./README.md) | 사용자 대면 — 설치 · 사용법 · 라이선스 | 릴리스 시 |
+| [`docs/PLAN-GRAIN-2026-08-02.md`](./docs/PLAN-GRAIN-2026-08-02.md) | 그레인 물리 개선(G1~G5·M1) — 계획+실측 기록. **전부 닫히면 지운다** | 측정/판단 있을 때마다 |
 
 ### 정적 — 결정과 지식
 
