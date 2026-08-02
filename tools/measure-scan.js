@@ -278,35 +278,83 @@ const PERFORATION_HEIGHT_UM = 2790; // 피치에 수직인(세로) 개구 높이
 const PERFORATION_MAX_IRREGULARITY = 0.15;
 const PERFORATION_MIN_EDGES = 3;
 
+// O(n) 누적합 기반 1D 박스블러(가장자리는 남은 범위로 평균 — 반사·복제 없이
+// 그냥 짧아진 창으로 나눈다. 퍼포레이션 검출에선 가장자리 근처 정확도가
+// 중요하지 않다).
+function boxBlur1D(arr, radius) {
+  const n = arr.length;
+  const prefix = new Float64Array(n + 1);
+  for (let i = 0; i < n; i++) prefix[i + 1] = prefix[i] + arr[i];
+  const out = new Float64Array(n);
+  for (let x = 0; x < n; x++) {
+    const a = Math.max(0, x - radius), b = Math.min(n - 1, x + radius);
+    out[x] = (prefix[b + 1] - prefix[a]) / (b - a + 1);
+  }
+  return out;
+}
+
+// 매크로 촬영대의 검정 배경(필름 밖)이 행 범위에 섞이면 min이 그 검정에
+// 끌려 내려가, lo/hi 중간 문턱이 실제 필름 베이스 레벨에 너무 가까워져서
+// 베이스의 잡음성 요동이 문턱을 계속 넘나든다(실측 — sky/asphalt 컷에서
+// 진짜 8개인데 최대 86개가 잡혔다). 필름이 실제로 걸쳐 있는 x 구간만 보고
+// 검정 배경대를 아예 분석에서 뺀다.
+function findFilmExtent(img) {
+  const { width, height, data } = img;
+  const colSum = new Float64Array(width);
+  let rows = 0;
+  for (let y = 0; y < height; y += 50) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 3;
+      colSum[x] += (data[i] + data[i + 1] + data[i + 2]) / 3;
+    }
+    rows++;
+  }
+  let maxV = 0;
+  for (let x = 0; x < width; x++) if (colSum[x] > maxV) maxV = colSum[x];
+  const thresh = maxV * 0.05; // 필름 베이스조차 검정 배경보단 훨씬 밝다 — 5%면 충분히 보수적
+  let left = 0, right = width - 1;
+  while (left < width && colSum[left] < thresh) left++;
+  while (right > 0 && colSum[right] < thresh) right--;
+  return { left, right };
+}
+
 // 밴드 안에서 표준편차가 가장 큰 행 K개를 뽑아 각각 엣지를 찾고, 그중
 // 간격이 가장 일정한(=진짜 주기적인) 행을 고른다. "표준편차 1등 행"만 보면
 // 그 행이 하필 퍼포레이션 구멍 세로 범위를 벗어나 있거나, 사진 속 디테일
 // (신호등·표지판)이 우연히 더 큰 표준편차를 만들 때 속는다 — 여러 후보 행을
 // 간격 규칙성으로 다시 거르면 그 실수를 잡는다.
-function bestPeriodicRow(img, y0, y1, threshold) {
+function bestPeriodicRow(img, y0, y1, filmExtent) {
   const { width, data } = img;
+  const { left, right } = filmExtent;
   const rowStats = [];
   for (let y = y0; y < y1; y++) {
     const row = new Float64Array(width);
-    for (let x = 0; x < width; x++) {
+    for (let x = left; x <= right; x++) {
       const i = (y * width + x) * 3;
       row[x] = (data[i] + data[i + 1] + data[i + 2]) / 3;
     }
-    rowStats.push({ y, row, s: std(row) });
+    rowStats.push({ y, row, s: std(row.subarray(left, right + 1)) });
   }
   rowStats.sort((a, b) => b.s - a.s);
 
-  const K = Math.min(15, rowStats.length);
+  const K = Math.min(60, rowStats.length);
   let best = null;
   for (let k = 0; k < K; k++) {
     const { y, row } = rowStats[k];
+    // 단순 min/max 중간값 문턱은 필름 가장자리 인화 문자(키코드 등)나 그레인
+    // 잡음에 매번 새 엣지를 만든다(실측 — 진짜 8개인데 35~86개가 잡혔다).
+    // 25/75 백분위 히스테리시스로도 바꿔봤지만 검정 배경대가 섞이면 똑같이
+    // 깨졌다. **문턱을 바꾸는 대신 신호를 스무딩한다** — 반경 40px 박스블러는
+    // 인화 문자·그레인처럼 좁은 요동은 지우고 수백 px 폭인 진짜 퍼포레이션
+    // 경계는 거의 그대로 남긴다. filmExtent로 검정 배경대 자체를 이미 뺐다.
+    const smoothed = boxBlur1D(row.subarray(left, right + 1), 40);
     let lo = Infinity, hi = -Infinity;
-    for (let x = 0; x < width; x++) { if (row[x] < lo) lo = row[x]; if (row[x] > hi) hi = row[x]; }
+    for (let x = 0; x < smoothed.length; x++) { if (smoothed[x] < lo) lo = smoothed[x]; if (smoothed[x] > hi) hi = smoothed[x]; }
     const mid = (lo + hi) / 2;
     const rising = [], falling = [];
-    for (let x = 1; x < width; x++) {
-      if (row[x - 1] < mid && row[x] >= mid) rising.push(x); // 어두움→밝음(구멍 시작)
-      if (row[x - 1] >= mid && row[x] < mid) falling.push(x); // 밝음→어두움(구멍 끝)
+    for (let x = 1; x < smoothed.length; x++) {
+      if (smoothed[x - 1] < mid && smoothed[x] >= mid) rising.push(x + left); // 어두움→밝음(구멍 시작)
+      else if (smoothed[x - 1] >= mid && smoothed[x] < mid) falling.push(x + left); // 밝음→어두움(구멍 끝)
     }
     if (rising.length < PERFORATION_MIN_EDGES) continue;
     const spacings = [];
@@ -334,18 +382,25 @@ function bestPeriodicRow(img, y0, y1, threshold) {
   return best;
 }
 
-// 대표 구멍 하나의 세로 방향 개구 높이(px)를 잰다. 밴드보다 위아래로 넉넉히
-// 훑어야 상승·하강 전이를 둘 다 잡는다. 그레인 잡음을 줄이려 홀 중심 좌우
-// 11열을 평균한 세로 프로파일을 쓴다(가로쪽 measurePSF의 11행 평균과 대칭).
+// 대표 구멍 하나의 세로 방향 개구 높이(px)를 잰다. 찾아낸 행(centerRow)
+// 기준으로 위아래를 훑어야 상승·하강 전이를 둘 다 잡는다. 그레인 잡음을
+// 줄이려 홀 중심 좌우 11열을 평균한 세로 프로파일을 쓴다(가로쪽
+// measurePSF의 11행 평균과 대칭).
 //
-// ⚠️ pad는 밴드 높이만큼 넉넉히 잡는다. 20px로 뒀다가 실측(250dahu)에서
-// 구멍 자체가 988px나 돼 밴드 경계 안쪽으로 시작점을 이미 지나쳐 버려
-// 상승 엣지를 통째로 놓친 적이 있다(개구 높이 2.79mm가 이 스캔 배율에서
-// 그 정도 크기다 — 20px로 잡을 이유가 없었다).
-function measureHoleHeight(img, band, holeCenterX) {
+// ⚠️ 창 크기 이력 — 처음엔 pad=20px로 뒀다가 실측(250dahu)에서 구멍 자체가
+// 988px나 돼 통째로 놓쳤다. 그다음 "밴드 높이만큼"으로 늘렸더니 이번엔
+// 반대로 너무 넓어져(밴드 높이의 2배, 이미지 높이의 44%) 실제 사진 내용까지
+// 훑어 들어가 min/max가 오염되고 엉뚱한 전이(145px)를 잡았다. **피치를
+// 기준으로 잡는다** — 구멍 높이는 규격상 피치의 0.59배라 피치 자체를
+// 반폭으로 쓰면 3배 이상 여유롭게 감싸면서도 다른 내용까지 넘어가지 않는다.
+function measureHoleHeight(img, centerRow, holeCenterX, halfWindow) {
   const { width, height, data } = img;
-  const pad = band.y1 - band.y0;
-  const y0 = Math.max(0, band.y0 - pad), y1 = Math.min(height, band.y1 + pad);
+  // halfWindow(피치)는 정수가 아닐 수 있다 — 반올림 없이 쓰면 data[i]가
+  // 소수 인덱스가 돼 undefined→NaN이 lo/hi를 통째로 오염시킨다(실측 —
+  // 250dahu 상단 밴드가 이 버그로 계속 null이 나왔다. 우연히 정수였던
+  // 하단 밴드만 살아남았었다).
+  const y0 = Math.round(Math.max(0, centerRow - halfWindow));
+  const y1 = Math.round(Math.min(height, centerRow + halfWindow));
   const col = new Float64Array(y1 - y0);
   for (let dy = 0; dy < col.length; dy++) {
     let sum = 0, n = 0;
@@ -361,12 +416,23 @@ function measureHoleHeight(img, band, holeCenterX) {
   let lo = Infinity, hi = -Infinity;
   for (let i = 0; i < col.length; i++) { if (col[i] < lo) lo = col[i]; if (col[i] > hi) hi = col[i]; }
   const mid = (lo + hi) / 2;
-  let riseY = null, fallY = null;
+
+  // 처음엔 "첫 상승 → 첫 하강"으로 잡았는데, 진짜 구멍(990px) 앞에 훨씬 작은
+  // 밝은 얼룩(95px, 필름 가장자리의 다른 인화물로 보임)이 있어서 그걸 구멍으로
+  // 착각했다(실측 — 250dahu 상단 밴드). **문턱 위 구간 중 가장 넓은 것**을
+  // 고른다 — 진짜 구멍이 이 창 안에서 가장 큰 밝은 덩어리라는 가정이 훨씬
+  // 안전하다.
+  let bestRise = null, bestFall = null, bestLen = 0;
+  let riseY = null;
   for (let i = 1; i < col.length; i++) {
-    if (riseY === null && col[i - 1] < mid && col[i] >= mid) riseY = i;
-    else if (riseY !== null && fallY === null && col[i - 1] >= mid && col[i] < mid) fallY = i;
+    if (riseY === null && col[i - 1] < mid && col[i] >= mid) {
+      riseY = i;
+    } else if (riseY !== null && col[i - 1] >= mid && col[i] < mid) {
+      if (i - riseY > bestLen) { bestLen = i - riseY; bestRise = riseY; bestFall = i; }
+      riseY = null;
+    }
   }
-  return riseY !== null && fallY !== null ? fallY - riseY : null;
+  return bestRise !== null ? bestFall - bestRise : null;
 }
 
 // 상/하단 퍼포레이션 스트립에서 캘리브레이션을 잰다. 표준편차 1등 행 하나만
@@ -375,7 +441,11 @@ function measureHoleHeight(img, band, holeCenterX) {
 // 검증 없이 믿었을 때 간격 78~86개, 표준편차가 평균 간격보다 큰 쓰레기가 나왔다).
 function findPerforationPitch(img) {
   const { height } = img;
-  const bandHeight = Math.round(height * 0.12); // 상/하단 12%를 퍼포레이션 후보 영역으로
+  // 컷마다 프레이밍(줌)이 달라 퍼포레이션 행의 상대 위치가 바뀐다 — 250dahu는
+  // 가장자리에서 11.85%였지만 sky/asphalt 컷은 16.1%였다(2026-08-02 실측,
+  // 12%로는 못 잡았다). 22%로 넉넉히 잡는다 — 넓혀도 규칙성 검증이 실제
+  // 사진 디테일을 걸러내므로 안전하다.
+  const bandHeight = Math.round(height * 0.22);
   const bands = [
     { name: "top", y0: 0, y1: bandHeight },
     { name: "bottom", y0: height - bandHeight, y1: height },
@@ -386,9 +456,11 @@ function findPerforationPitch(img) {
   const NOMINAL_WIDTH_TO_PITCH = PERFORATION_WIDTH_UM / PERFORATION_PITCH_UM;
   const MAX_RATIO_ERROR = 0.15;
 
+  const filmExtent = findFilmExtent(img);
+
   const results = [];
   for (const band of bands) {
-    const best = bestPeriodicRow(img, band.y0, band.y1);
+    const best = bestPeriodicRow(img, band.y0, band.y1, filmExtent);
     if (!best) {
       results.push({ band: band.name, valid: false, reason: `엣지 ${PERFORATION_MIN_EDGES}개 이상인 행을 못 찾음` });
       continue;
@@ -410,7 +482,7 @@ function findPerforationPitch(img) {
     let holeHeightPx = null;
     if (valid && best.meanWidth != null) {
       const holeCenterX = Math.round(best.edges[0] + best.meanWidth / 2);
-      holeHeightPx = measureHoleHeight(img, band, holeCenterX);
+      holeHeightPx = measureHoleHeight(img, best.y, holeCenterX, best.meanSpacing);
     }
 
     results.push({
