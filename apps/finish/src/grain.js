@@ -12,8 +12,11 @@
  * 생성한다(core/optics/grainfield). 셀을 키우면 대비를 유지한 채 blob이 실제로
  * 커진다. 채널별 진폭(청색 시끄럽게)·클럼프 옥타브도 필드에 함께 굽는다.
  *
- * 텍스처는 **세 존이 공유한다** — 필름의 그레인은 한 층이고, 톤에 따라 달라지는
- * 것은 가시성뿐이다. 한 번 생성해 Overlay + Blend If로 존별 강도·톤 마스크를 준다.
+ * 텍스처는 **세 존이 공유한다**(지금은 — ZONE_SCALE이 항등 1인 동안) — 필름의
+ * 그레인은 한 층이고, 톤에 따라 달라지는 것은 가시성과(밀도가 오르면 굵어지는)
+ * 클럼프 크기다. 한 번 생성해 Overlay + Blend If로 존별 강도·톤 마스크를 주고,
+ * 명부 존은 레이어를 확대해 굵은 덩어리를 흉내낸다(G3, 지금은 손잡이만 — 확대
+ * 배율은 실측 전까지 1로 고정돼 눈에 보이는 차이가 없다).
  *
  * ── 디퓨전 (해상 손실) ──────────────────────────────────────────────────
  *
@@ -27,6 +30,7 @@ const { play } = require("../lib/host/ps");
 const format = require("../lib/core/optics/format");
 const displace = require("../lib/core/optics/displace");
 const grainfield = require("../lib/core/optics/grainfield");
+const { zoneRanges } = require("../lib/core/optics/grainzones");
 
 /**
  * 그레인 강도(0~100) → 레이어 불투명도(%).
@@ -63,18 +67,21 @@ function gridSmoothPx(iso, longEdge) {
   return gridSmoothForIso(iso) * ((longEdge || GRID_SMOOTH_REF_EDGE) / GRID_SMOOTH_REF_EDGE);
 }
 
-/**
- * 존 범위 [lo, hi]와 페더 폭으로 Blend If 4개 값을 만든다.
- * 페이드 인은 lo에서 lo+feather, 페이드 아웃은 hi-feather에서 hi.
- */
-function blendRangeFor([lo, hi], feather) {
-  const half = Math.min(feather, Math.max(1, (hi - lo) / 2));
-  const blackMin = Math.max(0, lo - half);
-  const blackMax = Math.min(255, lo + half);
-  const whiteMin = Math.max(0, hi - half);
-  const whiteMax = Math.min(255, hi + half);
-  return [blackMin, blackMax, whiteMin, whiteMax];
-}
+// 명부 Overlay 이득 보상(G4) — Overlay의 2·min(b,1−b) 이득이 L>128에서
+// Weber 상대대비를 무너뜨린다(L=212에서 10%, 240에서 3%). 암부는 이미 완벽하고
+// (L<128에서 상대대비 50% 상수) 보상하면 오히려 과해지므로 명부에만 건다.
+// 전량 보상(2.9)은 슬라이더가 34%에서 100%에 닿아 상단을 죽이므로 **부분
+// 보상**만 한다 — 차별화 지수 25%(현행) → 64%(교차점+이 보상), 육안 조정 대상.
+// ⚠️ G3(존별 클럼프 크기)를 실측으로 채운 뒤 다시 맞출 가능성이 크다 — 크기가
+// 굵어지면 같은 진폭도 더 세 보인다(docs/PLAN-GRAIN-2026-08-02.md G4).
+const HIGHLIGHT_GAIN = 2.2;
+
+// 존별 레이어 확대 배율(G3) — 명부일수록 현상 입자가 겹쳐 클럼프가 굵어지는
+// 것을 "필드를 다시 굽지 않고 레이어를 확대"해 흉내낸다(대비를 보존하는
+// 방법이라 블러보다 낫다는 것은 합성 자기검증으로 확인됨). **실측(M1)으로
+// 채우기 전까지 전부 항등(1) — 눈에 보이는 차이는 없다.** MID_GRAY_OFFSET과
+// 같은 패턴: 정답 없이 손잡이만 먼저 만든다.
+const ZONE_SCALE = { shadow: 1, midtone: 1, highlight: 1 };
 
 /** 문서 비트 심도. PS 16bit는 0~32768(65535 아님) — Overlay 중성은 그 절반. */
 function depthOf(doc) {
@@ -85,15 +92,20 @@ function depthOf(doc) {
 
 /**
  * 존 하나 — 공유 그레인 **imageData**를 새 레이어에 putPixels하고 Overlay + Blend If.
- * 세 존이 같은 텍스처를 쓰되 강도(불투명도)와 톤 마스크만 다르다.
+ * 세 존이 같은 텍스처를 쓰되 강도(불투명도)·톤 마스크·(명부는) 확대 배율만 다르다.
  *
  * imageData는 호출자가 **한 번만 만들어** 넘긴다. 존마다 새로 만들면 같은 버퍼를
  * 세 번 변환하게 되는데, 대형 문서에서 그 비용이 그대로 세 배가 된다.
+ *
+ * @param {number[]} blendRange Blend If 4값 [blackMin,blackMax,whiteMin,whiteMax] —
+ *   `core/optics/grainzones.zoneRanges`가 만든다
+ * @param {number} scale 레이어 확대 배율(1 = 항등, 확대만 한다 — 축소는 캔버스
+ *   가장자리에 구멍을 낸다)
  */
-async function addZone(doc, label, strength, range, feather, img, dims, prefix) {
+async function addZone(doc, label, strength, blendRange, img, dims, prefix, scale) {
   if (strength <= 0) return;
 
-  const [bMin, bMax, wMin, wMax] = blendRangeFor(range, feather);
+  const [bMin, bMax, wMin, wMax] = blendRange;
   await play([ps.makePixelLayer(), ps.renameLayer(`${prefix} · Grain ${label}`)]);
   const layerId = app.activeDocument.activeLayers[0].id;
 
@@ -104,8 +116,10 @@ async function addZone(doc, label, strength, range, feather, img, dims, prefix) 
     imageData: img,
   });
 
-  // 격자 마디 완화(활성 = 방금 putPixels한 그레인 레이어) → 블렌드.
+  // 격자 마디 완화 + (있으면) 확대 + 블렌드. 순서는 확대를 먼저 해야 격자완화
+  // 블러 반경이 확대된 blob 크기 기준으로 맞는다.
   const cmds = [];
+  if (scale && scale > 1) cmds.push(ps.scaleLayer(scale * 100));
   if (dims.gridSmooth > 0) cmds.push(ps.gaussianBlur(dims.gridSmooth));
   cmds.push(ps.setLayerBlend("overlay", opacityFor(strength)));
   cmds.push(ps.setUnderlyingBlendRange(bMin, bMax, wMin, wMax));
@@ -195,13 +209,16 @@ async function applyGrain(doc, grain, medium, prefix) {
   const height = doc.height;
   const depth = depthOf(doc);
   const cloud = format.dyeClouds(sizing.px, grain);
-  const amps = grain.colorMode === "rgb" ? cloud.amps : null; // 없으면 모노
+  const isRgb = grain.colorMode === "rgb";
+  const amps = isRgb ? cloud.amps : null; // 없으면 모노
+  const cellScale = isRgb ? cloud.cellScale : null; // G2 — 실측 전까지 항등(1,1,1)
   const grainBuf = grainfield.generate(width, height, 3, {
     cell: Math.max(1, sizing.px),
     mid: depth.mid,
     maxV: depth.maxV,
     amp: 0.5, // Overlay 변조 진폭. 존 불투명도가 다시 스케일한다.
     amps,
+    cellScale,
     clumpScale: cloud.clumpScale,
     seed: 1,
   });
@@ -217,9 +234,22 @@ async function applyGrain(doc, grain, medium, prefix) {
     colorSpace: "RGB",
   });
   try {
-    await addZone(doc, "Shadow", grain.shadow, grain.shadowRange, grain.feather, img, dims, prefix);
-    await addZone(doc, "Midtone", grain.midtone, grain.midtoneRange, grain.feather, img, dims, prefix);
-    await addZone(doc, "Highlight", grain.highlight, grain.highlightRange, grain.feather, img, dims, prefix);
+    // 교차점 2개(crossover1/2)에서 세 존 범위를 유도한다 — 겹침·구멍이
+    // 원천적으로 불가능하고 가중치 합이 항상 1이다(G4, core/optics/grainzones).
+    const ranges = zoneRanges(grain.crossover1, grain.crossover2, grain.feather);
+    await addZone(doc, "Shadow", grain.shadow, ranges.shadow, img, dims, prefix, ZONE_SCALE.shadow);
+    await addZone(doc, "Midtone", grain.midtone, ranges.midtone, img, dims, prefix, ZONE_SCALE.midtone);
+    // 명부만 Overlay Weber 손실을 부분 보상한다(HIGHLIGHT_GAIN) — 위 주석 참고.
+    await addZone(
+      doc,
+      "Highlight",
+      Math.min(100, grain.highlight * HIGHLIGHT_GAIN),
+      ranges.highlight,
+      img,
+      dims,
+      prefix,
+      ZONE_SCALE.highlight
+    );
   } finally {
     img.dispose();
   }
@@ -234,4 +264,4 @@ async function apply(doc, grain, medium, prefix) {
   await applyGrain(doc, grain, medium, prefix);
 }
 
-module.exports = { apply, applyDiffusion, applyGrain, blendRangeFor };
+module.exports = { apply, applyDiffusion, applyGrain };

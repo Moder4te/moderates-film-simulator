@@ -153,10 +153,9 @@ function grainSize(doc, medium, iso) {
 }
 
 /**
- * 다이클라우드 특성 — 그레인 한 존이 쌓을 레이어의 채널 진폭·클럼프.
+ * 다이클라우드 특성 — 그레인 한 존이 쌓을 레이어의 채널 진폭·크기·클럼프.
  *
- * 균일 노이즈 + 단일 블러는 같은 크기의 둥근 점만 만든다. 실제 필름은 두 가지가
- * 다르다.
+ * 균일 노이즈 + 단일 블러는 같은 크기의 둥근 점만 만든다. 실제 필름은 다르다.
  *
  *   1. **채널별 노이즈 진폭이 다르다.** Vision3 500T 스캔 4장 실측 결과 채널차는
  *      입자 **크기**가 아니라 **진폭**이었다 — 상관길이는 세 채널이 사실상 같고
@@ -164,12 +163,19 @@ function grainSize(doc, medium, iso) {
  *      가장 시끄러웠다. 텅스텐 필름을 주광에서 찍어 청감층이 얇게 노광되고 반전
  *      증폭돼 청색 노이즈가 커진 것이다. (처음엔 청색을 더 **조대**하게 만들었는데
  *      실측이 지지하지 않았다 — 크기가 아니라 세기다.)
- *   2. **밀도 요동이 광대역이다.** 미세 해시 위에 큰 상관길이의 덩어리(클럼프)가
+ *      ⚠️ **이 결론이 M1(더 큰 리그·표본)으로 재검토 중이다** — 재측정 결과가
+ *      나올 때까지는 위 값을 그대로 쓴다. docs/PLAN-GRAIN-2026-08-02.md,
+ *      docs/STATUS.md 데이터 신뢰도 참고.
+ *   2. **채널별 입자 크기 분화(G2)는 아직 실측이 없다.** `cellScale`이 그 손잡이다
+ *      — 실측 전까지 전 채널 1(항등)로 둔다. `dyeSpread`(진폭)와는 **다른 축**이다
+ *      — 이전엔 dyeSpread 주석이 "크기 분화"라고 주장하면서 실제로는 진폭만
+ *      만들었다(코드-주석 불일치). 이제 이름과 동작이 맞다.
+ *   3. **밀도 요동이 광대역이다.** 미세 해시 위에 큰 상관길이의 덩어리(클럼프)가
  *      겹친다. 단일 주파수가 아니라 옥타브의 합이다.
  *
  * @param {number} px      format.grainSize의 기준 입자 px (클럼프 반경에만 쓴다)
  * @param {object} grain   { dyeSpread, clump } 0~100
- * @returns {{ amps:{r,g,b}, clumpRadius:number, clumpScale:number }}
+ * @returns {{ amps:{r,g,b}, cellScale:{r,g,b}, clumpRadius:number, clumpScale:number }}
  */
 function dyeClouds(px, grain) {
   const g = grain || {};
@@ -178,8 +184,12 @@ function dyeClouds(px, grain) {
   const amp = (f) => 1 + (f - 1) * spread;
   const amps = { r: amp(1.23), g: 1.0, b: amp(1.76) };
 
+  // G2 — 채널별 cell(입자 크기) 배수. 실측 전까지 항등. 값이 생기면 dyeSpread와
+  // 같은 보간 방식(항등 1에서 spread로 보간)을 쓰면 된다 — 지금은 자리만 잡아둔다.
+  const cellScale = { r: 1, g: 1, b: 1 };
+
   const clumpScale = clamp01((g.clump == null ? 0 : g.clump) / 100);
-  return { amps, clumpRadius: px * 2.6, clumpScale };
+  return { amps, cellScale, clumpRadius: px * 2.6, clumpScale };
 }
 
 function clamp01(v) {
