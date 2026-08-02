@@ -259,7 +259,19 @@ function pearson(a, b) {
 
 // ---------------------------------------------------------------- 퍼포레이션 캘리브레이션
 
-const PERFORATION_PITCH_UM = 4750; // ISO 1007, 35mm 퍼포레이션 피치 4.75mm
+// ISO 1007 / KS-1870 퍼포레이션(135 스틸 필름 표준, 장피치). 피치만이 아니라
+// 개구 자체의 가로·세로 치수도 알려진 값이라 서로 다른 세 측정(피치·구멍 폭·
+// 구멍 높이)이 독립적으로 같은 µm/px에 수렴해야 한다 — 하나만 쓰는 것보다
+// 사진 속 디테일을 퍼포레이션으로 착각했을 때 훨씬 잘 걸러진다.
+//
+// 공개 자료는 "1.98mm × 2.79mm"라고만 있고 어느 쪽이 피치 방향인지 표기가
+// 불명확했다. 250dahu 하단 밴드(피치 불규칙도 0.2%, 사실상 확실한 진짜
+// 퍼포레이션)로 실측한 구멍폭/피치 비율이 0.394 — 1980/4750=0.417(오차 5%)에
+// 2790/4750=0.587(오차 33%)보다 압도적으로 가깝다. 그래서 **피치 방향(가로)이
+// 1.98mm, 그 수직(세로)이 2.79mm**로 확정했다.
+const PERFORATION_PITCH_UM = 4750; // 중심-중심 간격
+const PERFORATION_WIDTH_UM = 1980; // 피치 방향(가로) 개구 폭
+const PERFORATION_HEIGHT_UM = 2790; // 피치에 수직인(세로) 개구 높이
 
 // 최대 허용 불규칙도 — 진짜 퍼포레이션은 ISO 1007 규격 피치라 간격이 거의 일정하다.
 // 사진 속 실제 디테일(신호등·표지판 등)이 섞이면 이 비율이 확 뛴다.
@@ -291,22 +303,70 @@ function bestPeriodicRow(img, y0, y1, threshold) {
     let lo = Infinity, hi = -Infinity;
     for (let x = 0; x < width; x++) { if (row[x] < lo) lo = row[x]; if (row[x] > hi) hi = row[x]; }
     const mid = (lo + hi) / 2;
-    const edges = [];
+    const rising = [], falling = [];
     for (let x = 1; x < width; x++) {
-      if (row[x - 1] < mid && row[x] >= mid) edges.push(x); // 어두움→밝음(구멍 시작) 상승 엣지
+      if (row[x - 1] < mid && row[x] >= mid) rising.push(x); // 어두움→밝음(구멍 시작)
+      if (row[x - 1] >= mid && row[x] < mid) falling.push(x); // 밝음→어두움(구멍 끝)
     }
-    if (edges.length < PERFORATION_MIN_EDGES) continue;
+    if (rising.length < PERFORATION_MIN_EDGES) continue;
     const spacings = [];
-    for (let i = 1; i < edges.length; i++) spacings.push(edges[i] - edges[i - 1]);
+    for (let i = 1; i < rising.length; i++) spacings.push(rising[i] - rising[i - 1]);
     const meanSpacing = spacings.reduce((a, b2) => a + b2, 0) / spacings.length;
     const spacingStd = std(Float64Array.from(spacings));
     const irregularity = spacingStd / meanSpacing;
+
+    // 각 상승 엣지 다음에 오는 하강 엣지를 짝지어 구멍 폭(px)을 잰다 —
+    // 피치와 별개인 두 번째 물리량이라 착각 검출을 교차검증할 수 있다.
+    const widths = [];
+    let fi = 0;
+    for (const r of rising) {
+      while (fi < falling.length && falling[fi] <= r) fi++;
+      if (fi < falling.length) widths.push(falling[fi] - r);
+    }
+    const meanWidth = widths.length ? widths.reduce((a, b2) => a + b2, 0) / widths.length : null;
+    const widthStd = widths.length ? std(Float64Array.from(widths)) : null;
+
     if (!best || irregularity < best.irregularity) {
-      best = { y, edges, meanSpacing, spacingStd, irregularity };
+      best = { y, edges: rising, meanSpacing, spacingStd, irregularity, meanWidth, widthStd, widthCount: widths.length };
     }
     if (irregularity <= PERFORATION_MAX_IRREGULARITY) break; // 충분히 규칙적이면 더 안 뒤진다
   }
   return best;
+}
+
+// 대표 구멍 하나의 세로 방향 개구 높이(px)를 잰다. 밴드보다 위아래로 넉넉히
+// 훑어야 상승·하강 전이를 둘 다 잡는다. 그레인 잡음을 줄이려 홀 중심 좌우
+// 11열을 평균한 세로 프로파일을 쓴다(가로쪽 measurePSF의 11행 평균과 대칭).
+//
+// ⚠️ pad는 밴드 높이만큼 넉넉히 잡는다. 20px로 뒀다가 실측(250dahu)에서
+// 구멍 자체가 988px나 돼 밴드 경계 안쪽으로 시작점을 이미 지나쳐 버려
+// 상승 엣지를 통째로 놓친 적이 있다(개구 높이 2.79mm가 이 스캔 배율에서
+// 그 정도 크기다 — 20px로 잡을 이유가 없었다).
+function measureHoleHeight(img, band, holeCenterX) {
+  const { width, height, data } = img;
+  const pad = band.y1 - band.y0;
+  const y0 = Math.max(0, band.y0 - pad), y1 = Math.min(height, band.y1 + pad);
+  const col = new Float64Array(y1 - y0);
+  for (let dy = 0; dy < col.length; dy++) {
+    let sum = 0, n = 0;
+    for (let dx = -5; dx <= 5; dx++) {
+      const x = holeCenterX + dx;
+      if (x < 0 || x >= width) continue;
+      const i = ((y0 + dy) * width + x) * 3;
+      sum += (data[i] + data[i + 1] + data[i + 2]) / 3;
+      n++;
+    }
+    col[dy] = sum / n;
+  }
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < col.length; i++) { if (col[i] < lo) lo = col[i]; if (col[i] > hi) hi = col[i]; }
+  const mid = (lo + hi) / 2;
+  let riseY = null, fallY = null;
+  for (let i = 1; i < col.length; i++) {
+    if (riseY === null && col[i - 1] < mid && col[i] >= mid) riseY = i;
+    else if (riseY !== null && fallY === null && col[i - 1] >= mid && col[i] < mid) fallY = i;
+  }
+  return riseY !== null && fallY !== null ? fallY - riseY : null;
 }
 
 // 상/하단 퍼포레이션 스트립에서 캘리브레이션을 잰다. 표준편차 1등 행 하나만
@@ -321,6 +381,11 @@ function findPerforationPitch(img) {
     { name: "bottom", y0: height - bandHeight, y1: height },
   ];
 
+  // 규격상 구멍 폭/피치 비율. 사진 속 디테일이 우연히 피치처럼 규칙적이어도
+  // 이 비율까지 맞을 확률은 낮다 — 두 번째 독립 관문으로 쓴다.
+  const NOMINAL_WIDTH_TO_PITCH = PERFORATION_WIDTH_UM / PERFORATION_PITCH_UM;
+  const MAX_RATIO_ERROR = 0.15;
+
   const results = [];
   for (const band of bands) {
     const best = bestPeriodicRow(img, band.y0, band.y1);
@@ -328,7 +393,26 @@ function findPerforationPitch(img) {
       results.push({ band: band.name, valid: false, reason: `엣지 ${PERFORATION_MIN_EDGES}개 이상인 행을 못 찾음` });
       continue;
     }
-    const valid = best.irregularity <= PERFORATION_MAX_IRREGULARITY;
+
+    let ratioError = null;
+    if (best.meanWidth != null) {
+      const measuredRatio = best.meanWidth / best.meanSpacing;
+      ratioError = Math.abs(measuredRatio - NOMINAL_WIDTH_TO_PITCH) / NOMINAL_WIDTH_TO_PITCH;
+    }
+    const pitchOk = best.irregularity <= PERFORATION_MAX_IRREGULARITY;
+    const ratioOk = ratioError === null || ratioError <= MAX_RATIO_ERROR;
+    const valid = pitchOk && ratioOk;
+
+    let reason = null;
+    if (!pitchOk) reason = `간격 불규칙도 ${(best.irregularity * 100).toFixed(0)}% > ${PERFORATION_MAX_IRREGULARITY * 100}% — 실제 퍼포레이션이 아니라 사진 속 디테일일 가능성`;
+    else if (!ratioOk) reason = `구멍폭/피치 비율이 규격(${NOMINAL_WIDTH_TO_PITCH.toFixed(3)})에서 ${(ratioError * 100).toFixed(0)}% 벗어남 — 피치는 규칙적이지만 진짜 퍼포레이션이 아닐 수 있음`;
+
+    let holeHeightPx = null;
+    if (valid && best.meanWidth != null) {
+      const holeCenterX = Math.round(best.edges[0] + best.meanWidth / 2);
+      holeHeightPx = measureHoleHeight(img, band, holeCenterX);
+    }
+
     results.push({
       band: band.name,
       row: best.y,
@@ -336,9 +420,16 @@ function findPerforationPitch(img) {
       pitchPx: best.meanSpacing,
       pitchStdPx: best.spacingStd,
       irregularity: best.irregularity,
+      holeWidthPx: best.meanWidth,
+      holeWidthStdPx: best.widthStd,
+      widthToPitchRatioError: ratioError,
+      holeHeightPx,
       firstEdgeX: best.edges[0],
       valid,
-      reason: valid ? null : `간격 불규칙도 ${(best.irregularity * 100).toFixed(0)}% > ${PERFORATION_MAX_IRREGULARITY * 100}% — 실제 퍼포레이션이 아니라 사진 속 디테일일 가능성`,
+      reason,
+      umPerPxFromPitch: PERFORATION_PITCH_UM / best.meanSpacing,
+      umPerPxFromWidth: best.meanWidth != null ? PERFORATION_WIDTH_UM / best.meanWidth : null,
+      umPerPxFromHeight: holeHeightPx != null ? PERFORATION_HEIGHT_UM / holeHeightPx : null,
     });
   }
   return results;
@@ -499,16 +590,39 @@ function main() {
   // 캘리브레이션·PSF는 프레임 전체 광학 조건이라 밀도 단계마다 한 번만 잰다.
   // valid:false인 밴드(실제 퍼포레이션이 아니라 사진 디테일로 의심되는 경우)는
   // umPerPx·PSF 계산에서 뺀다 — 틀린 걸 조용히 쓰느니 null이 낫다.
+  //
+  // umPerPx는 피치·구멍폭 두 가로축 측정의 평균이다(서로 독립적인 물리량이라
+  // 둘 다 재는 것 자체가 착각 검출의 교차검증이다 — findPerforationPitch의
+  // widthToPitchRatioError). umPerPxVertical(구멍 높이)은 세로축이라 별도로
+  // 비교해 픽셀이 정사각이 아닐 가능성을 잡는다.
   const perforations = findPerforationPitch(imgA);
   const validBands = perforations.filter((p) => p.valid);
-  let umPerPx = null, calibrationWarning = null;
+  let umPerPx = null, umPerPxVertical = null, calibrationWarning = null;
   if (validBands.length === 0) {
     calibrationWarning = "유효한 퍼포레이션 밴드가 없다 — umPerPx·PSF 전부 null";
   } else {
-    umPerPx = PERFORATION_PITCH_UM / (validBands.reduce((s, p) => s + p.pitchPx, 0) / validBands.length);
+    const horizontal = [];
+    for (const b of validBands) {
+      horizontal.push(b.umPerPxFromPitch);
+      if (b.umPerPxFromWidth != null) horizontal.push(b.umPerPxFromWidth);
+    }
+    umPerPx = horizontal.reduce((a, b2) => a + b2, 0) / horizontal.length;
+
+    const vertical = validBands.map((b) => b.umPerPxFromHeight).filter((v) => v != null);
+    if (vertical.length) {
+      umPerPxVertical = vertical.reduce((a, b2) => a + b2, 0) / vertical.length;
+      const vDiff = Math.abs(umPerPxVertical - umPerPx) / umPerPx;
+      if (vDiff > 0.05) {
+        calibrationWarning = `가로 캘리브레이션(${umPerPx.toFixed(3)}µm/px)과 세로(${umPerPxVertical.toFixed(3)}µm/px)가 ${(vDiff * 100).toFixed(1)}% 어긋난다 — 픽셀이 정사각이 아니거나 측정에 문제가 있을 수 있다`;
+      }
+    }
+
     if (validBands.length === 2) {
       const diff = Math.abs(validBands[0].pitchPx - validBands[1].pitchPx) / validBands[0].pitchPx;
-      if (diff > 0.05) calibrationWarning = `상/하단 피치가 ${(diff * 100).toFixed(1)}% 어긋난다 — 기울어졌거나 둘 중 하나가 틀렸을 수 있다`;
+      if (diff > 0.05) {
+        const bandWarning = `상/하단 피치가 ${(diff * 100).toFixed(1)}% 어긋난다 — 기울어졌거나 둘 중 하나가 틀렸을 수 있다`;
+        calibrationWarning = calibrationWarning ? `${calibrationWarning}; ${bandWarning}` : bandWarning;
+      }
     }
   }
   const psf = validBands.length ? measurePSF(imgA, validBands[0]) : null;
@@ -524,7 +638,7 @@ function main() {
 
   const report = {
     input: { a: args.files[0], b: args.files[1] || null, size: args.size, highpassSigma: args.sigma },
-    calibration: { umPerPx, warning: calibrationWarning, perforations },
+    calibration: { umPerPx, umPerPxVertical, warning: calibrationWarning, perforations },
     psf,
     zones,
   };
