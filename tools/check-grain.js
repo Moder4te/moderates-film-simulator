@@ -138,26 +138,35 @@ function corr(a, b) {
 
 // ── G4 — 존 가중치 합이 항상 1인가 ─────────────────────────────────────
 //
-// crossover1/2는 UI에 없다(params.js 고정값 85/170) — 실제로 바뀌는 입력은
-// feather 슬라이더(0~120, index.html data-min/max) 하나뿐이다. 그래서 그
-// 도달 가능한 전 구간(feather 0~120, 고정 85/170)을 스윕한다. **c1=0·c2=255
-// 같은 조합은 일부러 안 넣는다** — 도달 불가능할 뿐 아니라, 그 경우 명부·암부
-// 자체가 폭 0으로 퇴화해 "인접 존과 경계를 공유"라는 전제가 깨진다(다른 종류의
-// 퇴화라 이 함수의 책임 범위 밖).
+// **교차점까지 스윕한다.** 예전엔 feather(0~120)만 훑고 c1/c2는 85/170에
+// 고정했다 — "crossover는 UI에 없으니 도달 불가능"이라는 이유였다. 그런데
+// `zoneRanges`는 `core/`의 공개 순수 함수이고, 이 저장소에서 core 함수의 계약은
+// 검사가 정한다. 좁혀 놓은 검사는 **통과 표시를 내면서 함수가 조용히 틀리는 것을
+// 가려 줬다** — 실제로 c2=255와 c2<c1에서 가중치 합이 정확히 2가 됐다(그 톤에서
+// 그레인이 두 배로 얹힌다). TODO의 ADVANCED 아이디어가 crossover를 슬라이더로
+// 빼면 곧바로 열릴 자리이기도 했다.
+//
+// 지금은 `zoneRanges`가 입력을 [0,254]로 clamp하고 정렬해 **전 함수(total)**가
+// 됐으므로, 도달성과 무관하게 전 입력을 훑는다. 도달 가능성으로 검사 범위를
+// 좁히면 도달 가능성이 바뀌는 날 조용히 뚫린다.
 {
-  let maxDev = 0, worstFeather = null;
-  for (let feather = 0; feather <= 120; feather += 1) {
-    const z = zoneRanges(85, 170, feather);
-    for (let L = 0; L <= 255; L += 0.5) {
-      const sum = blendWeight(z.shadow, L) + blendWeight(z.midtone, L) + blendWeight(z.highlight, L);
-      const dev = Math.abs(sum - 1);
-      if (dev > maxDev) { maxDev = dev; worstFeather = feather; }
+  let maxDev = 0, worst = null;
+  for (let c1 = 0; c1 <= 255; c1 += 5) {
+    for (let c2 = 0; c2 <= 255; c2 += 5) {
+      for (const feather of [0, 1, 10, 40, 85, 120]) {
+        const z = zoneRanges(c1, c2, feather);
+        for (let L = 0; L <= 255; L += 0.5) {
+          const sum = blendWeight(z.shadow, L) + blendWeight(z.midtone, L) + blendWeight(z.highlight, L);
+          const dev = Math.abs(sum - 1);
+          if (dev > maxDev) { maxDev = dev; worst = `c1=${c1} c2=${c2} f=${feather} L=${L}`; }
+        }
+      }
     }
   }
   check(
-    "G4 — zoneRanges 가중치 합이 도달 가능한 전 구간에서 정확히 1",
+    "G4 — zoneRanges 가중치 합이 전 입력(c1·c2·feather)에서 정확히 1",
     maxDev < 1e-9,
-    `최대 이탈 ${maxDev.toExponential(1)}${worstFeather != null ? ` (feather=${worstFeather})` : ""}`
+    `최대 이탈 ${maxDev.toExponential(1)}${worst && maxDev >= 1e-9 ? ` (${worst})` : ""}`
   );
 }
 

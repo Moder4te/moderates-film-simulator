@@ -24,12 +24,33 @@
  * 터진다, tools/check-grain.js). 예전 `blendRangeFor`도 같은 이유로
  * `Math.min(feather, (hi-lo)/2)`로 clamp했었다 — 여기서도 그대로 지킨다.
  *
- * @param {number} c1 암부↔중간톤 교차점
- * @param {number} c2 중간톤↔명부 교차점 (c2 > c1)
+ * ⚠️ **교차점도 clamp·정렬해 전 함수(total)로 만든다.** 두 입력이 그냥 통과하면
+ * 합이 1이라는 이 함수의 유일한 계약이 깨진다 — 실측으로 두 경우를 잡았다.
+ *
+ *   `c2 = 255`   `blendWeight`가 "최상단 존인가"를 `whiteMax >= 255`로 **값에서
+ *                추론**한다. c2가 255면 midtone의 whiteMax도 255가 되어 midtone과
+ *                highlight가 **둘 다** 최상단을 주장하고 각각 1을 낸다.
+ *   `c2 < c1`    중간톤이 빈 구간이 되면서 암부와 명부가 같은 톤을 동시에 덮는다.
+ *                슬라이더 두 개를 노출하면 사용자가 가장 먼저 하는 조작이다.
+ *
+ * 그래서 254 상한(255를 midtone에 넘기지 않는다)과 정렬을 여기서 건다.
+ * **순서가 중요하다 — clamp를 먼저, 정렬을 나중에.** 반대로 하면 c1=c2=255에서
+ * 정렬 뒤 clamp가 hi < lo를 만들어 같은 자리가 다시 터진다(실측).
+ *
+ * 근본 원인은 `blendWeight`가 위치가 아니라 값으로 바깥 경계를 판정하는 것이다.
+ * 명시적 플래그로 바꾸는 편이 깨끗하지만 호출 규약이 바뀌므로, 지금은 입력을
+ * 좁혀 계약을 지킨다. `tools/check-grain.js`가 전 입력을 훑어 이 성질을 지킨다.
+ *
+ * @param {number} c1 암부↔중간톤 교차점 (0~254로 clamp)
+ * @param {number} c2 중간톤↔명부 교차점 (0~254로 clamp. c1과 순서가 바뀌면 정렬)
  * @param {number} feather 교차 구간 폭(px, 0~255 스케일)
  * @returns {{shadow:number[], midtone:number[], highlight:number[]}}
  */
-function zoneRanges(c1, c2, feather) {
+function zoneRanges(rawC1, rawC2, feather) {
+  const a = Math.min(254, Math.max(0, rawC1));
+  const b = Math.min(254, Math.max(0, rawC2));
+  const c1 = Math.min(a, b);
+  const c2 = Math.max(a, b);
   const half = Math.min(feather / 2, Math.max(0, (c2 - c1) / 2));
   return {
     shadow: [0, 0, c1 - half, c1 + half], // 아래엔 크로스페이드할 존이 없다

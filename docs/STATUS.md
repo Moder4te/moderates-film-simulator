@@ -193,11 +193,16 @@ UUID·RGBTable은 생성된 `.xmp`에서 **직접 뽑는다** — 따로 계산�
 Core 1/1 · Mid 1/2 · Bleed 1/4. Core만 풀해상도인 이유는 **원반의 뚜렷한 경계**가
 축소·확대에서 뭉개지기 때문이다.
 
-## 최근 작업 흐름 (2026-08-03)
+## 최근 작업 흐름 (2026-08-04)
 
 되짚을 필요가 있을 때만 본다. 상세는 [`RESOLVED.md`](./RESOLVED.md).
 
 ```
+finish 2.18.1  그레인 결함 2건 — 존 가중치 합이 c2=255·c2<c1에서 2가 되던 것
+               (zoneRanges를 전 함수로 clamp+정렬, check-grain G4를 전 입력
+               스윕으로 확장) · G5 회전이 격자 배열을 2.17배로 키우던 것
+               (좌표 해시로 배열 제거 — 실측 266MP·기준 6000px에서 831MB→0).
+               통계량 불변, 그레인 무늬는 바뀐다. 상세는 RESOLVED.md
 finish 2.18.0  그레인 물리 개선 중 실측치 없이 되는 부분(G1·G4·G5,
                docs/PLAN-GRAIN-2026-08-02.md) — colorMode 기본 rgb ·
                zoneRanges(core/optics/grainzones.js)로 존 경계 재설계

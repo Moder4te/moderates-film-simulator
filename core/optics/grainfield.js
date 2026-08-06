@@ -50,9 +50,34 @@ const BASE_ANGLE = 0.35; // ≈20°
 const CLUMP_ANGLE = 1.15; // ≈66°
 
 /**
+ * 격자 마디값 — **배열에 저장하지 않고 좌표에서 해시로 뽑는다.**
+ *
+ * 회전(G5) 때문에 격자가 이미지 **대각선**을 덮어야 해서, 저장 방식이면 배열이
+ * 회전 전의 2.17배가 된다(3:2 기준). 보통은 `cell ∝ 장변`이라 격자 크기가 문서
+ * 크기와 무관하게 고정되지만, 「입자 크기 기준」을 고정값(6000px·9000px·직접입력)으로
+ * 두고 큰 문서를 작업하면 그 관계가 끊긴다 — 실측 266MP·기준 6000px·ISO 400에서
+ * 격자만 **383MB → 831MB**. 이 파일이 "266MP에서 필드 3GB로 메모리가 터졌다"고
+ * 적고 채널-메이저로 고친 바로 그 자리다.
+ *
+ * 값 노이즈는 마디값이 **좌표의 결정적 난수**이기만 하면 되므로 저장할 이유가 없다.
+ * 해시로 바꾸면 배열이 통째로 사라져 회전 이전보다도 가볍고, 격자 경계를 벗어난
+ * 인덱스라는 개념 자체가 없어져 여유분(+3) 계산도 필요 없다.
+ */
+function latticeValue(ix, iy, seed) {
+  let h = Math.imul(ix, 0x27d4eb2d) ^ Math.imul(iy, 0x85ebca6b) ^ Math.imul(seed, 0xc2b2ae35);
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  h = Math.imul(h ^ (h >>> 13), 0x297a2d39);
+  h ^= h >>> 16;
+  return (h >>> 0) / 2147483648 - 1; // [-1, 1)
+}
+
+/**
  * 값 노이즈 한 옥타브를 out(Float32, w*h)에 **가산**한다. 범위 대략 [-weight, weight].
  * cell = blob 크기(px). 클수록 큰 blob, 대비는 그대로. angle(라디안)만큼 격자를
  * 회전해 샘플링한다 — 격자 마디가 이미지 축·다른 옥타브와 정렬되지 않게(G5).
+ *
+ * `rand`는 **옥타브 시드를 한 번 뽑는 데만** 쓴다(마디값은 해시가 낸다). 호출
+ * 규약은 그대로라 `channelField`·검사 쪽은 손댈 것이 없다.
  */
 function addOctave(out, w, h, cell, weight, rand, angle) {
   const step = Math.max(1, cell);
@@ -61,11 +86,14 @@ function addOctave(out, w, h, cell, weight, rand, angle) {
   const sinA = Math.sin(a);
   const cx = w / 2;
   const cy = h / 2;
-  // 회전한 좌표는 원본보다 넓은 범위(대각선)를 덮어야 격자가 모서리까지 채워진다.
+  // 회전 좌표가 음수로 가지 않도록 대각 반지름만큼 민다. 해시라 범위 상한은 무관.
   const half = Math.sqrt(w * w + h * h) / 2;
-  const gSize = Math.ceil((2 * half) / step) + 3;
-  const g = new Float32Array(gSize * gSize);
-  for (let i = 0; i < g.length; i++) g[i] = (rand() * 2 - 1) * weight;
+  const seed = (rand() * 4294967296) >>> 0;
+
+  // 이웃 픽셀은 대개 같은 셀에 떨어진다(step ≥ 1). 마디 4개를 캐시해 해시 호출을
+  // 줄인다 — cell이 클수록 적중률이 높고, cell=1(최악)이어도 저장 방식과 비슷하다.
+  let lx = 0x7fffffff, ly = 0x7fffffff;
+  let v00 = 0, v10 = 0, v01 = 0, v11 = 0;
 
   for (let y = 0; y < h; y++) {
     const dy0 = y - cy;
@@ -73,15 +101,21 @@ function addOctave(out, w, h, cell, weight, rand, angle) {
       const dx0 = x - cx;
       const rx = (dx0 * cosA - dy0 * sinA + half) / step;
       const ry = (dx0 * sinA + dy0 * cosA + half) / step;
-      const x0 = rx | 0;
-      const y0 = ry | 0;
+      const x0 = Math.floor(rx);
+      const y0 = Math.floor(ry);
+      if (x0 !== lx || y0 !== ly) {
+        v00 = latticeValue(x0, y0, seed);
+        v10 = latticeValue(x0 + 1, y0, seed);
+        v01 = latticeValue(x0, y0 + 1, seed);
+        v11 = latticeValue(x0 + 1, y0 + 1, seed);
+        lx = x0;
+        ly = y0;
+      }
       const tx = smooth(rx - x0);
       const ty = smooth(ry - y0);
-      const r0 = y0 * gSize;
-      const r1 = (y0 + 1) * gSize;
-      const top = g[r0 + x0] * (1 - tx) + g[r0 + x0 + 1] * tx;
-      const bot = g[r1 + x0] * (1 - tx) + g[r1 + x0 + 1] * tx;
-      out[y * w + x] += top * (1 - ty) + bot * ty;
+      const top = v00 * (1 - tx) + v10 * tx;
+      const bot = v01 * (1 - tx) + v11 * tx;
+      out[y * w + x] += (top * (1 - ty) + bot * ty) * weight;
     }
   }
 }
