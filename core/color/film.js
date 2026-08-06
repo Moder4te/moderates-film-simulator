@@ -283,7 +283,12 @@ function buildLut(film, opts) {
   // 캐스트도 줄어든다.
   //
   // `whitePoint`로 "scalar" / "perChannel" / "clip"을 고를 수 있다.
-  const wp = film.whitePoint || "rolloff";
+  // **실측 곡선 인화지는 합성 롤오프를 끈다.** 7단계 롤오프는 "TDS 곡선에 어깨가
+  // 없다"를 메우려던 편법인데, 인화지 **발끝**이 바로 그 역할을 물리적으로 한다.
+  // 둘 다 걸면 이중 압축이다 — Endura + Portra 400에서 흰색이 0.83(인화지 Dmin이
+  // 낸 최대 반사율)에서 0.74로 한 번 더 눌렸다. 게다가 곡선 인화지는 출력이 구조적으로
+  // 1을 넘을 수 없어(P = 10^(−Dp) ≤ 10^(−Dmin)) 원래 목적인 클리핑 방지도 필요 없다.
+  const wp = pp && pp.curves ? "clip" : film.whitePoint || "rolloff";
   if (wp !== "clip" && info.sign > 0) {
     const rowSum = [
       (m[0][0] + m[0][1] + m[0][2]) / 100,

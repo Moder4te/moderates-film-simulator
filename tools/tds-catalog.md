@@ -55,6 +55,22 @@ UltraMax 400 −1.44 / Portra 800 −1.74. UltraMax 400이 Portra 400과 같은 
 밝기 차이로 새지 않고 곡선 형태 차이만 남는다.**
 
 
+## RA-4 인화지 (2026-08-06 추가)
+
+필름 TDS에는 인화지 응답이 없지만 **인화지 TDS에는 있다.** 모든 필름이 같은 인화지에
+인화되므로 인화지 감마는 필름과 무관한 공유 상수이고, 그것이 `core/color/paper.js`의
+메인 톤이다(왜 중요한지는 그 파일 헤더).
+
+| 인화지 | 제조사 | 상태 | 등급 | 곡선쪽 | 비고 |
+|---|---|---|---|---|---|
+| ENDURA Premier | Kodak Alaris | 채택 | **A** | E-4070 p4 | RA-4, Status A. γ R3.98/G3.93/B4.10 |
+| Crystal Archive Deep Matte Velvet | Fujifilm | **불가** | **D** | — | **특성곡선이 문서에 없다.** 분광 감도·염료 농도만 있고 그마저 래스터 |
+
+- ⚠️ **인화지는 오렌지 마스크가 없어 층 순서 불변식(B>G>R)이 성립하지 않는다.**
+  `extract_tds_curves.py`에 `paper` 인자를 넘겨야 한다. Endura는 오히려 R>G>B다(Dmax 기준)
+- Fuji는 특성곡선이 실린 다른 계열 문서(Type II · Supreme · Professional Paper)를
+  확인해야 한다 → [`TODO.md`](../TODO.md) S3a
+
 ## 컬러 네거티브 (31건)
 
 | 필름 | 제조사 | 상태 | 등급 | 곡선쪽 | Log H Ref | 출처 |
