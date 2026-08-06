@@ -42,7 +42,8 @@ function defaultParams() {
       enabled: true,
       id: "kodak-portra-400",
       exposure: 0, // 스톱. 필름 정의의 exposureRange 안이어야 한다.
-      scanner: "none", // "none" | "frontier" | "noritsu"
+      paper: "normalized", // 인화지. "normalized"(구 동작) | "shared". core/color/paper.js
+      scanner: "none", // 인화·스캔 장비 특성. 옵션이다 — 메인 톤은 인화지가 잡는다
       lutSize: 33, // 33 = 일반, 65 = 정밀
     },
 

@@ -6,7 +6,7 @@
  *   1. 디코드      L = v^γ                       ProPhoto γ1.8 → 선형
  *   2. 로그 노광   H = log10(L / 0.18) + 스톱     18% 그레이를 H=0에 앵커
  *   3. 특성곡선    D = curve(H)                   층별 네거티브 농도
- *   4. 반전/인화   P = 0.18 · 10^(pg · (D − D₀))  D₀ = curve(0)
+ *   4. 반전/인화   P = 10^(−paper(k − D))          인화지 응답. k는 확대기 필터
  *   5. 크로스토크  P' = M · P                     선형 공간에서 3×3
  *   6. 인코드      v' = P'^(1/γ)
  *
@@ -21,8 +21,10 @@
  * 적감층 기울기가 높으면 하이라이트가 따뜻해지고 암부가 차가워진다. 필름마다
  * 다른 "색감"의 정체가 이것이고, TDS 수치를 그대로 쓰는 의미도 여기에 있다.
  *
- * pg·γ = 1이면 그 채널은 항등(입력=출력)이 된다. 즉 printGamma는 전체 대비를
- * 정하는 손잡이이고, 채널별 편차가 색을 만든다.
+ * **4단계는 `paper.js`가 맡는다.** 인화지 곡선이 직선이면 예전 수식
+ * `P = 0.18·10^(pg·(D−D₀))`과 대수적으로 같아서, `paper:"normalized"`는 v2.18까지의
+ * 동작과 **비트 단위로 같다**. 인화지를 공유 상수나 실측 곡선으로 바꾸면 필름 간
+ * 대비 차이가 살아난다 — 왜 그것이 중요한지는 `paper.js` 헤더에 있다.
  */
 
 const { pchip, tabulate, monotonic } = require("./curve");
@@ -30,6 +32,7 @@ const films = require("./films");
 const simulate = require("./simulate");
 const colorspace = require("./colorspace");
 const scanner = require("./scanner");
+const paper = require("./paper");
 const lut = require("./lut");
 
 const WORKING_GAMMA = 1.8; // ProPhoto RGB
@@ -105,7 +108,7 @@ function typeOf(film) {
  *   **최소 농도(Dmin)를 흰색 1.0에 맞춘다.** 슬라이드 스캐너가 하는 일이 그것이고,
  *   기준 그레이에 맞추면 대비가 2를 넘는 슬라이드에서 출력이 5를 넘어가 버린다.
  */
-function channelResponse(points, printGamma, exposureStops, sign, wbShift) {
+function channelResponse(points, printGamma, exposureStops, sign, wbShift, makePrint) {
   // 리버설 곡선은 노광이 늘수록 농도가 **내려간다**. 단조 보정은 "증가"를
   // 강제하므로 그대로 쓰면 곡선을 뭉갠다. 부호를 뒤집어 보정한 뒤 되돌린다.
   const src = sign > 0
@@ -120,11 +123,18 @@ function channelResponse(points, printGamma, exposureStops, sign, wbShift) {
 
   if (sign > 0) {
     // 네거티브 — 기준 그레이에서 P = 0.18이 되도록 맞춘다.
+    //
+    // 인화 변환은 `paper.js`가 만든다. 인화지 곡선이 직선이면 예전 수식
+    // `0.18·10^(pg·(D−d0))`과 **대수적으로 같다**(paper.js 헤더 참조). 그래서
+    // `makePrint`가 없는 경로(모노·구 호출)는 그 수식을 그대로 쓴다.
     const d0 = fn(MID_GRAY_OFFSET);
+    const print = makePrint
+      ? makePrint(d0)
+      : (D) => ANCHOR * Math.pow(10, printGamma * (D - d0));
     return function respond(v) {
       const L = Math.pow(v, WORKING_GAMMA);
       const H = Math.log10(Math.max(L, L_FLOOR) / ANCHOR) + shift;
-      return ANCHOR * Math.pow(10, printGamma * (fn(H) - d0));
+      return print(fn(H));
     };
   }
 
@@ -162,9 +172,13 @@ const H_WHITE = Math.log10(1 / ANCHOR);
  * 맞추면 전 필름의 LUT 값이 그 크기만큼 움직여 얻는 것 없이 기준선만 흔들린다.
  * (예전 주석은 "channelResponse와 같은 곡선을 써야 한다"였는데 코드가 그렇지 않았다.)
  */
-function referencePeak(points, printGamma) {
+function referencePeak(points, printGamma, makePrint) {
   const f = pchip(monotonic(points));
-  return ANCHOR * Math.pow(10, printGamma * (f(H_WHITE + MID_GRAY_OFFSET) - f(MID_GRAY_OFFSET)));
+  const d0 = f(MID_GRAY_OFFSET);
+  const print = makePrint
+    ? makePrint(d0)
+    : (D) => ANCHOR * Math.pow(10, printGamma * (D - d0));
+  return print(f(H_WHITE + MID_GRAY_OFFSET));
 }
 
 /**
@@ -194,12 +208,17 @@ function buildLut(film, opts) {
 
   if (info.channels === 1) return buildMonoLut(film, size, exposure, info);
 
+  // 인화지. 리버설은 인화 단계가 없어(슬라이드 자체가 포지티브다) 건너뛴다.
+  const pp = info.sign > 0 ? paper.byId(o.paper || "normalized") : null;
+  const makePrint = (ch) =>
+    pp ? (d0) => paper.transferFor(pp, film, ch, d0) : null;
+
   // 텅스텐 캐스트(있으면). daylight 필름은 없어서 0 → 기존 동작 그대로.
   const cast = film.tungstenCast || { r: 0, g: 0, b: 0 };
   const respond = [
-    channelResponse(cur.r, pg, exposure, info.sign, cast.r),
-    channelResponse(cur.g, pg, exposure, info.sign, cast.g),
-    channelResponse(cur.b, pg, exposure, info.sign, cast.b),
+    channelResponse(cur.r, pg, exposure, info.sign, cast.r, makePrint("r")),
+    channelResponse(cur.g, pg, exposure, info.sign, cast.g, makePrint("g")),
+    channelResponse(cur.b, pg, exposure, info.sign, cast.b, makePrint("b")),
   ];
 
   // 1~4단계는 채널끼리 독립이고, 격자의 각 축은 같은 size개 값만 갖는다.
@@ -271,7 +290,7 @@ function buildLut(film, opts) {
       (m[1][0] + m[1][1] + m[1][2]) / 100,
       (m[2][0] + m[2][1] + m[2][2]) / 100,
     ];
-    const peaks = ["r", "g", "b"].map((ch, i) => referencePeak(cur[ch], pg) * Math.max(rowSum[i], 1));
+    const peaks = ["r", "g", "b"].map((ch, i) => referencePeak(cur[ch], pg, makePrint(ch)) * Math.max(rowSum[i], 1));
 
     if (wp === "scalar") {
       const peak = Math.max(...peaks);
@@ -538,7 +557,7 @@ function buildForParams(params, size) {
   // 서로 달라졌다 — 미리보기는 그레이딩을 보여주는데 적용은 아무것도 하지 않고,
   // 내보내기는 에러를 던졌다. 판단을 여기 한 곳으로 모은다.
   const table = filmOn
-    ? buildLut(films.byId(f.id), { size, exposure: f.exposure || 0 })
+    ? buildLut(films.byId(f.id), { size, exposure: f.exposure || 0, paper: f.paper })
     : lut.identity(size);
 
   // 유제 → 스캐너 → 사용자 조정 순서다.

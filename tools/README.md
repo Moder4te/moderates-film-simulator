@@ -50,12 +50,16 @@ Kodak TDS의 특성곡선은 **래스터가 아니라 벡터 경로**다(이미�
 ```
 pip install pymupdf
 
-python tools/extract_tds_curves.py <pdf> <페이지> <x0> <y0> <x1> <y1> > out.json
+python tools/extract_tds_curves.py <pdf> <페이지> <x0> <y0> <x1> <y1> [negative|reversal|paper] > out.json
 ```
 
 뒤의 네 숫자는 특성곡선 플롯을 감싸는 대략적인 영역(PDF 포인트 단위)이다.
 넉넉하게 줘도 되지만, 같은 페이지의 다른 차트(분광감도 등)를 통째로 포함하면
 프레임을 잘못 잡을 수 있다.
+
+마지막 인자는 층 순서 불변식(컬러 네거티브는 B > G > R)을 적용할지 정한다.
+**리버설과 RA-4 인화지는 오렌지 마스크가 없어** 그 순서가 보장되지 않으므로
+반드시 종류를 넘겨야 한다 — 안 넘기면 멀쩡한 추출이 거부된다.
 
 예시 (검증된 두 필름):
 

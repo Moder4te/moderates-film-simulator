@@ -472,8 +472,9 @@ def main():
     사용법:
       extract_tds_curves.py <pdf> <페이지> <x0> <y0> <x1> <y1> [필름종류]
 
-    필름종류: negative(기본) | reversal
-      리버설은 오렌지 마스크가 없어 층 순서 불변식을 적용하지 않는다.
+    필름종류: negative(기본) | reversal | paper
+      리버설과 **인화지**는 오렌지 마스크가 없어 층 순서 불변식을 적용하지 않는다.
+      (컬러 네거티브는 마스크 때문에 화면 위에서부터 반드시 B > G > R이다.)
     """
     pdf, pageno = sys.argv[1], int(sys.argv[2])
     rx0, ry0, rx1, ry1 = map(float, sys.argv[3:7])
@@ -568,14 +569,14 @@ def main():
     # 위에서부터 반드시 B > G > R 순서이므로(농도 B가 최대), 이것으로 확정 검증한다.
     # y는 화면 좌표라 위가 작다 — 즉 B의 y가 가장 작아야 한다.
     #
-    # ⚠️ **리버설에는 적용하지 않는다.** 슬라이드는 오렌지 마스크가 없어 층 순서가
-    # 보장되지 않는다. Agfachrome RSX II 50이 실제로 이 검사에 걸렸는데, 층 배정이
+    # ⚠️ **리버설·인화지에는 적용하지 않는다.** 슬라이드와 RA-4 인화지는 오렌지
+    # 마스크가 없어 층 순서가 보장되지 않는다. Agfachrome RSX II 50이 실제로 이 검사에 걸렸는데, 층 배정이
     # 틀린 게 아니라 검사 전제가 컬러 네거티브 전용이었던 것이다.
     # 라벨 3개 확보는 종류와 무관하게 필수다.
     if len(assigned) != 3:
         raise SystemExit(f"R/G/B 라벨을 3개 모두 찾지 못했습니다: {sorted(assigned)}")
 
-    if film_type != "reversal":
+    if film_type not in ("reversal", "paper"):
         ys = {ch: sum(p[1] for p in assigned[ch]["pts"]) / len(assigned[ch]["pts"])
               for ch in ("R", "G", "B")}
         if not (ys["B"] < ys["G"] < ys["R"]):

@@ -22,6 +22,7 @@ const C = (p) => require(path.join(ROOT, "core", p));
 const film = C("color/film");
 const films = C("color/films");
 const scanner = C("color/scanner");
+const paper = C("color/paper");
 const lut = C("color/lut");
 const cube = C("io/cube");
 const xmp = C("io/xmp");
@@ -186,22 +187,25 @@ const ref = PROBES.map((p) => {
   let worst = 0, where = null;
   for (const f of films.all()) {
     for (const sc of scanner.all()) {
+      for (const pp of paper.all()) {
       const p = JSON.parse(JSON.stringify(params));
       p.film.id = f.id;
       p.film.scanner = sc.id;
+      p.film.paper = pp.id;
       const eng = film.buildForParams(p, 33);
       const { size, rows } = parseCube(cube.build(p, { size: 33, space: "prophoto" }));
       for (let i = 0; i < rows.length; i++) {
         for (let c = 0; c < 3; c++) {
           const d = Math.abs(rows[i][c] - eng[i * 3 + c]);
-          if (d > worst) { worst = d; where = `${f.id}/${sc.id}`; }
+          if (d > worst) { worst = d; where = `${f.id}/${sc.id}/${pp.id}`; }
         }
       }
       if (size !== 33) { worst = 1; where = "격자 크기 불일치"; }
+      }
     }
   }
-  ok(`필름 ${films.all().length} × 스캐너 ${scanner.all().length} 전 조합`, worst < 2e-6,
-    `최대차 ${worst.toExponential(2)}${where ? " @ " + where : ""}`);
+  ok(`필름 ${films.all().length} × 스캐너 ${scanner.all().length} × 인화지 ${paper.all().length} 전 조합`,
+    worst < 2e-6, `최대차 ${worst.toExponential(2)}${where ? " @ " + where : ""}`);
 }
 
 // ── 6. 그레이딩이 색역을 좁히지 않는가 ───────────────────────────────

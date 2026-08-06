@@ -20,6 +20,7 @@ const cslider = require("./lib/shared/ui/cslider");
 const photoanalysis = require("./src/photoanalysis");
 const films = require("./lib/core/color/films");
 const scanner = require("./lib/core/color/scanner");
+const paper = require("./lib/core/color/paper");
 const film = require("./lib/core/color/film");
 const lut = require("./lib/core/color/lut");
 const colorspace = require("./lib/core/color/colorspace");
@@ -498,7 +499,7 @@ function visualTables() {
 
   // ⚠️ 캐시 키에는 결과를 바꾸는 것이 **전부** 들어가야 한다. 이전 키에는
   // 스캐너와 enabled가 빠져 있어서, 스캐너를 바꿔도 팔레트가 갱신되지 않았다.
-  const key = JSON.stringify([f.enabled, f.id, f.exposure, f.scanner, params.grading]);
+  const key = JSON.stringify([f.enabled, f.id, f.exposure, f.paper, f.scanner, params.grading]);
   if (lutCache.key === key) return lutCache;
 
   try {
@@ -644,23 +645,33 @@ function buildFilmChips() {
   }
 }
 
-/** 스캐너 선택 칩. 필름 칩과 같은 이유로 커스텀 칩을 쓴다. */
-function buildScannerChips() {
-  const host = $("scannerChips");
+/**
+ * 선택 칩 묶음. 필름 칩과 같은 이유로 커스텀 칩을 쓴다.
+ *
+ * 인화지와 스캐너가 같은 모양이라 하나로 합쳤다. 예전엔 스캐너 전용이었는데,
+ * 인화지 칩을 복사해 만들면 `syncFilmUI`의 활성 표시까지 두 벌이 된다.
+ */
+function buildChoiceChips(hostId, key, items) {
+  const host = $(hostId);
   if (!host) return;
   host.textContent = "";
-  for (const s of scanner.all()) {
+  for (const it of items) {
     const chip = document.createElement("div");
     chip.className = "chip-btn";
-    chip.textContent = s.displayName;
-    chip.dataset.scannerId = s.id;
+    chip.textContent = it.displayName;
+    chip.dataset.choiceId = it.id;
     chip.addEventListener("click", () => {
-      params.film.scanner = s.id;
+      params.film[key] = it.id;
       syncFilmUI();
       onParamsChanged();
     });
     host.appendChild(chip);
   }
+}
+
+function buildScannerChips() {
+  buildChoiceChips("paperChips", "paper", paper.all());
+  buildChoiceChips("scannerChips", "scanner", scanner.all());
 }
 
 function syncFilmUI() {
@@ -670,10 +681,11 @@ function syncFilmUI() {
       chip.classList.toggle("active", chip.dataset.filmId === params.film.id);
     }
   }
-  const shost = $("scannerChips");
-  if (shost) {
-    for (const chip of shost.querySelectorAll(".chip-btn")) {
-      chip.classList.toggle("active", chip.dataset.scannerId === params.film.scanner);
+  for (const [hostId, key] of [["paperChips", "paper"], ["scannerChips", "scanner"]]) {
+    const h = $(hostId);
+    if (!h) continue;
+    for (const chip of h.querySelectorAll(".chip-btn")) {
+      chip.classList.toggle("active", chip.dataset.choiceId === params.film[key]);
     }
   }
   const note = $("filmNote");
@@ -694,9 +706,11 @@ function syncFilmUI() {
     } catch (e) {
       /* 알 수 없는 id — 안내문만 비운다 */
     }
+    const pp = paper.byId(params.film.paper);
     const sc = scanner.byId(params.film.scanner);
     const parts = [];
     if (def && def.source && def.source.note) parts.push(def.source.note);
+    if (pp && pp.id !== "normalized" && pp.note) parts.push(pp.note);
     if (sc && sc.id !== "none" && sc.note) parts.push(sc.note);
     note.textContent = parts.join("  /  ");
   }
