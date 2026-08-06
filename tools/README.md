@@ -106,3 +106,56 @@ python tools/extract_tds_curves.py gold200_E7022.pdf   4 60 90 330 330 > gold.js
    (오렌지 마스크 등)이 상쇄돼 모양만 남는다.
    ⚠️ **라이선스를 먼저 본다.** spektrafilm 프로파일은 CC BY-SA 4.0이라 이 저장소
    (PolyForm NC)에 **편입할 수 없다.** 읽고 대조 결과만 기록한다.
+
+## extract_tds_spectral.py · derive-tungsten-cast.py · derive-crosstalk.py
+
+같은 TDS의 **분광** 도면에서 값을 뽑는다. 특성곡선은 "필름 + 3200K 노광 + Status M
+농도"라는 한 세트라 파장 정보가 이미 적분돼 사라진 뒤인데, 분광 도면에는 남아 있다.
+그래서 광원을 바꾸거나(→ `tungstenCast`) 염료 간 누설을 계산할(→ `crosstalk`) 수 있다.
+
+```
+python tools/extract_tds_spectral.py <pdf> <페이지> <x0> <y0> <x1> <y1> sensitivity > sens.json
+python tools/extract_tds_spectral.py <pdf> <페이지> <x0> <y0> <x1> <y1> dye --assign-by-peak > dye.json
+python tools/derive-tungsten-cast.py sens.json [--extrapolate] [--selftest]
+python tools/derive-crosstalk.py     dye.json  [--bands R,G,B]
+```
+
+Vision3 500T(`H-1-5219t`) 4쪽 실제 인자:
+
+```
+python tools/extract_tds_spectral.py H-1-5219t.pdf 4 335  40 570 235 sensitivity
+python tools/extract_tds_spectral.py H-1-5219t.pdf 4 320 335 570 556 dye --assign-by-peak
+```
+
+추출 결과는 `tools/tds-spectral/*.json`으로 저장소에 넣는다 — **PDF 없이 유도를
+재현할 수 있다.** (PDF 자체는 `.gitignore`의 `tools/tds/`로 계속 제외한다.)
+
+### 특성곡선 추출기와 다른 점
+
+| | 특성곡선 | 분광 |
+|---|---|---|
+| 곡선 자르기 | 서브패스 간격 중앙값 배수 | **x 되돌아감**(파장은 단일값 함수라 오검출이 없다) |
+| 곡선 잇기 | 없음 | 끝점 일치(0.15pt)로 체인 — 한 곡선이 벡터 경로 4개에 걸쳐 있다 |
+| 축 보정 | 프레임 못박기 + 눈금 검산 | **라벨 최소제곱 회귀**(프레임은 획 굵기만큼 밖에 있다 — 감도 도면에서 1.6nm) |
+| 불변식 | 컬러 네거티브 농도 B>G>R | **피크 파장 옐로 < 마젠타 < 시안** |
+
+### 출력에서 반드시 확인할 것
+
+- `axisFit.*.maxResidual` — 축 회귀 잔차. 감도 도면 0.74nm / 0.009 log, 염료 도면
+  3.2nm(라벨 조판이 성기다)였다.
+- `labelDisagreement` — **비어 있지 않으면 도면의 이름이 물리와 어긋난다는 뜻이다.**
+  `H-1-5219t`의 염료 도면은 Cyan과 Yellow가 뒤바뀌어 인쇄돼 있다
+  (→ [`docs/RESOLVED.md`](../docs/RESOLVED.md) "TDS 도면이 염료 이름을 뒤바꿔 인쇄했다").
+  `--assign-by-peak` 없이 돌리면 불변식이 **추출을 중단**시킨다 — 조용히 고치지 않는다.
+- `tailBound`(유도기) — 곡선이 끊긴 지점의 감도가 피크 대비 얼마인가. 500T는 적감층
+  0.17로 커 보이지만, `--extrapolate`로 재적분해도 결과가 0.003 log 안에서 같다.
+
+### 검산
+
+- `derive-tungsten-cast.py --selftest` — 내장 CIE 주광 구현을 colour-science와 대조
+  (`pip install colour-science`, 없으면 건너뛴다). 최대 상대편차 0.008%.
+- 유도한 캐스트의 b−r은 그 필름의 보정 필터(Wratten 85)의 농도 프로파일과 **부호만
+  반대**여야 한다. TDS 1쪽의 EI(텅스텐/주광)도 같은 방향으로 맞아야 한다.
+- ⚠️ `derive-crosstalk.py`는 Status M 분광 응답도(ISO 7589)가 없어 밴드를 **대표 파장
+  한 점**으로 근사한다. `--bands`로 ±15nm 흔들어 비대각이 얼마나 움직이는지 보고
+  결론에 그 폭을 적을 것.
