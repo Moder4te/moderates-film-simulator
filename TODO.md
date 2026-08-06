@@ -360,18 +360,26 @@ Fuji Reala / Pro 400H · Agfa Optima II.
 
 **기본값은 아직 `normalized`(구 동작)라 룩이 안 바뀐 상태다.** 남은 일 두 가지.
 
-### S3a. Fuji 특성곡선을 못 구했다
+### S3a. Fuji는 인화지 특성곡선을 발행하지 않는다 — 종료
 
-받은 `Fujicolor Crystal Archive Professional **Deep Matte Velvet**` 데이터시트에는
-**특성곡선(D-logE)이 실려 있지 않다.** 들어 있는 것은 §11 분광 염료 농도 · §12 분광
-감도뿐이고, **둘 다 래스터 이미지**라 벡터 추출도 안 된다(등급 D).
+문서 2건을 확인했다. **둘 다 D-logE 특성곡선이 없다.**
 
-- **필요한 것** 특성곡선이 실린 Fuji 인화지 데이터시트. Crystal Archive **Type II** /
-  **Supreme** / **Professional Paper** 계열 문서를 확인해 볼 것. ⚠️ 제조사 사이트가
-  정책 차단이라 **직접 받아야 한다**
-- **왜 원하나** 현상소 차이(Frontier ↔ Noritsu)를 스캐너 튜닝값 대신 **인화지 실측**으로
-  표현하려던 것이 원래 계획이다. Kodak 하나만으로는 그게 안 된다
-- **없으면** Kodak 하나로 가고, 현상소 차이는 스캐너 스테이지에 남긴다. 그것도 정상 동작이다
+| 문서 | 있는 것 | 없는 것 |
+|---|---|---|
+| Crystal Archive **Deep Matte Velvet** | 분광 감도·염료 농도(래스터) | 특성곡선 |
+| Crystal Archive **08F (Glossy)** | 분광 감도·염료 농도(**벡터**, p5) | 특성곡선 |
+
+Fuji의 Product Information Bulletin이 싣는 것은 분광 곡선과 미니랩 교정 절차이고,
+`CHARACTERISTIC`이라는 낱말은 `17. IMAGE STORAGE CHARACTERISTICS`(보존성) 한 곳에만
+나온다. **Kodak은 싣고 Fuji는 안 싣는다 — 제조사의 문서 정책 차이지 우리가 못 찾은 게 아니다.**
+
+**그래서 이 항목은 닫는다.** 인화지 톤은 Kodak으로 간다. 종류를 늘리고 싶으면
+Fuji를 더 찾을 게 아니라 **Kodak의 다른 인화지**(Supra / Ultra / Portra Endura —
+대비와 색이 다르다)를 받는 쪽이 맞다. 현상소 차이(Frontier ↔ Noritsu)는 원래대로
+스캐너 스테이지에 남긴다 — 그쪽이 원래 그 성격의 자리다.
+
+> Fuji 08F p5의 분광 곡선은 벡터라 `extract_tds_spectral.py`로 뽑을 수 있다.
+> **톤에는 못 쓰지만** 염료 비교에는 쓸 수 있다. 지금 필요해서 뽑지는 않았다.
 
 ### S3b. 기본 인화지 전환 — R1과 묶는다
 

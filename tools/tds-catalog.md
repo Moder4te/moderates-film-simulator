@@ -64,12 +64,23 @@ UltraMax 400 −1.44 / Portra 800 −1.74. UltraMax 400이 Portra 400과 같은 
 | 인화지 | 제조사 | 상태 | 등급 | 곡선쪽 | 비고 |
 |---|---|---|---|---|---|
 | ENDURA Premier | Kodak Alaris | 채택 | **A** | E-4070 p4 | RA-4, Status A. γ R3.98/G3.93/B4.10 |
-| Crystal Archive Deep Matte Velvet | Fujifilm | **불가** | **D** | — | **특성곡선이 문서에 없다.** 분광 감도·염료 농도만 있고 그마저 래스터 |
+| Crystal Archive Deep Matte Velvet | Fujifilm | 불가 | — | — | 특성곡선 없음. 분광 곡선도 래스터 |
+| Crystal Archive 08F (Glossy) | Fujifilm | 불가 | — | — | 특성곡선 없음. **분광 곡선은 벡터**(p5) |
+
+**⚠️ Fuji는 인화지 특성곡선을 발행하지 않는다.** 문서 2건(Deep Matte Velvet ·
+Crystal Archive 08F)을 확인했고 둘 다 같다. Fuji의 Product Information Bulletin이
+싣는 것은 **분광 감도 · 분광 염료 농도 · 미니랩 교정 절차**이고, D-logE 특성곡선은
+어느 절에도 없다("CHARACTERISTIC"이라는 낱말은 `17. IMAGE STORAGE CHARACTERISTICS`
+한 곳에만 나온다). Kodak은 싣는다 — 제조사의 문서 정책 차이다.
+
+→ **인화지 톤은 Kodak으로 간다.** 종류를 늘리려면 Fuji를 더 찾을 게 아니라
+Kodak의 다른 인화지(Supra / Ultra / Portra Endura)를 받는 쪽이 맞다. 현상소 차이
+(Frontier ↔ Noritsu)는 원래대로 스캐너 스테이지에 남긴다.
 
 - ⚠️ **인화지는 오렌지 마스크가 없어 층 순서 불변식(B>G>R)이 성립하지 않는다.**
   `extract_tds_curves.py`에 `paper` 인자를 넘겨야 한다. Endura는 오히려 R>G>B다(Dmax 기준)
-- Fuji는 특성곡선이 실린 다른 계열 문서(Type II · Supreme · Professional Paper)를
-  확인해야 한다 → [`TODO.md`](../TODO.md) S3a
+- Fuji 08F p5의 분광 곡선은 벡터라 `extract_tds_spectral.py`로 뽑을 수 있다.
+  **톤에는 못 쓰지만** 염료 비교(S2 계열)에는 쓸 수 있다 — 지금 필요해서 뽑지는 않았다
 
 ## 컬러 네거티브 (31건)
 
