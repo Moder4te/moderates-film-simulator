@@ -100,7 +100,9 @@ const PAPERS = [
     note:
       "RA-4 실측 곡선. 직선부 γ R 3.98 / G 3.93 / B 4.10, Dmin 0.10 / 0.10 / 0.08, " +
       "Dmax 2.76 / 2.53 / 2.44. 발끝이 하이라이트를, 어깨가 암부를 만든다. " +
-      "⚠️ 필름 대비가 그대로 살아나 전체 대비가 크게 오른다.",
+      "인화 스케일로 실측 감마를 shared와 같은 시스템감마로 눌러 정상 노출폭에서 " +
+      "암부·명부가 뭉개지지 않게 했다(곡선 형태·채널별 감마 차이는 그대로). " +
+      "필름 간 대비 차이는 살아 있다.",
     source: {
       document: "Kodak Alaris E-4070 (December 2017), p4 Characteristic Curves",
       retrieved: "2026-08-06",
@@ -168,6 +170,35 @@ function invert(fn, target, lo, hi) {
 }
 
 /**
+ * 실측 곡선 인화지의 **인화 스케일**.
+ *
+ * kBase 하나만 맞추면(기준 그레이 앵커) 곡선의 실제 형태·감마가 그대로 남는다.
+ * 문제는 실측 감마가 가파르다는 것(Endura Premier 그린 ~3.93) — 필름의 정상
+ * 노출폭(±2스톱)에 그대로 걸면 인화지의 좁은 직선부(로그노광폭 ~0.86)를 1스톱
+ * 안에 다 써버려 암부·명부가 뭉개진다. 실측: Portra 400 그린 채널로 H=-2.0과
+ * H=-1.5(1.5스톱 구간)를 인화하면 반사율이 소수점 4자리까지 완전히 같다 —
+ * 그 구간의 정보가 통째로 사라졌다는 뜻이다.
+ *
+ * 실제 인화에서는 이걸 인화지 등급(콘트라스트 그레이드)·확대기 필터·부분
+ * 노광으로 네거의 농도폭을 인화지 유효 노광폭에 맞춰 넣는다. 등급 선택 대신
+ * 로그노광 축을 스케일해 같은 일을 한다 — 곡선의 실제 모양(발끝·어깨의
+ * 비대칭, 채널별 감마 차이)은 그대로 두고, 그 축의 "빽빽한 정도"만 편다.
+ *
+ * 목표 시스템감마는 `shared` 프로파일의 감마(필름 9종 평균 감마의 역수,
+ * 이미 검증된 값)를 그대로 쓴다. 그러면 평균적인 필름은 shared와 비슷한
+ * 국소 대비로 인화되면서, 실측 곡선의 비선형 형태(진짜 필름다운 하이라이트
+ * 롤오프)와 채널별 감마 차이(R 3.98 / G 3.93 / B 4.10 — 살짝 다른 색조)는
+ * 그대로 살아 있다. 필름마다 다른 감마는 손대지 않으므로 필름 간 대비
+ * 차이(이 파일이 생긴 이유)도 그대로 유지된다.
+ */
+const DESIGN_SYSTEM_GAMMA = 1.7066; // "shared" 프로파일과 같은 값 — 위 설명 참조
+
+function localSlope(fn, x) {
+  const h = 0.02; // kBase 부근 국소 기울기. 채널당 두 번만 부른다
+  return (fn(x + h) - fn(x - h)) / (2 * h);
+}
+
+/**
  * 한 채널의 인화 변환을 만든다. 네거티브 농도 D → 선형 포지티브 P.
  *
  * @param {object} paper   프로파일 (`byId`가 준 것)
@@ -188,13 +219,21 @@ function transferFor(paper, film, channel, d0) {
     };
   }
 
-  // 곡선 인화지 — 실측 D-logE. 기준 그레이가 D_REF로 인화되도록 k를 역산한다.
+  // 곡선 인화지 — 실측 D-logE. 기준 그레이가 D_REF로 인화되도록 kBase를 역산한다.
   const pts = paper.curves[channel];
   if (!pts) throw new Error(`인화지 ${paper.id}: ${channel} 곡선이 없습니다`);
   const fn = pchip(monotonic(pts));
-  const k = invert(fn, D_REF, pts[0][0], pts[pts.length - 1][0]) + d0;
+  const kBase = invert(fn, D_REF, pts[0][0], pts[pts.length - 1][0]);
+
+  // 인화 스케일 — 실측 국소감마를 목표감마로 눌러 농도 축을 다시 잰다.
+  const measuredGamma = localSlope(fn, kBase);
+  if (!(measuredGamma > 0)) {
+    throw new Error(`인화지 ${paper.id}: ${channel} 채널의 기준점 감마를 구할 수 없습니다`);
+  }
+  const scale = DESIGN_SYSTEM_GAMMA / measuredGamma;
+
   return function print(D) {
-    return Math.pow(10, -fn(k - D));
+    return Math.pow(10, -fn(kBase - scale * (D - d0)));
   };
 }
 
