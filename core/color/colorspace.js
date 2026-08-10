@@ -140,6 +140,108 @@ function displayConverter(profileName) {
 }
 
 /**
+ * 작업 색공간 점검 — **엔진이 무엇을 전제하는지**를 코드로 적어 둔 곳.
+ *
+ * `film.js`는 입력 픽셀을 `L = v^1.8`로 되돌린다. 조건 분기가 없고, `apply.js`도
+ * `getPixels({colorSpace:"RGB"})`로 문서 원본 값을 그대로 받는다. 즉 파이프라인은
+ * **문서가 ProPhoto(ROMM, γ1.8)라고 무조건 가정한다.** 아니면 두 가지가 동시에 틀어진다.
+ *
+ *   1. **노광 앵커가 밀린다.** 18% 그레이가 ProPhoto에서는 0.3857로 인코딩되는데
+ *      sRGB에서는 0.4614다. 그대로 넣으면 H가 +0.47스톱 밀려 필름 곡선의 **다른
+ *      구간**을 쓰게 된다 — 발끝·어깨가 엉뚱한 자리에 걸린다.
+ *   2. **암부가 더 심하게 틀어진다.** 오차가 상수가 아니라 어두울수록 커진다.
+ *      sRGB 문서는 기준 그레이가 +0.47스톱인데 **3스톱 아래는 +0.75스톱**,
+ *      Adobe RGB는 +0.45 대 **+0.99**다. 즉 톤 곡선 자체가 휜다.
+ *
+ * 원색도 다르지만(채널 분리가 달라진다) 그건 여기서 수치로 말하기 어렵고, 위 둘만으로
+ * 충분히 경고가 된다.
+ *
+ * **막지 않고 알리기만 한다.** 8비트 경고와 같은 방침이다 — 사용자가 알고 하는
+ * 작업일 수 있다. 다만 "왜 색이 이상한지"는 알려 줘야 한다.
+ *
+ * 순수 함수다. 호스트를 보지 않으므로 node에서 그대로 검증된다(`tools/check-tone.js`).
+ *
+ * @param {string|null} profileName 문서 프로파일 이름. 못 읽었으면 null
+ * @returns {{ok: boolean, known: boolean, kind: string, midGrayStops: number,
+ *            shadowStops: number, message: string|null}}
+ */
+function workingSpaceCheck(profileName) {
+  const n = String(profileName || "").toLowerCase();
+  const known = n.length > 0;
+
+  if (n.includes("prophoto") || n.includes("romm")) {
+    return { ok: true, known: true, kind: "prophoto", midGrayStops: 0, shadowStops: 0, message: null };
+  }
+
+  // 엔진이 v를 어떻게 읽는지(=v^1.8) 대 실제 공간이 뜻하는 선형값의 차이를
+  // **스톱으로** 잰다. 두 지점을 보는 이유는 오차가 상수가 아니기 때문이다.
+  function stops(decode, linear) {
+    const v = encodeWith(decode, linear); // 그 공간에서 이 선형값의 인코딩값
+    const assumed = Math.pow(v, 1.8); // 엔진이 읽는 선형값
+    return Math.log2(assumed / linear);
+  }
+
+  let kind = "unknown";
+  let decode = null;
+  if (n.includes("srgb")) {
+    kind = "srgb";
+    decode = srgbDecode;
+  } else if (n.includes("adobe rgb")) {
+    kind = "adobergb";
+    decode = adobeDecode;
+  }
+
+  if (!decode) {
+    return {
+      ok: false,
+      known,
+      kind,
+      midGrayStops: 0,
+      shadowStops: 0,
+      message: known
+        ? `문서 프로파일이 "${profileName}"입니다. 엔진은 ProPhoto(γ1.8)를 전제하므로 ` +
+          "노광 기준과 암부가 어긋날 수 있습니다. 편집 → 프로파일 변환으로 " +
+          "ProPhoto RGB로 바꾸고 적용하세요."
+        : "문서 프로파일을 읽지 못했습니다. 엔진은 ProPhoto(γ1.8)를 전제합니다 — " +
+          "다른 색공간이면 노광 기준이 어긋납니다.",
+    };
+  }
+
+  const mid = stops(decode, 0.18);
+  const shadow = stops(decode, 0.18 / 8); // 기준 그레이에서 3스톱 아래
+  return {
+    ok: false,
+    known: true,
+    kind,
+    midGrayStops: mid,
+    shadowStops: shadow,
+    message:
+      `문서가 ${profileName}입니다. 엔진은 ProPhoto(γ1.8)를 전제하므로 노광 기준이 ` +
+      `${mid >= 0 ? "+" : ""}${mid.toFixed(2)}스톱, 암부(-3스톱 지점)가 ` +
+      `${shadow >= 0 ? "+" : ""}${shadow.toFixed(2)}스톱 어긋납니다. ` +
+      "편집 → 프로파일 변환으로 ProPhoto RGB로 바꾸고 적용하세요.",
+  };
+}
+
+/**
+ * 선형값을 그 공간의 인코딩값으로. `decode`의 역을 이분법으로 구한다.
+ *
+ * sRGB·Adobe RGB의 인코딩 함수를 각각 따로 두는 대신 역함수를 수치로 푼다 —
+ * 점검용으로 공간마다 두 번씩만 부르므로 비용이 문제되지 않고, **decode 하나만
+ * 맞으면 되니 인코딩 쪽 오타로 조용히 틀릴 여지가 없다.**
+ */
+function encodeWith(decode, linear) {
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (decode(mid) < linear) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+/**
  * sRGB → ProPhoto. 팔레트 스와치처럼 **sRGB로 정의된 참조색**을 필름 LUT에
  * 통과시킬 때 쓴다. LUT은 ProPhoto 기준으로 구워졌으므로 그냥 넣으면 엉뚱한
  * 격자 위치를 조회하게 된다.
@@ -156,6 +258,7 @@ function srgbToProPhoto(r, g, b, out) {
 
 module.exports = {
   displayConverter,
+  workingSpaceCheck,
   passthrough,
   srgbToProPhoto,
   proPhotoToSrgb: CONVERTERS.prophoto,

@@ -119,5 +119,47 @@ check("디더가 평균값을 밀지 않음", Math.abs(s1 / NF - s2 / NF) < 0.6,
   );
 }
 
+// ── 작업 색공간 점검 ──────────────────────────────────────────────────
+//
+// 엔진은 문서가 ProPhoto(γ1.8)라고 **무조건 가정**한다(`film.js`의 WORKING_GAMMA,
+// `apply.js`의 getPixels colorSpace:"RGB"). 그 전제가 깨졌을 때 얼마나 어긋나는지를
+// 사용자에게 알려 주는 것이 `workingSpaceCheck`이고, **경고 문구에 실린 숫자가
+// 실제 오차와 같아야** 경고가 의미를 갖는다. 여기서 그 숫자를 독립적으로 재검산한다.
+{
+  const cs = require("../core/color/colorspace");
+
+  check("ProPhoto는 통과", cs.workingSpaceCheck("ProPhoto RGB").ok === true);
+  check("ROMM도 ProPhoto로 인식", cs.workingSpaceCheck("ROMM RGB").ok === true);
+  check("프로파일을 못 읽으면 경고", cs.workingSpaceCheck(null).ok === false);
+  check("모르는 공간도 경고", cs.workingSpaceCheck("Display P3").ok === false);
+
+  // 독립 계산: 그 공간에서 선형 L의 인코딩값을 **직접** 만들고, 엔진이 그것을
+  // v^1.8로 읽었을 때의 오차를 스톱으로 잰다. colorspace.js의 이분법 역함수와
+  // 다른 경로여야 검산이 된다.
+  const srgbEnc = (l) => (l <= 0.0031308 ? 12.92 * l : 1.055 * Math.pow(l, 1 / 2.4) - 0.055);
+  const adobeEnc = (l) => Math.pow(l, 1 / 2.19921875);
+  const stops = (enc, l) => Math.log2(Math.pow(enc(l), 1.8) / l);
+
+  for (const [name, enc] of [["sRGB IEC61966-2.1", srgbEnc], ["Adobe RGB (1998)", adobeEnc]]) {
+    const r = cs.workingSpaceCheck(name);
+    const dm = Math.abs(r.midGrayStops - stops(enc, 0.18));
+    const ds = Math.abs(r.shadowStops - stops(enc, 0.18 / 8));
+    check(
+      `${name} 오차가 독립 계산과 일치`,
+      r.ok === false && dm < 1e-6 && ds < 1e-6,
+      `기준 ${r.midGrayStops.toFixed(3)}스톱 / 암부 ${r.shadowStops.toFixed(3)}스톱 (편차 ${Math.max(dm, ds).toExponential(1)})`
+    );
+    // 경고 문구에 숫자가 실제로 들어 있어야 한다. 문구와 값이 갈라지면
+    // 사용자는 틀린 수를 보고 판단하게 된다.
+    check(
+      `${name} 경고 문구에 그 수가 실려 있다`,
+      r.message.includes(r.midGrayStops.toFixed(2)) && r.message.includes(r.shadowStops.toFixed(2))
+    );
+    // 암부가 기준 그레이보다 **더** 어긋나야 한다 — 그게 이 경고의 핵심이다
+    // (상수 오프셋이면 노광 슬라이더로 상쇄되지만, 휘면 못 되돌린다).
+    check(`${name}는 암부가 기준보다 더 어긋난다`, r.shadowStops > r.midGrayStops + 0.1);
+  }
+}
+
 console.log(pass ? "\n✅ 전 항목 통과" : "\n❌ 실패 항목 있음");
 process.exit(pass ? 0 : 1);

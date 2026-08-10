@@ -19,6 +19,7 @@
 const { imaging } = require("photoshop");
 const ps = require("../lib/host/ps");
 const lut = require("../lib/core/color/lut");
+const colorspace = require("../lib/core/color/colorspace");
 
 /** 모든 FilmSim 레이어의 공통 접두사. 색·마감 양쪽이 이걸로 시작한다. */
 const FILMSIM = "FilmSim";
@@ -49,6 +50,20 @@ function validate(doc, params) {
   }
   if (String(doc.mode) !== "RGBColorMode") {
     warnings.push(`문서 색상 모드가 ${doc.mode}입니다. RGB가 필요합니다.`);
+  }
+
+  // ── 작업 색공간 ──────────────────────────────────────────────────────
+  //
+  // 여기가 **가장 조용히 틀리는 자리**다. 8비트나 CMYK는 눈에 띄지만, sRGB 문서에
+  // 필름을 걸면 그냥 "색이 좀 다르네"로 보이고 끝난다. 실제로는 노광 기준이
+  // 반 스톱 밀리고 암부는 그보다 더 밀린다 — 필름 곡선의 엉뚱한 구간을 쓰는 것이라
+  // 그 필름의 룩이 아니다.
+  //
+  // 필름이 꺼져 있으면 경고하지 않는다. 마감 모드는 LUT을 문서 값 그대로 통과시키는
+  // 항등 경로라 색공간 전제가 없다(8비트 경고와 같은 이유).
+  if (filmOn) {
+    const space = colorspace.workingSpaceCheck(ps.profileOf(doc));
+    if (!space.ok) warnings.push(space.message);
   }
 
   // ── 마감이 이미 얹혀 있는가 ──────────────────────────────────────────

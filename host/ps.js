@@ -345,7 +345,22 @@ const PROFILE_KEYS = ["colorProfileName", "colorProfile", "profile"];
  */
 function documentProfile() {
   try {
-    const doc = app.activeDocument;
+    return profileOf(app.activeDocument);
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * 주어진 문서의 색 프로파일 이름. 읽지 못하면 null.
+ *
+ * `documentProfile`이 활성 문서용이라면 이쪽은 **손에 든 문서**용이다. 적용 경로는
+ * 이미 문서 객체를 들고 있어서 활성 문서를 다시 찾을 이유가 없다(배치에서
+ * 활성 문서가 대상과 다를 수 있다 — `apply.js`가 그 전제를 적어 뒀다).
+ * 속성 이름 후보를 아는 곳은 **여기 하나뿐이어야 한다.**
+ */
+function profileOf(doc) {
+  try {
     if (!doc) return null;
     for (const key of PROFILE_KEYS) {
       const v = doc[key];
@@ -361,6 +376,7 @@ module.exports = {
   play,
   modal,
   documentProfile,
+  profileOf,
   foregroundRgb,
   collectLayers,
   selectLayer,
