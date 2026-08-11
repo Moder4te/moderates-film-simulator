@@ -42,6 +42,9 @@ function defaultParams() {
       enabled: true,
       id: "kodak-portra-400",
       exposure: 0, // 스톱. 필름 정의의 exposureRange 안이어야 한다.
+      // 입력 소스 — 문서의 코드값이 무슨 광량인가. core/color/inputs.js
+      // "prophoto"(기본, 「중립 현상」의 정의) | "linear-h4|5|6"(톤 커브 없이 현상한 것)
+      input: "prophoto",
       // 인화지. "normalized"(구 동작) | "shared" | "kodak-endura-premier"(실측).
       // ⚠️ 기본값이 구 동작이다 — 실측 인화지 톤을 쓰려면 골라야 한다(TODO S3b).
       paper: "normalized",

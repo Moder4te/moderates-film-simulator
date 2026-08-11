@@ -21,6 +21,7 @@ const photoanalysis = require("./src/photoanalysis");
 const films = require("./lib/core/color/films");
 const scanner = require("./lib/core/color/scanner");
 const paper = require("./lib/core/color/paper");
+const inputs = require("./lib/core/color/inputs");
 const film = require("./lib/core/color/film");
 const lut = require("./lib/core/color/lut");
 const colorspace = require("./lib/core/color/colorspace");
@@ -499,7 +500,7 @@ function visualTables() {
 
   // ⚠️ 캐시 키에는 결과를 바꾸는 것이 **전부** 들어가야 한다. 이전 키에는
   // 스캐너와 enabled가 빠져 있어서, 스캐너를 바꿔도 팔레트가 갱신되지 않았다.
-  const key = JSON.stringify([f.enabled, f.id, f.exposure, f.paper, f.scanner, params.grading]);
+  const key = JSON.stringify([f.enabled, f.id, f.exposure, f.input, f.paper, f.scanner, params.grading]);
   if (lutCache.key === key) return lutCache;
 
   try {
@@ -670,6 +671,7 @@ function buildChoiceChips(hostId, key, items) {
 }
 
 function buildScannerChips() {
+  buildChoiceChips("inputChips", "input", inputs.applyable());
   buildChoiceChips("paperChips", "paper", paper.all());
   buildChoiceChips("scannerChips", "scanner", scanner.all());
 }
@@ -681,7 +683,7 @@ function syncFilmUI() {
       chip.classList.toggle("active", chip.dataset.filmId === params.film.id);
     }
   }
-  for (const [hostId, key] of [["paperChips", "paper"], ["scannerChips", "scanner"]]) {
+  for (const [hostId, key] of [["inputChips", "input"], ["paperChips", "paper"], ["scannerChips", "scanner"]]) {
     const h = $(hostId);
     if (!h) continue;
     for (const chip of h.querySelectorAll(".chip-btn")) {
@@ -706,10 +708,12 @@ function syncFilmUI() {
     } catch (e) {
       /* 알 수 없는 id — 안내문만 비운다 */
     }
+    const ip = inputs.byId(params.film.input);
     const pp = paper.byId(params.film.paper);
     const sc = scanner.byId(params.film.scanner);
     const parts = [];
     if (def && def.source && def.source.note) parts.push(def.source.note);
+    if (ip && ip.id !== "prophoto" && ip.note) parts.push(ip.note);
     if (pp && pp.id !== "normalized" && pp.note) parts.push(pp.note);
     if (sc && sc.id !== "none" && sc.note) parts.push(sc.note);
     note.textContent = parts.join("  /  ");

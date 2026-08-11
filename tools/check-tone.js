@@ -157,6 +157,35 @@ check("디더가 평균값을 밀지 않음", Math.abs(s1 / NF - s2 / NF) < 0.6,
       rows.map((r) => r.toFixed(9)).join(" / "));
   }
 
+  // 입력 전달함수의 규약 — `decode`와 `hWhite`가 서로 맞는가.
+  //
+  // ⚠️ 이걸 따로 박는 이유: `hWhite`는 화이트포인트 롤오프와 리버설 기준점에서만
+  // 쓰이는데, **실측 곡선 인화지는 롤오프를 끄고** 리버설 필름은 아직 없다. 그래서
+  // 정합성 검사(비대칭 LUT · 기준 그레이)로는 `hWhite`가 틀려도 안 걸린다 —
+  // 실제로 상수로 되돌려 봤더니 전 검사를 통과했다. 규약 자체를 여기서 잡는다.
+  {
+    const inputs = require("../core/color/inputs");
+    let worstH = 0, worstMid = 0, names = [];
+    for (const i of inputs.all()) {
+      worstH = Math.max(worstH, Math.abs(i.hWhite - Math.log10(i.decode(1) / 0.18)));
+      // midGrayEncoded를 decode하면 정확히 0.18이어야 한다 — 도구가 놓는 자리와
+      // 엔진이 읽는 자리가 같다는 뜻이다.
+      worstMid = Math.max(worstMid, Math.abs(i.decode(i.midGrayEncoded) - 0.18));
+      names.push(i.id);
+    }
+    check("입력 hWhite = log10(decode(1)/0.18)", worstH < 1e-12,
+      `${names.length}종(${names.join(", ")}) 최대편차 ${worstH.toExponential(1)}`);
+    check("입력 midGrayEncoded가 정확히 0.18로 디코드", worstMid < 1e-12,
+      `최대편차 ${worstMid.toExponential(1)}`);
+    // 리니어 헤드룸은 코드 1.0이 정확히 그 스톱이어야 한다
+    for (const n of inputs.HEADROOMS) {
+      const i = inputs.byId(`linear-h${n}`);
+      check(`리니어 +${n}스톱 코드 1.0 = +${n}스톱`,
+        Math.abs(i.hWhite / Math.log10(2) - n) < 1e-12,
+        `${(i.hWhite / Math.log10(2)).toFixed(9)}스톱`);
+    }
+  }
+
   check("ProPhoto는 통과", cs.workingSpaceCheck("ProPhoto RGB").ok === true);
   check("ROMM도 ProPhoto로 인식", cs.workingSpaceCheck("ROMM RGB").ok === true);
   check("프로파일을 못 읽으면 경고", cs.workingSpaceCheck(null).ok === false);

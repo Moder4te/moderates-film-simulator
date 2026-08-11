@@ -36,6 +36,35 @@ node tools/measure-scan.js scan.ppm scan2.ppm --patch <cy>,<cx> [--size 512] [--
   같거나 커서 구적 보정의 물리적 한계에 닿았다는 뜻이다(계획서의 "측정한 상관길이는
   실제 크기가 아니라 그 상한" 경고와 같은 현상)
 
+## decode-raw.py
+
+RAW를 **톤 커브 없는 ProPhoto 16bit**로 푼다. 엔진 베이스의 조건 (b)를 측정이 아니라
+**구성으로** 만족시키는 길이다(→ [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)
+「중립 현상이 정확히 무엇인가」).
+
+```
+pip install rawpy numpy tifffile
+
+python tools/decode-raw.py --selftest                      # raw 없이 성질 검산
+python tools/decode-raw.py in.ARW out.tiff                 # 스케일 없이(엔진 노출로 맞춤)
+python tools/decode-raw.py in.ARW out.tiff --probe 2400,1600,128
+python tools/decode-raw.py in.ARW out.tiff --midgray 0.118 -h 5
+```
+
+- `--probe x,y[,size]` 그레이 카드(또는 아는 중성 패치) 중심을 찍으면 거기를 헤드룸
+  자리에 **정확히** 놓는다. `--midgray`는 그 값을 직접 줄 때
+- **둘 다 없으면 스케일을 안 건다.** 기준 그레이가 어디 있는지 모르니 추정하지 않는다 —
+  경고를 찍고 화이트 레벨 기준 선형 그대로 낸다. 엔진 노출 슬라이더로 맞추면 되고,
+  조건 (a)는 그것으로 완전히 상쇄된다
+- `-h 4|5|6` 헤드룸(기본 5). ⚠️ **패널의 입력 소스를 같은 값으로 맞출 것** —
+  도구가 끝에 무엇을 고르라고 찍어 준다
+- ⚠️ **ICC를 안 박는다.** Photoshop에서 **프로파일 지정 → ProPhoto RGB**를 해야 한다
+- ⚠️ **눈으로 보면 어둡다**(기준 그레이 8bit 37). 보는 파일이 아니라 먹이는 파일이다
+
+TIFF 쓰기는 `tifffile`에 맡긴다. 손으로 IFD를 조립해 봤더니 PIL이 열기는 하면서 픽셀은
+8비트로 잘라 읽었고, **파일이 틀렸는지 리더가 부족한지 구분할 수 없었다.** 포맷은
+검증된 라이브러리에, 이 도구는 값이 맞는지에만 책임진다.
+
 ## extract_tds_curves.py
 
 제조사 TDS PDF에서 필름 특성곡선(D-logE)을 추출해 JSON으로 내보낸다.

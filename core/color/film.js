@@ -33,6 +33,7 @@ const simulate = require("./simulate");
 const colorspace = require("./colorspace");
 const scanner = require("./scanner");
 const paper = require("./paper");
+const inputs = require("./inputs");
 const lut = require("./lut");
 
 const WORKING_GAMMA = 1.8; // ProPhoto RGB
@@ -160,29 +161,9 @@ function channelResponse(points, printGamma, exposureStops, sign, wbShift, makeP
 // v=1(선형 L=1)에 대응하는 로그 노광. 화이트포인트 기준점.
 const H_WHITE = Math.log10(1 / ANCHOR);
 
-/**
- * 입력 전달함수 — **문서의 코드값이 무슨 광량을 뜻하는가.**
- *
- * 기본은 ProPhoto γ1.8이고, 그것이 이 프로젝트의 베이스 정의다
- * (→ `docs/ARCHITECTURE.md` 「중립 현상이 정확히 무엇인가」). 로그 촬영본처럼
- * **코드 1.0이 선형 1.0이 아닌** 소스를 쓰려면 이걸 갈아 끼운다.
- *
- * ⚠️ `decode`만 바꾸면 안 되고 `hWhite`도 같이 와야 한다. 화이트포인트 정규화와
- * 리버설 기준점이 "코드 1.0이 만드는 로그노광"을 쓰는데, 로그 소스에서는 그 값이
- * 훨씬 크다(S-Log3은 +7.74스톱). 상수로 박힌 `H_WHITE`를 그대로 쓰면 하이라이트
- * 기준이 8스톱 어긋난다.
- *
- * ⚠️ **원색은 여기서 다루지 않는다.** 이건 톤 축만이다. S-Gamut3.Cine처럼 원색이
- * 다른 소스는 호출자가 선형 공간에서 3×3을 먼저 걸어야 한다(`core/io/cube.js`).
- *
- * `prophotoDecode`가 아니라 `Math.pow(v, 1.8)`인 것은 **의도적이다** — 기존 동작과
- * 비트 단위로 같아야 한다. ROMM의 발끝 직선부(v<0.031248)는 여기 들어온 적이 없다.
- */
-const PROPHOTO_INPUT = {
-  id: "prophoto",
-  decode: (v) => Math.pow(v, WORKING_GAMMA),
-  hWhite: H_WHITE,
-};
+// 입력 전달함수는 `core/color/inputs.js`가 소유한다 — 엔진과 내보내기가 같은 정의를
+// 써야 하기 때문이다. 기본(ProPhoto γ1.8)이 곧 「중립 현상」의 정의다.
+const PROPHOTO_INPUT = inputs.byId("prophoto");
 
 /**
  * 노광 보정 0에서 v=1이 만드는 선형 포지티브 값.
@@ -215,7 +196,8 @@ function referencePeak(points, printGamma, makePrint, input) {
  * @param {number} [opts.size=33]      격자 크기
  * @param {number} [opts.exposure=0]   노광 보정 (스톱)
  * @param {string} [opts.paper]        인화지 id (core/color/paper.js)
- * @param {object} [opts.input]        입력 전달함수 {id, decode, hWhite}. 없으면 ProPhoto γ1.8
+ * @param {string|object} [opts.input] 입력 전달함수 id 또는 객체(core/color/inputs.js).
+ *                                     없으면 ProPhoto γ1.8
  * @returns {Float32Array} size³ × 3, .cube 순서(R 인덱스가 가장 빨리 변함)
  */
 function buildLut(film, opts) {
@@ -234,8 +216,11 @@ function buildLut(film, opts) {
   const pg = film.printGamma;
   const cur = film.characteristicCurves;
 
-  // 입력 전달함수. 없으면 ProPhoto γ1.8(= 지금까지의 동작, 비트 동일).
-  const inp = o.input || PROPHOTO_INPUT;
+  // 입력 전달함수. 문자열 id도 받는다(params에는 id가 실린다).
+  // 없으면 ProPhoto γ1.8 = 지금까지의 동작, 비트 동일.
+  const inp = !o.input ? PROPHOTO_INPUT
+    : typeof o.input === "string" ? inputs.byId(o.input)
+    : o.input;
 
   if (info.channels === 1) {
     // 모노는 휘도를 **선형에서** 섞은 뒤 다시 인코딩해 곡선에 태운다. 그 되인코딩이
@@ -599,15 +584,17 @@ function buildForParams(params, size, opts) {
   // 호출자(파이프라인·미리보기·내보내기)가 각자 검사했다. 그래서 검사 방식이
   // 서로 달라졌다 — 미리보기는 그레이딩을 보여주는데 적용은 아무것도 하지 않고,
   // 내보내기는 에러를 던졌다. 판단을 여기 한 곳으로 모은다.
-  // `opts.input`은 **내보내기 전용 통로**다. 화면·적용 경로는 넘기지 않으므로
-  // 기본 동작이 그대로다. 로그 소스용 `.cube`를 구울 때만 core/io/cube.js가 준다.
+  // 입력 전달함수는 **두 곳에서 올 수 있다.**
+  //   params.film.input  사용자가 패널에서 고른 것 — 화면·적용·내보내기 전부에 걸린다
+  //   opts.input         내보내기가 덮어쓰는 것 — 로그 소스용 `.cube`를 구울 때만
+  // `opts` 쪽이 이긴다. 로그 LUT을 뽑는 동안 화면 설정이 끼어들면 안 되기 때문이다.
   const o = opts || {};
   const table = filmOn
     ? buildLut(films.byId(f.id), {
         size,
         exposure: f.exposure || 0,
         paper: f.paper,
-        input: o.input,
+        input: o.input || f.input,
       })
     : lut.identity(size);
 

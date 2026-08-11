@@ -208,6 +208,74 @@ const ref = PROBES.map((p) => {
     worst < 2e-6, `최대차 ${worst.toExponential(2)}${where ? " @ " + where : ""}`);
 }
 
+// ── 5a. 입력 전달함수(리니어 현상본) ──────────────────────────────────
+//
+// `params.film.input`은 화면·적용·내보내기 **전부**에 걸린다. 네 경로가 갈라지면
+// 미리보기와 적용이 다른 색을 낸다.
+{
+  const inputs = C("color/inputs");
+  const N = 33;
+
+  // 기본값은 지금까지와 비트 동일해야 한다
+  const base = film.buildForParams(params, N);
+  const p0 = JSON.parse(JSON.stringify(params));
+  p0.film.input = "prophoto";
+  const same0 = film.buildForParams(p0, N);
+  let d0 = 0;
+  for (let i = 0; i < base.length; i++) d0 = Math.max(d0, Math.abs(base[i] - same0[i]));
+  ok("input 기본값이 기존 동작과 비트 동일", d0 === 0, `최대차 ${d0}`);
+
+  // 전 입력 전달함수에서 .cube와 엔진이 일치 — 비대칭 LUT도 같은 수를 내야 한다
+  let worst = 0, where = null;
+  for (const inp of inputs.applyable()) {
+    const p = JSON.parse(JSON.stringify(params));
+    p.film.input = inp.id;
+    p.film.paper = "kodak-endura-premier";
+    const eng = film.buildForParams(p, N);
+    const { rows } = parseCube(cube.build(p, { size: N, space: "prophoto" }));
+    for (let i = 0; i < rows.length; i++) {
+      for (let c = 0; c < 3; c++) {
+        const dd = Math.abs(rows[i][c] - eng[i * 3 + c]);
+        if (dd > worst) { worst = dd; where = inp.id; }
+      }
+    }
+  }
+  ok(`입력 ${inputs.applyable().length}종 × .cube === 엔진`, worst < 2e-6,
+    `최대차 ${worst.toExponential(2)}${where ? " @ " + where : ""}`);
+
+  // **기준 그레이가 어느 입력에서도 같은 색을 낸다.** 헤드룸이 달라도 18% 그레이는
+  // 18% 그레이다 — 여기가 어긋나면 도구가 놓은 자리와 엔진이 읽는 자리가 다른 것이고,
+  // 그건 통째로 노출이 밀렸다는 뜻이다.
+  const clean = JSON.parse(JSON.stringify(params));
+  clean.film.scanner = "none";
+  clean.film.paper = "kodak-endura-premier";
+  clean.grading.enabled = false;
+  //
+  // ⚠️ **최근접 격자점으로 재면 안 된다.** 기준 그레이의 인코딩값이 입력마다 다른데
+  // (0.386 / 0.214 / 0.146 / 0.099) 격자에 정확히 안 떨어진다. 게다가 저코드 쪽일수록
+  // 인코딩 축이 압축돼 같은 반올림이 더 큰 노광 오차가 된다 — linear-h6에서 0.14스톱,
+  // 8bit로 5계단이다. 처음에 그렇게 쟀다가 편차 8.1/255로 허위 실패했다.
+  // **보간 조회**로 정확한 좌표를 본다.
+  const mids = [];
+  const tmp = [0, 0, 0];
+  for (const inp of inputs.applyable()) {
+    const p = JSON.parse(JSON.stringify(clean));
+    p.film.input = inp.id;
+    const t = film.buildForParams(p, 65);
+    const v = inp.midGrayEncoded;
+    lut.sample(t, 65, v, v, v, tmp);
+    mids.push([inp.id, tmp[0], tmp[1], tmp[2]]);
+  }
+  let spread = 0;
+  for (let c = 1; c <= 3; c++) {
+    const vals = mids.map((m) => m[c]);
+    spread = Math.max(spread, Math.max(...vals) - Math.min(...vals));
+  }
+  ok("입력이 달라도 기준 그레이가 같은 색", spread < 0.006,
+    `채널별 최대 편차 ${(spread * 255).toFixed(2)}/255  ` +
+    mids.map((m) => `${m[0]}=${(m[1] * 255).toFixed(1)}`).join(" "));
+}
+
 // ── 5b. S-Log3 입력 LUT ───────────────────────────────────────────────
 //
 // 비대칭 LUT(로그 입력 → 표시 출력)이라 "적용과 같은 색"이 성립하지 않는다.
