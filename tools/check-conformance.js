@@ -208,6 +208,75 @@ const ref = PROBES.map((p) => {
     worst < 2e-6, `최대차 ${worst.toExponential(2)}${where ? " @ " + where : ""}`);
 }
 
+// ── 5b. S-Log3 입력 LUT ───────────────────────────────────────────────
+//
+// 비대칭 LUT(로그 입력 → 표시 출력)이라 "적용과 같은 색"이 성립하지 않는다.
+// 대신 **로그 소스에서 지켜야 할 성질**을 본다.
+{
+  const cs = C("color/colorspace");
+  const N = 33, d = N - 1;
+  const parse = (p, o) =>
+    cube.build(p, o).split("\n").filter((l) => /^[\d.-]/.test(l))
+      .map((l) => l.trim().split(/\s+/).map(Number));
+
+  // 옵션을 붙여도 기존 경로가 안 움직이는가 — 이건 **위쪽 무거운 params**로 본다.
+  // 스캐너·그레이딩까지 켜진 상태에서 불변이어야 진짜 불변이다.
+  const a = parse(params, { size: N, space: "prophoto" });
+  const b = parse(params, { size: N, space: "prophoto", input: "engine" });
+  let same = 0;
+  for (let i = 0; i < a.length; i++) for (let c = 0; c < 3; c++) same = Math.max(same, Math.abs(a[i][c] - b[i][c]));
+  ok("input 옵션이 기존 .cube를 바꾸지 않는다", same === 0, `최대차 ${same}`);
+
+  // 아래 성질 검사는 **중립 파라미터**로 한다. 위쪽 params는 frontier 스캐너(시안
+  // 섀도 + 골든 스킨 틴트)와 강한 그레이딩이 켜져 있어 회색이 **의도적으로** 중성이
+  // 아니다. 그것으로 재면 S-Log3 경로의 결함과 스캐너 틴트를 구분할 수 없다
+  // (실제로 처음 이 검사를 그렇게 짰다가 채널폭 0.045로 허위 실패했다).
+  const clean = JSON.parse(JSON.stringify(params));
+  clean.film.scanner = "none";
+  clean.film.paper = "kodak-endura-premier";
+  clean.grading.enabled = false;
+
+  const R = parse(clean, { size: N, space: "acr", input: "slog3" });
+  const at = (v) => { const i = Math.round(v * d); return R[(i * N + i) * N + i]; };
+
+  // 1) 18% 그레이(코드 420/1023)가 중성으로 나와야 한다. 원색 행렬이 틀리면
+  //    여기가 먼저 물든다 — 행합이 1이 아닌 행렬을 쓰면 바로 잡힌다.
+  const g = at(420 / 1023);
+  const spread = Math.max(...g) - Math.min(...g);
+  ok("S-Log3 18% 그레이가 중성", spread < 0.005, `채널폭 ${spread.toFixed(4)} @ ${g.map((x) => x.toFixed(4)).join(",")}`);
+
+  // 2) 그레이 축 단조. 로그 디코드나 hWhite가 어긋나면 뒤집힌다.
+  let rev = 0;
+  for (let i = 1; i <= d; i++) {
+    const lo = R[((i - 1) * N + (i - 1)) * N + (i - 1)], hi = R[(i * N + i) * N + i];
+    for (let c = 0; c < 3; c++) if (hi[c] < lo[c] - 1e-9) rev++;
+  }
+  ok("S-Log3 그레이 축이 단조", rev === 0, `역전 ${rev}회`);
+
+  // 3) **선형 1.0 위의 하이라이트가 살아 있는가.** 이게 이 구현의 존재 이유다.
+  //    이미 구운 ProPhoto LUT을 재격자하는 방식이면 코드 0.596 위가 전부 같은
+  //    값으로 뭉개진다(엔진 LUT의 정의역이 선형 0~1이라 좌표가 잘린다).
+  //    여기서 그 naive 방식을 실제로 계산해 죽는 것을 보이고, 우리 것과 대조한다.
+  const above = [0.596, 0.7, 0.8, 0.9, 1.0].map((v) => at(v)[1]);
+  const rising = above.every((x, i) => i === 0 || x > above[i - 1]);
+  ok("S-Log3 선형 1.0 위 하이라이트가 살아 있다", rising,
+    above.map((x) => x.toFixed(4)).join(" → "));
+
+  // 재격자 방식이면 조회 좌표가 전부 격자 끝(1.0)에 붙어 같은 값을 낸다.
+  // 우리 쪽은 같은 구간에서 0.13 넘게 오른다 — 그 대비가 이 구현의 근거다.
+  const naiveCoord = [0.596, 0.7, 0.8, 0.9, 1.0]
+    .map((v) => Math.min(1, Math.pow(Math.max(cs.slog3Decode(v), 0), 1 / 1.8)));
+  const naiveSpan = Math.max(...naiveCoord) - Math.min(...naiveCoord);
+  const oursSpan = Math.max(...above) - Math.min(...above);
+  ok("(대조) 재격자 방식이었으면 그 구간이 죽는다", naiveSpan < 1e-3 && oursSpan > 0.05,
+    `재격자 조회 좌표 폭 ${naiveSpan.toExponential(1)} (전부 격자 끝) vs 실제 출력 폭 ${oursSpan.toFixed(3)}`);
+
+  // 4) 코드 범위를 얼마나 살렸는지 수치로. 재격자였다면 잘렸을 비율이다.
+  const codeAtLinear1 = cs.slog3Encode(1);
+  ok("살린 코드 범위", codeAtLinear1 > 0.5 && codeAtLinear1 < 0.7,
+    `선형 1.0 = 코드 ${codeAtLinear1.toFixed(3)} → 재격자였다면 코드의 ${((1 - codeAtLinear1) * 100).toFixed(0)}%가 흰색으로 뭉갬`);
+}
+
 // ── 6. 그레이딩이 색역을 좁히지 않는가 ───────────────────────────────
 //
 // 이전 구현은 ProPhoto → sRGB → 그레이딩 → ProPhoto로 왕복하며 클램프해서

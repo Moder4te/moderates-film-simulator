@@ -108,7 +108,8 @@ function typeOf(film) {
  *   **최소 농도(Dmin)를 흰색 1.0에 맞춘다.** 슬라이드 스캐너가 하는 일이 그것이고,
  *   기준 그레이에 맞추면 대비가 2를 넘는 슬라이드에서 출력이 5를 넘어가 버린다.
  */
-function channelResponse(points, printGamma, exposureStops, sign, wbShift, makePrint) {
+function channelResponse(points, printGamma, exposureStops, sign, wbShift, makePrint, input) {
+  const inp = input || PROPHOTO_INPUT;
   // 리버설 곡선은 노광이 늘수록 농도가 **내려간다**. 단조 보정은 "증가"를
   // 강제하므로 그대로 쓰면 곡선을 뭉갠다. 부호를 뒤집어 보정한 뒤 되돌린다.
   const src = sign > 0
@@ -132,7 +133,7 @@ function channelResponse(points, printGamma, exposureStops, sign, wbShift, makeP
       ? makePrint(d0)
       : (D) => ANCHOR * Math.pow(10, printGamma * (D - d0));
     return function respond(v) {
-      const L = Math.pow(v, WORKING_GAMMA);
+      const L = inp.decode(v);
       const H = Math.log10(Math.max(L, L_FLOOR) / ANCHOR) + shift;
       return print(fn(H));
     };
@@ -148,9 +149,9 @@ function channelResponse(points, printGamma, exposureStops, sign, wbShift, makeP
   // 기준은 **노광 보정 0에서** 잡는다. 현재 노광에서 다시 잡으면 노광 보정이
   // 스스로를 상쇄한다(네거티브 화이트포인트와 같은 함정). 그래서 +노광은 흰색을
   // 넘어 잘리는데, 슬라이드가 실제로 그렇게 날아간다.
-  const dWhite = fn(H_WHITE + MID_GRAY_OFFSET);
+  const dWhite = fn(inp.hWhite + MID_GRAY_OFFSET);
   return function respond(v) {
-    const L = Math.pow(v, WORKING_GAMMA);
+    const L = inp.decode(v);
     const H = Math.log10(Math.max(L, L_FLOOR) / ANCHOR) + shift;
     return Math.pow(10, -printGamma * (fn(H) - dWhite));
   };
@@ -158,6 +159,30 @@ function channelResponse(points, printGamma, exposureStops, sign, wbShift, makeP
 
 // v=1(선형 L=1)에 대응하는 로그 노광. 화이트포인트 기준점.
 const H_WHITE = Math.log10(1 / ANCHOR);
+
+/**
+ * 입력 전달함수 — **문서의 코드값이 무슨 광량을 뜻하는가.**
+ *
+ * 기본은 ProPhoto γ1.8이고, 그것이 이 프로젝트의 베이스 정의다
+ * (→ `docs/ARCHITECTURE.md` 「중립 현상이 정확히 무엇인가」). 로그 촬영본처럼
+ * **코드 1.0이 선형 1.0이 아닌** 소스를 쓰려면 이걸 갈아 끼운다.
+ *
+ * ⚠️ `decode`만 바꾸면 안 되고 `hWhite`도 같이 와야 한다. 화이트포인트 정규화와
+ * 리버설 기준점이 "코드 1.0이 만드는 로그노광"을 쓰는데, 로그 소스에서는 그 값이
+ * 훨씬 크다(S-Log3은 +7.74스톱). 상수로 박힌 `H_WHITE`를 그대로 쓰면 하이라이트
+ * 기준이 8스톱 어긋난다.
+ *
+ * ⚠️ **원색은 여기서 다루지 않는다.** 이건 톤 축만이다. S-Gamut3.Cine처럼 원색이
+ * 다른 소스는 호출자가 선형 공간에서 3×3을 먼저 걸어야 한다(`core/io/cube.js`).
+ *
+ * `prophotoDecode`가 아니라 `Math.pow(v, 1.8)`인 것은 **의도적이다** — 기존 동작과
+ * 비트 단위로 같아야 한다. ROMM의 발끝 직선부(v<0.031248)는 여기 들어온 적이 없다.
+ */
+const PROPHOTO_INPUT = {
+  id: "prophoto",
+  decode: (v) => Math.pow(v, WORKING_GAMMA),
+  hWhite: H_WHITE,
+};
 
 /**
  * 노광 보정 0에서 v=1이 만드는 선형 포지티브 값.
@@ -172,13 +197,14 @@ const H_WHITE = Math.log10(1 / ANCHOR);
  * 맞추면 전 필름의 LUT 값이 그 크기만큼 움직여 얻는 것 없이 기준선만 흔들린다.
  * (예전 주석은 "channelResponse와 같은 곡선을 써야 한다"였는데 코드가 그렇지 않았다.)
  */
-function referencePeak(points, printGamma, makePrint) {
+function referencePeak(points, printGamma, makePrint, input) {
+  const inp = input || PROPHOTO_INPUT;
   const f = pchip(monotonic(points));
   const d0 = f(MID_GRAY_OFFSET);
   const print = makePrint
     ? makePrint(d0)
     : (D) => ANCHOR * Math.pow(10, printGamma * (D - d0));
-  return print(f(H_WHITE + MID_GRAY_OFFSET));
+  return print(f(inp.hWhite + MID_GRAY_OFFSET));
 }
 
 /**
@@ -188,6 +214,8 @@ function referencePeak(points, printGamma, makePrint) {
  * @param {object} [opts]
  * @param {number} [opts.size=33]      격자 크기
  * @param {number} [opts.exposure=0]   노광 보정 (스톱)
+ * @param {string} [opts.paper]        인화지 id (core/color/paper.js)
+ * @param {object} [opts.input]        입력 전달함수 {id, decode, hWhite}. 없으면 ProPhoto γ1.8
  * @returns {Float32Array} size³ × 3, .cube 순서(R 인덱스가 가장 빨리 변함)
  */
 function buildLut(film, opts) {
@@ -206,7 +234,17 @@ function buildLut(film, opts) {
   const pg = film.printGamma;
   const cur = film.characteristicCurves;
 
-  if (info.channels === 1) return buildMonoLut(film, size, exposure, info);
+  // 입력 전달함수. 없으면 ProPhoto γ1.8(= 지금까지의 동작, 비트 동일).
+  const inp = o.input || PROPHOTO_INPUT;
+
+  if (info.channels === 1) {
+    // 모노는 휘도를 **선형에서** 섞은 뒤 다시 인코딩해 곡선에 태운다. 그 되인코딩이
+    // ProPhoto 감마로 박혀 있어 다른 전달함수를 끼울 수 없다. 조용히 틀리는 대신 막는다.
+    if (inp.id !== "prophoto") {
+      throw new Error(`흑백 필름(${film.id})은 입력 전달함수 ${inp.id}를 아직 지원하지 않습니다`);
+    }
+    return buildMonoLut(film, size, exposure, info);
+  }
 
   // 인화지. 리버설은 인화 단계가 없어(슬라이드 자체가 포지티브다) 건너뛴다.
   const pp = info.sign > 0 ? paper.byId(o.paper || "normalized") : null;
@@ -216,9 +254,9 @@ function buildLut(film, opts) {
   // 텅스텐 캐스트(있으면). daylight 필름은 없어서 0 → 기존 동작 그대로.
   const cast = film.tungstenCast || { r: 0, g: 0, b: 0 };
   const respond = [
-    channelResponse(cur.r, pg, exposure, info.sign, cast.r, makePrint("r")),
-    channelResponse(cur.g, pg, exposure, info.sign, cast.g, makePrint("g")),
-    channelResponse(cur.b, pg, exposure, info.sign, cast.b, makePrint("b")),
+    channelResponse(cur.r, pg, exposure, info.sign, cast.r, makePrint("r"), inp),
+    channelResponse(cur.g, pg, exposure, info.sign, cast.g, makePrint("g"), inp),
+    channelResponse(cur.b, pg, exposure, info.sign, cast.b, makePrint("b"), inp),
   ];
 
   // 1~4단계는 채널끼리 독립이고, 격자의 각 축은 같은 size개 값만 갖는다.
@@ -295,7 +333,7 @@ function buildLut(film, opts) {
       (m[1][0] + m[1][1] + m[1][2]) / 100,
       (m[2][0] + m[2][1] + m[2][2]) / 100,
     ];
-    const peaks = ["r", "g", "b"].map((ch, i) => referencePeak(cur[ch], pg, makePrint(ch)) * Math.max(rowSum[i], 1));
+    const peaks = ["r", "g", "b"].map((ch, i) => referencePeak(cur[ch], pg, makePrint(ch), inp) * Math.max(rowSum[i], 1));
 
     if (wp === "scalar") {
       const peak = Math.max(...peaks);
@@ -550,7 +588,7 @@ function bakeGrading(table, grading) {
  * params에서 최종 LUT을 만든다. 파이프라인·미리보기·팔레트가 모두 이 함수를 쓴다.
  * 세 곳이 각자 LUT을 구우면 조건이 어긋나 서로 다른 결과를 보여주게 된다.
  */
-function buildForParams(params, size) {
+function buildForParams(params, size, opts) {
   const f = params.film || {};
   const filmOn = f.enabled !== false;
 
@@ -561,8 +599,16 @@ function buildForParams(params, size) {
   // 호출자(파이프라인·미리보기·내보내기)가 각자 검사했다. 그래서 검사 방식이
   // 서로 달라졌다 — 미리보기는 그레이딩을 보여주는데 적용은 아무것도 하지 않고,
   // 내보내기는 에러를 던졌다. 판단을 여기 한 곳으로 모은다.
+  // `opts.input`은 **내보내기 전용 통로**다. 화면·적용 경로는 넘기지 않으므로
+  // 기본 동작이 그대로다. 로그 소스용 `.cube`를 구울 때만 core/io/cube.js가 준다.
+  const o = opts || {};
   const table = filmOn
-    ? buildLut(films.byId(f.id), { size, exposure: f.exposure || 0, paper: f.paper })
+    ? buildLut(films.byId(f.id), {
+        size,
+        exposure: f.exposure || 0,
+        paper: f.paper,
+        input: o.input,
+      })
     : lut.identity(size);
 
   // 유제 → 스캐너 → 사용자 조정 순서다.

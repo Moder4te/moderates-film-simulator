@@ -725,7 +725,11 @@ function syncFilmUI() {
  * 룩이 아니라 출력 형식이다. 프리셋에 섞으면 남의 프리셋을 불러올 때마다 내보내기
  * 설정이 같이 바뀐다.
  */
-const cubeOpts = { size: cubeexport.SIZES[0], space: cubeexport.SPACES[0].id };
+const cubeOpts = {
+  size: cubeexport.SIZES[0],
+  space: cubeexport.SPACES[0].id,
+  input: cubeexport.INPUTS[0].id,
+};
 
 /** 격자·색공간 선택 칩. 필름 칩과 같은 이유로 sp-picker를 쓰지 않는다. */
 function buildCubeChips() {
@@ -745,19 +749,23 @@ function buildCubeChips() {
     }
   }
 
-  const spaceHost = $("cubeSpaceChips");
-  if (spaceHost) {
-    spaceHost.textContent = "";
-    for (const s of cubeexport.SPACES) {
+  for (const [hostId, key, items] of [
+    ["cubeInputChips", "input", cubeexport.INPUTS],
+    ["cubeSpaceChips", "space", cubeexport.SPACES],
+  ]) {
+    const host = $(hostId);
+    if (!host) continue;
+    host.textContent = "";
+    for (const it of items) {
       const chip = document.createElement("div");
       chip.className = "chip-btn";
-      chip.textContent = s.displayName;
-      chip.dataset.cubeSpace = s.id;
+      chip.textContent = it.displayName;
+      chip.dataset.cubeKey = it.id;
       chip.addEventListener("click", () => {
-        cubeOpts.space = s.id;
+        cubeOpts[key] = it.id;
         syncCubeUI();
       });
-      spaceHost.appendChild(chip);
+      host.appendChild(chip);
     }
   }
 }
@@ -769,10 +777,11 @@ function syncCubeUI() {
       chip.classList.toggle("active", Number(chip.dataset.cubeSize) === cubeOpts.size);
     }
   }
-  const spaceHost = $("cubeSpaceChips");
-  if (spaceHost) {
-    for (const chip of spaceHost.querySelectorAll(".chip-btn")) {
-      chip.classList.toggle("active", chip.dataset.cubeSpace === cubeOpts.space);
+  for (const [hostId, key] of [["cubeInputChips", "input"], ["cubeSpaceChips", "space"]]) {
+    const host = $(hostId);
+    if (!host) continue;
+    for (const chip of host.querySelectorAll(".chip-btn")) {
+      chip.classList.toggle("active", chip.dataset.cubeKey === cubeOpts[key]);
     }
   }
   const note = $("cubeNote");
@@ -784,7 +793,12 @@ function syncCubeUI() {
     } catch (e) {
       name = "";
     }
-    note.textContent = `${cubeexport.spaceById(cubeOpts.space).note}${name ? `  /  ${name}` : ""}`;
+    const inp = cubeexport.inputById(cubeOpts.input);
+    const parts = [];
+    if (inp.transfer) parts.push(inp.note);
+    parts.push(cubeexport.spaceById(cubeOpts.space).note);
+    if (name) parts.push(name);
+    note.textContent = parts.join("  /  ");
   }
 
   const xn = $("xmpNote");

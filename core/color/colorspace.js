@@ -140,6 +140,55 @@ function displayConverter(profileName) {
 }
 
 /**
+ * ── Sony S-Log3 / S-Gamut3.Cine ─────────────────────────────────────────
+ *
+ * 로그 촬영본을 베이스로 쓰기 위한 것이다. ProPhoto γ1.8과 **성질이 다르다**:
+ *
+ *   · 코드 0~1이 선형 −0.014 ~ **38.4**를 덮는다(ProPhoto는 0~1). 즉 기준
+ *     그레이 위로 **7.7스톱**의 하이라이트 여유가 있다
+ *   · 18% 그레이가 코드 **420/1023 = 0.41056**이다(ProPhoto는 0.3857)
+ *   · 원색이 S-Gamut3.Cine이라 ProPhoto와 다르다 — 전달함수만 바꾸면 색이 틀어진다
+ *
+ * 공식은 Sony 기술문서의 것 그대로다. colour-science 0.4의 구현과 대조해
+ * **편차 0.0**으로 일치했다(인코딩 9점 · 디코딩 7점).
+ */
+
+// 브레이크포인트. 이 위는 로그, 아래는 직선이다(음수 코드까지 이어진다).
+const SLOG3_BREAK_IN = 0.01125;
+const SLOG3_BREAK_OUT = 171.2102946929 / 1023;
+const SLOG3_LIN_SLOPE = (171.2102946929 - 95) / 0.01125;
+
+/** S-Log3 코드(0~1) → 선형. 코드 1.0이 선형 38.4다. */
+function slog3Decode(v) {
+  if (v >= SLOG3_BREAK_OUT) {
+    return Math.pow(10, (v * 1023 - 420) / 261.5) * 0.19 - 0.01;
+  }
+  return (v * 1023 - 95) / SLOG3_LIN_SLOPE;
+}
+
+/** 선형 → S-Log3 코드. `slog3Decode`의 역. */
+function slog3Encode(l) {
+  if (l >= SLOG3_BREAK_IN) {
+    return (420 + Math.log10((l + 0.01) / 0.19) * 261.5) / 1023;
+  }
+  return (l * SLOG3_LIN_SLOPE + 95) / 1023;
+}
+
+/**
+ * S-Gamut3.Cine 선형 → ProPhoto 선형 (Bradford D65→D50).
+ *
+ * 원색 xy에서 직접 유도했다 — R(0.766, 0.275) G(0.225, 0.800) B(0.089, −0.087),
+ * 백색 D65. **행합이 정확히 1.0**이라 흰색이 흰색으로 간다. colour-science의
+ * `matrix_RGB_to_RGB`와 최대 2.9e-4 차이인데, 그쪽은 행합이 1.0002까지 벌어져
+ * 중성이 미세하게 물든다 — 직접 유도한 쪽을 쓴다.
+ */
+const SGAMUT3CINE_TO_PROPHOTO = [
+  [0.79592772, 0.15471288, 0.0493594],
+  [0.00285803, 1.17986987, -0.18272791],
+  [-0.03200665, -0.01184284, 1.0438495],
+];
+
+/**
  * 작업 색공간 점검 — **엔진이 무엇을 전제하는지**를 코드로 적어 둔 곳.
  *
  * `film.js`는 입력 픽셀을 `L = v^1.8`로 되돌린다. 조건 분기가 없고, `apply.js`도
@@ -259,6 +308,9 @@ function srgbToProPhoto(r, g, b, out) {
 module.exports = {
   displayConverter,
   workingSpaceCheck,
+  slog3Decode,
+  slog3Encode,
+  SGAMUT3CINE_TO_PROPHOTO,
   passthrough,
   srgbToProPhoto,
   proPhotoToSrgb: CONVERTERS.prophoto,

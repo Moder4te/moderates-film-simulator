@@ -27,7 +27,7 @@ v2.0.0 · finish 2.15.0에 멈춰 있는 동안 코드는 v2.1.0 · 2.15.1이었
 |---|---|---|
 | TDS 특성곡선 → 3D LUT | ✅ | 사면체 보간, 항등 오차 0 |
 | 문서 적용 (putPixels) | ✅ | 60.2MP 3.4초 |
-| `.cube` 내보내기 | ✅ | 33³/65³, ProPhoto γ1.8 |
+| `.cube` 내보내기 | ✅ | 33³/65³. 입력 ProPhoto γ1.8 / **Sony S-Log3** |
 | Lightroom/ACR 프로파일(.xmp) | ✅ | 직접 생성. Difference 판정상 일치 |
 | 스캐너 스테이지 | ✅ | Frontier / Noritsu ⚠️ 튜닝값 |
 | 노광 보정 | ✅ | ±2스톱 |

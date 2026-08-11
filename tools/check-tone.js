@@ -128,6 +128,35 @@ check("디더가 평균값을 밀지 않음", Math.abs(s1 / NF - s2 / NF) < 0.6,
 {
   const cs = require("../core/color/colorspace");
 
+  // S-Log3 전달함수 — 왕복과 규약 상수. Sony 공식과 colour-science 0.4 구현에
+  // 편차 0.0으로 일치하는 것을 유도 시점에 확인했다. 여기서는 그 성질을 지킨다.
+  {
+    let worst = 0;
+    for (let i = 0; i <= 2000; i++) {
+      const v = i / 2000;
+      worst = Math.max(worst, Math.abs(cs.slog3Encode(cs.slog3Decode(v)) - v));
+    }
+    check("S-Log3 왕복", worst < 1e-12, `최대오차 ${worst.toExponential(1)}`);
+    check("S-Log3 18% 그레이 = 420/1023",
+      Math.abs(cs.slog3Encode(0.18) - 420 / 1023) < 1e-12,
+      cs.slog3Encode(0.18).toFixed(9));
+    // 브레이크포인트에서 두 구간이 이어져야 한다. 어긋나면 그 언저리 톤이 튄다.
+    const bp = 171.2102946929 / 1023;
+    const jump = Math.abs(cs.slog3Decode(bp + 1e-9) - cs.slog3Decode(bp - 1e-9));
+    check("S-Log3 브레이크포인트가 연속", jump < 1e-9, `단차 ${jump.toExponential(1)}`);
+    // 코드 1.0이 선형 38.4 — 이 값이 hWhite를 정하므로 어긋나면 하이라이트가 밀린다.
+    check("S-Log3 코드 1.0 = 선형 38.4",
+      Math.abs(cs.slog3Decode(1) - 38.4209) < 1e-3,
+      `${cs.slog3Decode(1).toFixed(4)} (= +${Math.log2(cs.slog3Decode(1) / 0.18).toFixed(2)}스톱)`);
+
+    // S-Gamut3.Cine → ProPhoto 행렬. **행합이 1이어야 흰색이 흰색으로 간다** —
+    // colour-science의 것은 1.0002까지 벌어져 중성이 미세하게 물든다.
+    const M = cs.SGAMUT3CINE_TO_PROPHOTO;
+    const rows = M.map((r) => r.reduce((a, b) => a + b, 0));
+    check("S-Gamut3.Cine 행렬 행합이 1", rows.every((r) => Math.abs(r - 1) < 1e-7),
+      rows.map((r) => r.toFixed(9)).join(" / "));
+  }
+
   check("ProPhoto는 통과", cs.workingSpaceCheck("ProPhoto RGB").ok === true);
   check("ROMM도 ProPhoto로 인식", cs.workingSpaceCheck("ROMM RGB").ok === true);
   check("프로파일을 못 읽으면 경고", cs.workingSpaceCheck(null).ok === false);
