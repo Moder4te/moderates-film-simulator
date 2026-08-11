@@ -127,6 +127,7 @@ step("동기화", () => {
 });
 
 for (const [name, script] of [
+  ["문서", "check-docs.js"],
   ["경계", "check-boundaries.js"],
   ["경로", "check-paths.js"],
   ["로드", "check-load.js"],
