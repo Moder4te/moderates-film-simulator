@@ -492,6 +492,86 @@ const ref = PROBES.map((p) => {
     `${chromaLowOff.toFixed(4)} → ${chromaLowOn.toFixed(4)}`);
 }
 
+// ── 5c. 전 조합 스윕 ──────────────────────────────────────────────────
+//
+// **필름 × 입력 × 인화지 × 닷지·번을 전부 굽고 두 가지 불변식을 본다.**
+//
+// 이 검사가 없어서 결함 셋을 놓쳤다(2026-08-14 리뷰). 개별 기능 검사는 전부
+// 통과하고 있었는데 — 닷지·번 검사 5건이 **전부 `kodak-endura-premier`만** 썼고,
+// 리니어 입력 검사는 닷지·번을 안 켰다. 기능이 하나씩 들어올 때마다 조합은
+// 곱으로 늘어나는데 검사는 덧셈으로 늘었다.
+//
+//   D1 닷지·번이 그레이축을 역전시켰다 — 9종 전부, 인화지 전부. 누적 11.74/255
+//   D2 닷지·번이 화이트포인트 롤오프를 통째로 껐다 — 기본 인화지에서 23.2% 부분 클리핑
+//   D3 리니어 입력 × 직선 인화지 — 어깨가 없어 하이라이트가 뭉갠다(구성 오류로 판정, 경고)
+//
+// 불변식 둘:
+//   (1) **부분 채널 클리핑 없음** — 일부 채널만 1.0에 붙으면 색상이 틀어진다.
+//       `inputs.combinationWarning`이 경고하는 조합은 면제한다(구성 오류라고
+//       선언한 것이라 조용히 틀리는 게 아니다).
+//   (2) **그레이축 누적 하강**이 임계 아래 — 밝아지는데 어두워지면 그라데이션이
+//       계단이 된다. 닷지·번은 발끝 T'' 교차항 때문에 완전한 0이 아니다(코드 주석).
+{
+  const inputsMod = C("color/inputs");
+  // 격자 17 — 이 검사는 **불변식 위반 여부**를 보는 것이지 정밀도를 보는 게 아니다.
+  // 33으로 해도 세 결함이 다 잡히지만 17로 충분하고, 실측 비용이 1초대라 필름은
+  // 9종 전부 돈다(정합성 검사 전체가 원래 29초라 이 블록은 사실상 공짜다).
+  const N = 17;
+  const DROP_LIMIT = 2.5; // /255. 닷지·번 발끝 잔여의 실측 최대는 2.00
+  let worstDrop = 0, dropAt = null;
+  const clipping = [], declared = [];
+  let combos = 0;
+
+  for (const f of films.all()) {
+    if (f.type !== "color-negative") continue;
+    for (const inp of inputsMod.applyable()) {
+      for (const pp of paper.all()) {
+        for (const db of [null, { limit: 0.4, contrast: 0.6 }]) {
+          combos++;
+          const t = film.buildLut(f, {
+            size: N, paper: pp.id, input: inp.id, dodgeBurn: db || undefined,
+          });
+          const label = `${f.id}/${inp.id}/${pp.id}/${db ? "DB" : "--"}`;
+
+          let partial = 0;
+          for (let i = 0; i < t.length; i += 3) {
+            const hi = Math.max(t[i], t[i + 1], t[i + 2]);
+            const lo = Math.min(t[i], t[i + 1], t[i + 2]);
+            if (hi >= 1 && lo < 1) partial++;
+          }
+          if (partial) {
+            if (inputsMod.combinationWarning(inp.id, !!pp.curves)) declared.push(label);
+            else clipping.push(`${label} ${partial}점`);
+          }
+
+          const run = [{ mx: -1, d: 0 }, { mx: -1, d: 0 }, { mx: -1, d: 0 }];
+          for (let i = 0; i < N; i++) {
+            const q = ((i * N + i) * N + i) * 3;
+            for (let c = 0; c < 3; c++) {
+              const o = t[q + c] * 255;
+              if (o > run[c].mx) run[c].mx = o;
+              else if (run[c].mx - o > run[c].d) run[c].d = run[c].mx - o;
+            }
+          }
+          const drop = Math.max(...run.map((r) => r.d));
+          if (drop > worstDrop) { worstDrop = drop; dropAt = label; }
+        }
+      }
+    }
+  }
+
+  ok(`전 조합 ${combos}가지 — 부분 채널 클리핑 없음`, clipping.length === 0,
+    clipping.length ? clipping.slice(0, 4).join(" / ") + (clipping.length > 4 ? ` 외 ${clipping.length - 4}` : "")
+      : `경고로 선언된 조합 ${declared.length}건은 면제(리니어 입력 × 직선 인화지)`);
+
+  ok(`전 조합 — 그레이축 누적 하강 ${DROP_LIMIT}/255 이내`, worstDrop <= DROP_LIMIT,
+    `최대 ${worstDrop.toFixed(2)}/255 @ ${dropAt}`);
+
+  // 경고가 실제로 그 조합을 집어내는가 — 면제가 빈 그물이면 (1)이 무의미해진다.
+  ok("경고가 문제 조합을 실제로 집는다", declared.length > 0,
+    `선언 ${declared.length}건`);
+}
+
 // ── 6. 그레이딩이 색역을 좁히지 않는가 ───────────────────────────────
 //
 // 이전 구현은 ProPhoto → sRGB → 그레이딩 → ProPhoto로 왕복하며 클램프해서

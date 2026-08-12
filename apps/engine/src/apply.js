@@ -20,6 +20,8 @@ const { imaging } = require("photoshop");
 const ps = require("../lib/host/ps");
 const lut = require("../lib/core/color/lut");
 const colorspace = require("../lib/core/color/colorspace");
+const inputs = require("../lib/core/color/inputs");
+const paper = require("../lib/core/color/paper");
 
 /** 모든 FilmSim 레이어의 공통 접두사. 색·마감 양쪽이 이걸로 시작한다. */
 const FILMSIM = "FilmSim";
@@ -64,6 +66,13 @@ function validate(doc, params) {
   if (filmOn) {
     const space = colorspace.workingSpaceCheck(ps.profileOf(doc));
     if (!space.ok) warnings.push(space.message);
+
+    // 입력 × 인화지 조합. 어깨 없는 인화지에 로그폭을 넣으면 하이라이트 색이
+    // 틀어진다 — 조용히 일어나므로 반드시 알린다(core/color/inputs.js 참조).
+    const f = (params && params.film) || {};
+    const pp = paper.byId(f.paper);
+    const combo = inputs.combinationWarning(f.input, !!pp.curves);
+    if (combo) warnings.push(combo);
   }
 
   // ── 마감이 이미 얹혀 있는가 ──────────────────────────────────────────

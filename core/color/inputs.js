@@ -226,10 +226,40 @@ function applyable() {
   return INPUTS.filter((i) => !i.toProPhoto);
 }
 
+/**
+ * 입력 × 인화지 조합 점검 — **어깨 없는 인화지에 로그폭을 넣지 않았는가.**
+ *
+ * `normalized`·`shared`는 직선 인화지라 어깨가 없다. 하이라이트를 눌러 주는 것은
+ * `film.js`의 합성 롤오프(무릎 0.5의 지수 소프트클립)뿐인데, 그것이 담을 수 있는
+ * 범위는 기준 그레이 위 **약 2.5스톱**이다. 리니어 입력은 +4~+6스톱을 담고
+ * 들어오므로 남는 것이 지수 꼬리에서 수치적으로 포화한다 — 채널마다 포화 시점이
+ * 달라 **일부 채널만 1.0에 붙고 색상이 틀어진다**(실측: linear-h6 × normalized,
+ * 33³의 55%가 부분 클리핑).
+ *
+ * ⚠️ **코드로 못 고친다.** 무릎을 아무리 낮춰도 지수 소프트클립으로 6스톱을 [0,1]에
+ * 분해능 있게 넣을 수 없고(필요 무릎 < −1.1), 로그 톤맵으로 바꾸는 것은 곧
+ * **어깨를 합성으로 만드는 것** — 그건 인화지가 할 일이다. 그래서 막지 않고
+ * **알린다**: 리니어 입력에는 실측 곡선 인화지를 쓰라고.
+ *
+ * @returns {string|null} 경고 문구, 문제 없으면 null
+ */
+function combinationWarning(inputId, paperHasCurves) {
+  const inp = byId(inputId);
+  const stops = inp.hWhite / Math.log10(2);
+  if (paperHasCurves || stops <= 3) return null;
+  return (
+    `입력 소스 「${inp.displayName}」는 기준 그레이 위 ${stops.toFixed(1)}스톱을 담는데, ` +
+    "선택한 인화지는 어깨가 없어 약 2.5스톱까지만 눌러 줍니다. 하이라이트에서 " +
+    "채널마다 다른 지점이 잘려 **색이 틀어집니다.** 인화지를 실측 곡선 " +
+    "(Kodak Endura Premier)으로 바꾸거나, 입력을 ProPhoto γ1.8로 바꾸세요."
+  );
+}
+
 module.exports = {
   all,
   byId,
   applyable,
+  combinationWarning,
   HEADROOMS,
   DEFAULT_HEADROOM,
   ANCHOR,
