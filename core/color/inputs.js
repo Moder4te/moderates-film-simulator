@@ -158,13 +158,48 @@ const ACR_STANDARD_CTRL = [
 // 제어점은 `tools/derive-acr-curve.py`가 낸 것을 그대로 옮긴 것이다(재현 명령은
 // 위 유도 문단 참조) — v_lo/v_hi가 어중간한 이유도 그 도구가 **실제 표본이 있던
 // 범위**를 그대로 보고하기 때문이다.
-const acrStandardG = curve.tabulate(curve.pchip(ACR_STANDARD_CTRL), 0.0667, 0.9647, 512);
+const ACR_LO = ACR_STANDARD_CTRL[0][0];
+const ACR_LO_G = ACR_STANDARD_CTRL[0][1];
+
+/**
+ * 표본 아래(v < 0.0667)를 **ln v 축에서** 외삽하는 기울기. 유효감마 0.610이다
+ * (순수 ProPhoto는 1.8 — ACR이 암부를 그만큼 많이 들어올린다는 뜻).
+ *
+ * ── 왜 여기만 로그축인가 (N4, 2026-08-14) ───────────────────────────────
+ *
+ * 처음엔 `tabulate`를 표본 범위(0.0667~0.9647)로만 떠서, 그 밖이 **양끝 값으로
+ * 평평하게 고정**됐다. 없는 데이터를 추정해 잇지 않는다는 원칙이었는데, 평평은
+ * 추정을 안 하는 게 아니라 **"거기는 전부 같은 밝기다"라는 틀린 추정**이었다.
+ * 실측: 인코딩 하단 6.6%(8bit 0~17)와 상단 3.5%(246~255)가 각각 한 값으로 뭉갰고,
+ * 엔진 출력에서 v=0과 v=0.03이 **소수점까지 동일**했다(32.9, 32.4, 28.0).
+ *
+ * 위쪽은 `pchip`의 기본 선형 외삽으로 충분하다 — 표본 끝이 0.9647이라 남는 폭이
+ * 3.5%뿐이고, 거기는 어차피 ACR이 클리핑하는 자리다.
+ *
+ * **아래쪽은 선형 외삽이면 안 된다.** v축에서 직선으로 이으면 `g(0)`이 유한해져
+ * **검정이 선형 0.0204(=2% 회색)로 뜬다** — 엔진 출력에서 v=0이 23/255가 된다.
+ * 인코딩은 원래 거듭제곱꼴이라 `v→0`에서 `g→−∞`여야 하고, 그건 **ln v 축에서**
+ * 직선일 때 성립한다. 실측 v=0 출력: 평평 32.9 → v축 선형 23.1 → **ln v 축 13.4**.
+ *
+ * ⚠️ **여전히 외삽이다.** 표본이 없는 구간을 끝점 기울기로 이은 것이라, 실제
+ * ACR의 발끝이 더 가파르면(제어점 추세는 그렇게 보인다) 암부가 실제보다 밝게
+ * 복원된다. 표본을 넓혀 재촬영하는 것이 근본 해결이다 → TODO N4
+ */
+const ACR_LO_SLOPE =
+  (ACR_STANDARD_CTRL[1][1] - ACR_LO_G) /
+  (Math.log(ACR_STANDARD_CTRL[1][0]) - Math.log(ACR_LO));
+
+// 표본 하단부터 v=1까지. 상단은 pchip이 끝점 기울기로 선형 외삽한 값이 담긴다.
+const acrStandardG = curve.tabulate(curve.pchip(ACR_STANDARD_CTRL), ACR_LO, 1, 512);
+
 function acrStandardDecode(v) {
-  return ANCHOR * Math.exp(acrStandardG(v));
+  if (v <= 0) return 0;
+  if (v >= ACR_LO) return ANCHOR * Math.exp(acrStandardG(v));
+  return ANCHOR * Math.exp(ACR_LO_G + ACR_LO_SLOPE * (Math.log(v) - Math.log(ACR_LO)));
 }
 // `decode(v) = 0.18`을 만족하는 v — 이분법. 정박점 자체가 실측 앵커는 아니다(위 주석).
 function acrStandardMidGray() {
-  let lo = 0.0667, hi = 0.9647;
+  let lo = ACR_LO, hi = 1;
   for (let i = 0; i < 40; i++) {
     const mid = (lo + hi) / 2;
     if (acrStandardDecode(mid) < ANCHOR) lo = mid;
@@ -192,7 +227,8 @@ const INPUTS = [
     note:
       "Camera Raw로 \"Adobe Standard\" 프로필 + 슬라이더 전부 0으로 그냥 현상한 파일용. " +
       "숨은 톤 커브를 역산해 되돌린다 — decode-raw.py 없이 raw를 곧장 현상해도 된다. " +
-      "⚠️ Sony ILCE-7RM5 + ACR 18.3.2 한 세트에서 유도, 다른 카메라는 근사치.",
+      "⚠️ Sony ILCE-7RM5 + ACR 18.3.2 한 세트에서 유도, 다른 카메라는 근사치. " +
+      "표본 범위(0.0667~0.9647) 밖은 외삽이다 — 아래쪽은 ln v 축, 위쪽은 v 축.",
     decode: acrStandardDecode,
     hWhite: Math.log10(acrStandardDecode(1) / ANCHOR),
     midGrayEncoded: acrStandardMidGray(),
