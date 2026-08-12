@@ -149,8 +149,10 @@ ProPhoto로 옮기려면 3×3 행렬이 필요한데, 그 행렬은 채널을 �
 둬도 카메라 프로필의 베이스라인 톤 커브 때문에 선형이 아니다. 그 휨은 노출
 슬라이더로 못 편다(대비 1.10배 → 노출 최선 보정 뒤에도 암부 −3.3/하이라이트 +4.3,
 8bit). ACR을 재는 대신 libraw로 직접 풀면 그 조건이 측정 대상이 아니라 **구성상
-성립**한다. → [`ARCHITECTURE.md`](./ARCHITECTURE.md) 「중립 현상이 정확히
-무엇인가」, [`TODO.md`](../TODO.md) N1
+성립**한다. **2026-08-12 실측으로 확인됨** — ACR "Adobe Standard"도 조건 (b)를
+못 만족해(암부 +0.62 / 명부 −0.24스톱 편차) 이쪽이 공식 경로로 확정됐다.
+→ [`ARCHITECTURE.md`](./ARCHITECTURE.md) 「중립 현상이 정확히 무엇인가」,
+[`RESOLVED.md`](./RESOLVED.md)
 
 ### Lightroom 프로파일 — .cube가 다리다
 
