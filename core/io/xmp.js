@@ -258,20 +258,36 @@ function buildXmp(params, opts) {
   }
 
   // buildForParams가 유제 → 스캐너 → 사용자 조정까지 굽는다.
-  // 즉 프로파일은 "현재 문서에 적용"과 같은 결과를 낸다 — **입력이 ProPhoto일 때만**.
   //
   // ⚠️ **입력 전달함수는 패널 상태(`params.film.input`)를 따르지 않고 항상
-  // ProPhoto로 고정한다.** Lightroom/ACR은 파일을 자기 방식대로 렌더링할 뿐
-  // `decode-raw.py`가 뭘 했는지 알 방법이 없다 — 패널을 "리니어 +N스톱"으로 켜둔
-  // 채로(엔진에 리니어 TIFF를 먹이는 중이었다면 흔한 상태다) 이 버튼을 누르면,
-  // 나가는 프로파일은 "입력이 이미 N스톱 밀려 있다"고 가정한 커브가 된다. 그걸
-  // Lightroom의 정상 렌더링(=ProPhoto 근사)에 걸면 전부 하이라이트 숄더로
-  // 밀려 들어가 채도가 무너진다 — `core/color/inputs.js`의 `linear-h5`로 계산해
-  // 보면 18% 그레이가 그 상태에서 **+2.5스톱**으로 읽힌다.
+  // `acr-standard`로 고정한다.** (2026-08-13 이전엔 `prophoto`를 강제했다 —
+  // 아래 "왜 prophoto가 아니라 acr-standard인가" 참조. 패널을 "리니어 +N스톱"으로
+  // 켜둔 채(엔진에 리니어 TIFF를 먹이는 중이었다면 흔한 상태다) 내보내면 안 되는
+  // 것은 그대로다 — 어느 쪽으로 고정하든, 패널 상태를 그대로 물려받으면 나가는
+  // 프로파일이 "입력이 이미 N스톱 밀려 있다"고 가정한 커브가 되고, 그걸 Lightroom의
+  // 정상 렌더링에 걸면 하이라이트 숄더로 밀려 채도가 무너진다 — `linear-h5`로
+  // 계산하면 18% 그레이가 그 상태에서 +2.5스톱으로 읽힌다.)
+  //
+  // **왜 `prophoto`가 아니라 `acr-standard`인가.** Lightroom도 raw를 열면
+  // Photoshop의 Camera Raw와 **같은 렌더링 엔진**(Adobe Camera Raw, 같은 Process
+  // Version)을 쓴다 — 즉 `.xmp` 프로파일이 실제로 얹히는 표면은 순수 ProPhoto가
+  // 아니라 그 자체로 이미 ACR의 숨은 톤 커브가 걸린 값이다(→ RESOLVED.md "ACR
+  // Adobe Standard도 조건 (b)를 만족하지 않는다"). `prophoto`를 가정하고 구우면
+  // "Lightroom이 커브 없이 렌더링했다"고 잘못 전제하는 것이고, 그 프로파일을
+  // 실제 Lightroom(커브 있음)에 걸면 Photoshop에서 `prophoto` 입력으로 리니어
+  // TIFF를 잘못 먹였을 때와 **같은 종류의 실패**(고대비 장면 채도 붕괴)가 난다.
+  // `acr-standard`는 그 커브를 역산해 되돌리는 입력이므로, 프로파일이 실제로
+  // 얹히는 표면(ACR 렌더링)에 맞는 가정은 이쪽이다.
+  //
+  // ⚠️ 여전히 근사다 — `acr-standard`는 Sony ILCE-7RM5 + ACR 18.3.2 한 세트에서
+  // 유도됐다(TODO N3, 다른 카메라 미검증). 그래도 "커브가 없다"(prophoto)고
+  // 가정하는 것보다는 "커브가 있고 대략 이런 모양"(acr-standard)이라고 가정하는
+  // 쪽이 실제 Lightroom 렌더링에 더 가깝다.
+  //
   // `.cube`(`core/io/cube.js`)는 입력을 고를 수 있게 열어 뒀지만, 그건 로그
   // 촬영본처럼 **받는 쪽이 인코딩을 아는** 경로라서 다르다. Lightroom 프로파일은
   // 그런 경로가 없다.
-  const table = film.buildForParams(params, LUT_SIZE, { input: "prophoto" });
+  const table = film.buildForParams(params, LUT_SIZE, { input: "acr-standard" });
 
   const binary = buildBinary(table, space.tail);
   const id = codec.md5(binary);

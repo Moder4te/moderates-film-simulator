@@ -808,7 +808,9 @@ function syncCubeUI() {
   const xn = $("xmpNote");
   if (xn) {
     // 프로파일은 격자가 32로 고정이고(ACR이 그 이상을 받지 않는다) 색공간도
-    // ProPhoto로 고정이다. 고를 것이 없으므로 현재 대상만 알려준다.
+    // ProPhoto로 고정이다. 입력은 항상 acr-standard로 굽는다(패널의 입력 소스
+    // 설정과 무관 — core/io/xmp.js buildXmp 참조) — Lightroom에서 Profile을
+    // Adobe Standard로, 슬라이더는 0으로 둬야 이 프로파일이 맞는다.
     let n = "";
     try {
       n = xmpexport.profileName(params);
@@ -817,7 +819,8 @@ function syncCubeUI() {
     }
     const count = xmpexport.defaultSet(params).length;
     xn.textContent =
-      `${xmpexport.LUT_SIZE}³ ProPhoto · Profile Browser의 "${xmpexport.GROUP}" 그룹` +
+      `${xmpexport.LUT_SIZE}³ ProPhoto · Lightroom에서 Profile: Adobe Standard, 슬라이더 0 전제 · ` +
+      `Profile Browser의 "${xmpexport.GROUP}" 그룹` +
       `${n ? `  /  현재: ${n}` : ""}  /  세트 ${count}개`;
   }
 }

@@ -6,6 +6,40 @@
 
 ## 색 엔진
 
+### Lightroom도 ACR 커브 위에서 돈다 — `.xmp` 고정 입력을 acr-standard로 — 2026-08-13
+
+- **무엇** 바로 아래 "Lightroom 프로파일이 패널의 입력 소스를 물려받아 조용히
+  깨졌다"를 고치면서 `buildXmp`의 고정 입력을 `prophoto`로 뒀었다 — "Lightroom은
+  raw를 자기 방식대로(대략 ProPhoto 근사) 렌더링한다"고 가정한 것이다. **그
+  가정 자체가 틀렸다.**
+- **왜 틀렸나** Lightroom도 raw를 열면 Photoshop의 Camera Raw와 **같은 렌더링
+  엔진**(같은 Adobe Camera Raw, 같은 Process Version)을 쓴다. 즉 `.xmp` 프로파일이
+  실제로 얹히는 표면은 순수 ProPhoto(γ1.8만)가 아니라, 이미 ACR의 숨은 톤 커브가
+  걸린 값이다(→ "ACR Adobe Standard도 조건 (b)를 만족하지 않는다"). `prophoto`를
+  가정하고 프로파일을 구우면 "Lightroom이 커브 없이 렌더링했다"고 잘못 전제하는
+  것이고, 그 프로파일을 실제 Lightroom(커브 있음)에 걸면 **Photoshop에서 `prophoto`
+  입력으로 리니어 TIFF를 잘못 먹였을 때와 같은 종류의 실패**(고대비 장면 채도
+  붕괴)가 조용히 일어난다 — 정확히 아래 항목에서 고쳤다고 생각한 그 문제가
+  Lightroom 쪽에는 그대로 남아 있었던 셈이다.
+- **어떻게 걸렸나** 사용자가 직접 지적했다 — "라이트룸에서 raw 현상할 때도
+  기본적으로 Adobe Standard 위에서 작동하니, 라이트룸 프로파일의 정합성을
+  위해서도 (acr-standard 역산이) 필요한 과정이었다." `acr-standard` 입력을
+  만든 직후라 바로 연결됐다.
+- **처리** `buildXmp`의 고정 입력을 `prophoto` → `acr-standard`로 바꿨다.
+  `tools/check-conformance.js`에 회귀 테스트 추가 — 고정값이 `acr-standard`와
+  일치하고 `prophoto`와는 다름을 직접 대조한다(파라미터를 바꿔서는 못 가른다 —
+  `buildXmp`가 애초에 그 필드를 안 본다). 기존 ".xmp === 엔진" 정합성 검사도
+  같은 이유로 `{input: "acr-standard"}`를 명시하도록 갱신(안 그러면 기본
+  `prophoto`와 비교해 스스로 깨진다).
+- **여전히 근사다** `acr-standard`가 Sony ILCE-7RM5 + ACR 18.3.2 한 세트에서
+  유도됐다는 한계는 그대로다(TODO N3). 그래도 "커브가 없다"보다는 "커브가
+  있고 대략 이런 모양"이 실제 Lightroom 렌더링에 더 가깝다.
+- **교훈** 수정 하나를 "이제 맞다"고 확정하기 전에 **그 수정이 실제로 무엇 위에
+  얹히는지**를 다시 물어야 한다. "ProPhoto로 고정하면 옳다"는 "Lightroom이
+  ProPhoto처럼 렌더링한다"는 전제 위에 있었는데, 그 전제 자체가 이 세션에서
+  이미 반증된 것(ACR이 조건 b를 안 만족함)과 같은 것이었다 — 고친 코드 안에
+  옛 가정이 그대로 남아 있었다.
+
 ### ACR "Adobe Standard" 톤 커브를 역산해 되돌리는 입력 추가 — 2026-08-13
 
 - **무엇** decode-raw.py 없이도, Camera Raw로 "Adobe Standard" + 슬라이더 0으로
@@ -110,11 +144,11 @@
   읽힌다. 색이 있는 중간톤(입력 0.45,0.35,0.32, chroma 0.13)은 같은 상황에서
   chroma가 0.06으로 **절반 아래**로 떨어진다 — 필름 커브의 숄더(하이라이트
   압축) 구간에서 채널별 색 분리가 줄어들기 때문이다.
-- **처리** `buildXmp`가 `film.buildForParams(params, LUT_SIZE, { input: "prophoto" })`로
-  **입력을 항상 강제**하도록 고쳤다. 패널이 무엇으로 켜져 있든 Lightroom
-  프로파일은 언제나 ProPhoto 입력을 가정한다 — Lightroom에 다른 선택지가 없으므로
-  옳다. `tools/check-conformance.js`에 회귀 테스트 추가(`params.film.input`을
-  바꿔도 `.xmp` 출력 바이트가 완전히 같아야 한다).
+- **처리** `buildXmp`가 패널 상태와 무관하게 **입력을 항상 고정**하도록 고쳤다
+  (처음엔 `prophoto`로 — 같은 날 나중에 `acr-standard`로 다시 바뀐다. 아래
+  "Lightroom도 ACR 커브 위에서 돈다 — .xmp 고정 입력을 acr-standard로" 참조).
+  `tools/check-conformance.js`에 회귀 테스트 추가(`params.film.input`을 바꿔도
+  `.xmp` 출력 바이트가 완전히 같아야 한다).
 - **교훈** 패널의 전역 상태(`params.film.input`)를 여러 소비자가 opts 없이
   그대로 물려받으면, 그 상태가 "지금 이 작업에 맞는지"를 아무도 검사하지 않는다.
   `cube.js`는 처음부터 입력을 명시적으로 고르게 설계해 이 함정을 피했다 —
