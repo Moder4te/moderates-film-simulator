@@ -799,7 +799,7 @@ function syncCubeUI() {
     }
     const inp = cubeexport.inputById(cubeOpts.input);
     const parts = [];
-    if (inp.transfer) parts.push(inp.note);
+    if (inp.id !== "panel" && inp.note) parts.push(inp.note);
     parts.push(cubeexport.spaceById(cubeOpts.space).note);
     if (name) parts.push(name);
     note.textContent = parts.join("  /  ");
