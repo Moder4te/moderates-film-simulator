@@ -100,6 +100,25 @@ function typeOf(film) {
 }
 
 /**
+ * 네거티브 한 채널의 **농도(D) 계산만** 분리해 둔 것. `channelResponse`가
+ * 표준 경로에서 쓰고, `buildLut`의 닷지·번 경로도 같은 걸 쓴다 — 필름의
+ * 노광→농도 응답 자체는 두 경로에서 **완전히 같아야** 한다(안 그러면 "인화
+ * 단계에서만 조정한다"는 전제가 깨진다). 인화(`print`)는 여기 안 들어있다.
+ */
+function negativeDensity(points, exposureStops, wbShift, input) {
+  const inp = input || PROPHOTO_INPUT;
+  const fn = tabulate(pchip(monotonic(points)), TAB_MIN, TAB_MAX, TAB_STEPS);
+  const shift = exposureStops * LOG2 - MID_GRAY_OFFSET + (wbShift || 0);
+  const d0 = fn(MID_GRAY_OFFSET);
+  function density(v) {
+    const L = inp.decode(v);
+    const H = Math.log10(Math.max(L, L_FLOOR) / ANCHOR) + shift;
+    return fn(H);
+  }
+  return { density, d0 };
+}
+
+/**
  * 한 층의 응답 함수를 만든다. 입력 0~1(인코딩된 값) → 출력 선형 포지티브.
  *
  * 네거티브: P = 0.18 · 10^(+pg · (D − D₀))
@@ -117,17 +136,6 @@ function typeOf(film) {
  */
 function channelResponse(points, printGamma, exposureStops, sign, wbShift, makePrint, input) {
   const inp = input || PROPHOTO_INPUT;
-  // 리버설 곡선은 노광이 늘수록 농도가 **내려간다**. 단조 보정은 "증가"를
-  // 강제하므로 그대로 쓰면 곡선을 뭉갠다. 부호를 뒤집어 보정한 뒤 되돌린다.
-  const src = sign > 0
-    ? monotonic(points)
-    : monotonic(points.map(([h, d]) => [h, -d])).map(([h, d]) => [h, -d]);
-
-  const fn = tabulate(pchip(src), TAB_MIN, TAB_MAX, TAB_STEPS);
-  // wbShift = 텅스텐 밸런스 캐스트(채널별 로그노광 오프셋). H에는 더하지만 아래
-  // d0/dWhite 기준에는 **안 더한다** — 그래야 채널 정규화가 캐스트를 중화하지 않고
-  // 살린다(daylight 필름은 0이라 완전 불변). film.js buildLut 참조.
-  const shift = exposureStops * LOG2 - MID_GRAY_OFFSET + (wbShift || 0);
 
   if (sign > 0) {
     // 네거티브 — 기준 그레이에서 P = 0.18이 되도록 맞춘다.
@@ -135,16 +143,20 @@ function channelResponse(points, printGamma, exposureStops, sign, wbShift, makeP
     // 인화 변환은 `paper.js`가 만든다. 인화지 곡선이 직선이면 예전 수식
     // `0.18·10^(pg·(D−d0))`과 **대수적으로 같다**(paper.js 헤더 참조). 그래서
     // `makePrint`가 없는 경로(모노·구 호출)는 그 수식을 그대로 쓴다.
-    const d0 = fn(MID_GRAY_OFFSET);
+    const { density, d0 } = negativeDensity(points, exposureStops, wbShift, input);
     const print = makePrint
       ? makePrint(d0)
       : (D) => ANCHOR * Math.pow(10, printGamma * (D - d0));
     return function respond(v) {
-      const L = inp.decode(v);
-      const H = Math.log10(Math.max(L, L_FLOOR) / ANCHOR) + shift;
-      return print(fn(H));
+      return print(density(v));
     };
   }
+
+  // 리버설 곡선은 노광이 늘수록 농도가 **내려간다**. 단조 보정은 "증가"를
+  // 강제하므로 그대로 쓰면 곡선을 뭉갠다. 부호를 뒤집어 보정한 뒤 되돌린다.
+  const src = monotonic(points.map(([h, d]) => [h, -d])).map(([h, d]) => [h, -d]);
+  const fn = tabulate(pchip(src), TAB_MIN, TAB_MAX, TAB_STEPS);
+  const shift = exposureStops * LOG2 - MID_GRAY_OFFSET + (wbShift || 0);
 
   // 리버설 — **가장 밝은 입력(v=1)이 만드는 농도**를 흰색 1.0에 맞춘다.
   //
@@ -244,21 +256,89 @@ function buildLut(film, opts) {
 
   // 텅스텐 캐스트(있으면). daylight 필름은 없어서 0 → 기존 동작 그대로.
   const cast = film.tungstenCast || { r: 0, g: 0, b: 0 };
-  const respond = [
-    channelResponse(cur.r, pg, exposure, info.sign, cast.r, makePrint("r"), inp),
-    channelResponse(cur.g, pg, exposure, info.sign, cast.g, makePrint("g"), inp),
-    channelResponse(cur.b, pg, exposure, info.sign, cast.b, makePrint("b"), inp),
-  ];
 
-  // 1~4단계는 채널끼리 독립이고, 격자의 각 축은 같은 size개 값만 갖는다.
-  // 축마다 한 번씩만 계산해 두면 size³ 루프에서는 크로스토크와 인코딩만 남는다.
+  // ── 닷지·번 (실험적) ──────────────────────────────────────────────────
+  //
+  // 필름의 H→D(노광→농도) 응답은 절대 안 건드린다 — 그건 TDS 실측이고, 정확성이
+  // 그 자체로 이 프로젝트의 목적이다. 대신 D→인화(paper.transferFor) **직전에**
+  // 딱 한 지점만 끼운다: 기준 농도(d0)에서 먼 픽셀일수록, 실제 인화에서 그
+  // 부분만 노광을 더 주거나(번) 덜 주는(닷지) 것과 같은 효과를 준다.
+  //
+  // **밝기(luma, 세 채널 델타의 평균)만 압축하고 채널 간 편차(=색)는 그대로
+  // 더해 돌려준다.** 채널마다 따로 압축하면 그 편차 자체(=채도)가 같이
+  // 눌린다 — 처음 시도에서 실제로 그렇게 됐다(N1braket/MDR03671 실사진으로 확인,
+  // 2026-08-13). 실제 다크룸 닷지·번도 확대기의 백색광으로 하는 것이라
+  // 채널마다 따로가 아니라 이 방식(전체를 같이 밀고 편차는 유지)이 물리적으로도 맞다.
+  //
+  // 이게 필요한 이유: 라이트룸 기본 렌더링(ACR)에는 이미 이런 압축이 숨어
+  // 걸려 있어서(→ RESOLVED.md "ACR Adobe Standard도 조건 (b)를 만족하지
+  // 않는다") 명암 넓은 장면도 그럭저럭 보기 좋게 나온다. 리니어(조건 b를
+  // 실제로 만족하는) 입력에는 그 안전장치가 없어서, 씬이 필름+인화지의
+  // 실측 유효 구간(대략 ±1.5스톱)보다 넓으면 그 바깥이 뭉개진다 — MDR03671처럼
+  // 5.8스톱짜리 실내 인물사진에서 그대로 드러났다.
+  //
+  // `opts.dodgeBurn = { limit, contrast }`
+  //   limit     **농도(D) 단위**. 작을수록 세게 누른다. 0.4~0.6이 실사진에서
+  //             뭉개짐 없이 자연스러운 절충점이었다.
+  //   contrast  압축은 정의상 대비를 낮춘다(넓은 걸 좁은 통에 넣으니까) — 로그
+  //             촬영본을 그대로 보면 밋밋한 것과 같은 이유다. 압축된 luma에
+  //             3차 S커브(`y + c·y·(1−y²)`, 정규화 -1~1 구간)를 더해 중간톤
+  //             대비를 되돌린다. 0(끔)~1 정도. 0.6 근방이 뭉개짐 없이 펀치가
+  //             살아나는 지점이었다(MDR03671 실사진 기준, 2026-08-13).
+  const db = o.dodgeBurn;
+  const dodgeBurnOn = !!(db && db.limit > 0 && info.sign > 0 && pp);
+
+  let axis = null;
+  let dbState = null;
+  if (dodgeBurnOn) {
+    const curves = {
+      r: negativeDensity(cur.r, exposure, cast.r, inp),
+      g: negativeDensity(cur.g, exposure, cast.g, inp),
+      b: negativeDensity(cur.b, exposure, cast.b, inp),
+    };
+    dbState = {
+      density: [curves.r.density, curves.g.density, curves.b.density],
+      d0: [curves.r.d0, curves.g.d0, curves.b.d0],
+      print: [
+        paper.transferFor(pp, film, "r", curves.r.d0),
+        paper.transferFor(pp, film, "g", curves.g.d0),
+        paper.transferFor(pp, film, "b", curves.b.d0),
+      ],
+      limit: db.limit,
+      contrast: db.contrast || 0,
+    };
+  } else {
+    const respond = [
+      channelResponse(cur.r, pg, exposure, info.sign, cast.r, makePrint("r"), inp),
+      channelResponse(cur.g, pg, exposure, info.sign, cast.g, makePrint("g"), inp),
+      channelResponse(cur.b, pg, exposure, info.sign, cast.b, makePrint("b"), inp),
+    ];
+
+    // 1~4단계는 채널끼리 독립이고, 격자의 각 축은 같은 size개 값만 갖는다.
+    // 축마다 한 번씩만 계산해 두면 size³ 루프에서는 크로스토크와 인코딩만 남는다.
+    axis = [new Float64Array(size), new Float64Array(size), new Float64Array(size)];
+    for (let i = 0; i < size; i++) {
+      const v = i / (size - 1);
+      axis[0][i] = respond[0](v);
+      axis[1][i] = respond[1](v);
+      axis[2][i] = respond[2](v);
+    }
+  }
   const d = size - 1;
-  const axis = [new Float64Array(size), new Float64Array(size), new Float64Array(size)];
-  for (let i = 0; i < size; i++) {
-    const v = i / d;
-    axis[0][i] = respond[0](v);
-    axis[1][i] = respond[1](v);
-    axis[2][i] = respond[2](v);
+
+  // 닷지·번 모드에서도 농도 축은 채널별로 여전히 O(size)로 끝난다(필름 응답이
+  // 채널 독립이므로). luma 결합만 격자점마다(O(size³)) 필요하다 — 아래 메인
+  // 루프에서 한다.
+  const densityAxis = dodgeBurnOn
+    ? [new Float64Array(size), new Float64Array(size), new Float64Array(size)]
+    : null;
+  if (dodgeBurnOn) {
+    for (let i = 0; i < size; i++) {
+      const v = i / d;
+      densityAxis[0][i] = dbState.density[0](v);
+      densityAxis[1][i] = dbState.density[1](v);
+      densityAxis[2][i] = dbState.density[2](v);
+    }
   }
 
   const m = film.crosstalk || [
@@ -318,7 +398,11 @@ function buildLut(film, opts) {
   // 낸 최대 반사율)에서 0.74로 한 번 더 눌렸다. 게다가 곡선 인화지는 출력이 구조적으로
   // 1을 넘을 수 없어(P = 10^(−Dp) ≤ 10^(−Dmin)) 원래 목적인 클리핑 방지도 필요 없다.
   const wp = pp && pp.curves ? "clip" : film.whitePoint || "rolloff";
-  if (wp !== "clip" && info.sign > 0) {
+  // 닷지·번은 지금은 실측 곡선 인화지(wp==="clip")하고만 맞춰 뒀다 — 그게
+  // 실제로 쓰는 조합(Endura Premier 등)이고, 그 경우 이 블록 자체가 원래
+  // 건너뛰어진다. 다른 인화지와 조합하면(아래 !dodgeBurnOn) 이득 계산을
+  // 생략한다 — 프로토타입 범위 밖.
+  if (wp !== "clip" && info.sign > 0 && !dodgeBurnOn) {
     const rowSum = [
       (m[0][0] + m[0][1] + m[0][2]) / 100,
       (m[1][0] + m[1][1] + m[1][2]) / 100,
@@ -367,12 +451,39 @@ function buildLut(film, opts) {
   const lut = new Float32Array(size * size * size * 3);
   let p = 0;
 
+  // 닷지·번: 세 채널의 농도 델타(D−d0)를 갖고 있어야 luma를 구할 수 있어서,
+  // 여기서만(격자점마다) 채널 독립이 깨진다 — 크로스토크도 원래 여기서 채널을
+  // 섞으므로 새로운 비용은 아니다.
+  const dbLimit = dodgeBurnOn ? dbState.limit : 0;
+  const dbContrast = dodgeBurnOn ? dbState.contrast : 0;
+
   for (let bi = 0; bi < size; bi++) {
-    const pb = axis[2][bi];
     for (let gi = 0; gi < size; gi++) {
-      const pgv = axis[1][gi];
       for (let ri = 0; ri < size; ri++) {
-        const pr = axis[0][ri];
+        let pr, pgv, pb;
+        if (dodgeBurnOn) {
+          const Dr = densityAxis[0][ri], Dg = densityAxis[1][gi], Db = densityAxis[2][bi];
+          const d0 = dbState.d0;
+          const dr = Dr - d0[0], dg = Dg - d0[1], db_ = Db - d0[2];
+          const lumaDelta = (dr + dg + db_) / 3;
+          // 압축(tanh, -1~1로 수렴) 뒤 S자 대비를 더한다. 압축이 지운 중간톤
+          // 대비를 정규화 구간(-1~1)에서 3차 곡선으로 되돌린다 — 순서가
+          // 중요하다: 대비를 먼저 걸면 압축이 그걸 도로 눌러버린다.
+          let y = Math.tanh(lumaDelta / dbLimit);
+          if (dbContrast) {
+            y = y + dbContrast * y * (1 - y * y);
+            y = y < -1 ? -1 : y > 1 ? 1 : y;
+          }
+          const lumaC = dbLimit * y;
+          const s = lumaC - lumaDelta;
+          pr = dbState.print[0](Dr + s);
+          pgv = dbState.print[1](Dg + s);
+          pb = dbState.print[2](Db + s);
+        } else {
+          pr = axis[0][ri];
+          pgv = axis[1][gi];
+          pb = axis[2][bi];
+        }
 
         let R = pr;
         let G = pgv;
@@ -595,12 +706,14 @@ function buildForParams(params, size, opts) {
   //   opts.input         내보내기가 덮어쓰는 것 — 로그 소스용 `.cube`를 구울 때만
   // `opts` 쪽이 이긴다. 로그 LUT을 뽑는 동안 화면 설정이 끼어들면 안 되기 때문이다.
   const o = opts || {};
+  const db = f.dodgeBurn;
   const table = filmOn
     ? buildLut(films.byId(f.id), {
         size,
         exposure: f.exposure || 0,
         paper: f.paper,
         input: o.input || f.input,
+        dodgeBurn: db && db.enabled ? { limit: db.limit, contrast: db.contrast } : undefined,
       })
     : lut.identity(size);
 

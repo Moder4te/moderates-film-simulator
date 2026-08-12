@@ -362,6 +362,66 @@ const ref = PROBES.map((p) => {
     a === b ? "동일" : "입력 소스에 따라 .xmp가 달라짐 — Lightroom에서 못 쓴다");
 }
 
+// ── 5d. 닷지·번 (실험적) ─────────────────────────────────────────────
+//
+// `opts.dodgeBurn`. 필름의 H→D 응답은 안 건드리고 인화 직전에 luma(색 보존)만
+// 압축·대비 복원한다 — MDR03671(실사진, 5.8스톱 폭)에서 채도가 무너지던 것을
+// 고친 자리(2026-08-13). 여기서는 세 가지만 본다: (1) 꺼져 있으면(기본) 있기
+// 전과 완전히 같다, (2) 켜면 실제로 결과가 달라진다, (3) 극단 노출에서 채도가
+// **개선**된다(방향이 반대로 걸리면 조용히 상황을 악화시키는 것이라 가장 위험).
+{
+  const N = 33;
+  const filmDef = films.byId("kodak-portra-800");
+  const base = { size: N, exposure: 0, paper: "kodak-endura-premier", input: "prophoto" };
+
+  const off = film.buildLut(filmDef, base);
+  const offExplicit = film.buildLut(filmDef, { ...base, dodgeBurn: undefined });
+  let maxDiffOff = 0;
+  for (let i = 0; i < off.length; i++) maxDiffOff = Math.max(maxDiffOff, Math.abs(off[i] - offExplicit[i]));
+  ok("닷지·번 꺼짐 === opts.dodgeBurn 없음", maxDiffOff === 0, `최대차 ${maxDiffOff}`);
+
+  const on = film.buildLut(filmDef, { ...base, dodgeBurn: { limit: 0.4, contrast: 0.6 } });
+  let maxDiffOn = 0;
+  for (let i = 0; i < off.length; i++) maxDiffOn = Math.max(maxDiffOn, Math.abs(off[i] - on[i]));
+  ok("닷지·번 켜면 결과가 달라진다", maxDiffOn > 0.01, `최대차 ${maxDiffOn.toFixed(4)}`);
+
+  // buildForParams 경로도 확인 — params.film.dodgeBurn.enabled로 걸리는지.
+  const p = JSON.parse(JSON.stringify(params));
+  p.film.id = "kodak-portra-800";
+  p.film.paper = "kodak-endura-premier";
+  p.film.input = "prophoto";
+  p.grading.enabled = false;
+  const viaParamsOff = film.buildForParams(p, N);
+  p.film.dodgeBurn = { enabled: true, limit: 0.4, contrast: 0.6 };
+  const viaParamsOn = film.buildForParams(p, N);
+  let maxDiffParams = 0;
+  for (let i = 0; i < viaParamsOff.length; i++) maxDiffParams = Math.max(maxDiffParams, Math.abs(viaParamsOff[i] - viaParamsOn[i]));
+  ok("buildForParams가 film.dodgeBurn.enabled를 반영한다", maxDiffParams > 0.01, `최대차 ${maxDiffParams.toFixed(4)}`);
+
+  // 극단 노출(과다·과소) 채도가 압축 켰을 때 개선되는지 — 방향 검사.
+  // ⚠️ max−min(chroma)은 **국소적으로 선형인 인화 구간**에서는 균일한 덧셈
+  // 시프트에 불변이라(세 채널에 같은 상수를 더하면 max−min이 안 변한다) 아무
+  // 점이나 고르면 조용히 무의미한 검사가 된다. MDR03671 실사진에서 실제로
+  // 개선을 확인한 채널별 스톱(2026-08-13 렌더)을 그대로 쓴다 — 어깨/발끝
+  // 깊숙한 곳이라 국소 선형 구간이 아니다.
+  function chroma(out) { return Math.max(...out) - Math.min(...out); }
+  function sample(table, v) { const o = [0, 0, 0]; lut.sample(table, N, v[0], v[1], v[2], o); return o; }
+  function vFromStops(stops) {
+    return stops.map((s) => Math.pow(ANCHOR * Math.pow(2, s), 1 / 1.8));
+  }
+  const ANCHOR = 0.18;
+  const highStops = [2.51, 2.29, 2.17]; // 흰 블라우스 — 어깨 깊숙이
+  const lowStops = [-2.14, -2.67, -3.17]; // 어두운 나무 — 발끝 깊숙이
+  const chromaHighOff = chroma(sample(off, vFromStops(highStops)));
+  const chromaHighOn = chroma(sample(on, vFromStops(highStops)));
+  const chromaLowOff = chroma(sample(off, vFromStops(lowStops)));
+  const chromaLowOn = chroma(sample(on, vFromStops(lowStops)));
+  ok("닷지·번 — 어깨(하이라이트) 채도가 개선된다", chromaHighOn > chromaHighOff,
+    `${chromaHighOff.toFixed(4)} → ${chromaHighOn.toFixed(4)}`);
+  ok("닷지·번 — 발끝(섀도) 채도가 개선된다", chromaLowOn > chromaLowOff,
+    `${chromaLowOff.toFixed(4)} → ${chromaLowOn.toFixed(4)}`);
+}
+
 // ── 6. 그레이딩이 색역을 좁히지 않는가 ───────────────────────────────
 //
 // 이전 구현은 ProPhoto → sRGB → 그레이딩 → ProPhoto로 왕복하며 클램프해서

@@ -50,6 +50,21 @@ function defaultParams() {
       paper: "normalized",
       scanner: "none", // 인화·스캔 장비 특성. 옵션이다 — 메인 톤은 인화지가 잡는다
       lutSize: 33, // 33 = 일반, 65 = 정밀
+
+      /**
+       * 닷지·번 (실험적). 필름의 노광→농도 응답은 안 건드리고, 인화 단계
+       * 직전에 luma(채널 평균, 색은 보존)만 압축·대비 복원한다.
+       * → core/color/film.js buildLut의 opts.dodgeBurn, RESOLVED.md 2026-08-13.
+       *
+       * 기본은 꺼짐 — 「중립 현상」(리니어) 입력에서 명암 넓은 장면을 다룰 때만
+       * 켠다. ProPhoto 입력(ACR 경유)에는 이미 ACR 자체의 렌더링이 비슷한 일을
+       * 하고 있어 이중으로 걸 필요가 대개 없다.
+       */
+      dodgeBurn: {
+        enabled: false,
+        limit: 0.4, // 농도(D) 단위. 작을수록 세게 누른다
+        contrast: 0.6, // 0~1. 압축이 지운 중간톤 대비를 되돌리는 양
+      },
     },
 
     /**
@@ -114,7 +129,11 @@ function migrate(raw) {
     ...base,
     ...raw,
     kind: "engine",
-    film: { ...base.film, ...(raw.film || {}) },
+    film: {
+      ...base.film,
+      ...(raw.film || {}),
+      dodgeBurn: { ...base.film.dodgeBurn, ...((raw.film && raw.film.dodgeBurn) || {}) },
+    },
     grading: {
       ...base.grading,
       ...g,

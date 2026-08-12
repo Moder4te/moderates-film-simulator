@@ -829,6 +829,12 @@ function syncUI() {
   setSlider("filmExposure", params.film.exposure);
   syncFilmUI();
 
+  const db = params.film.dodgeBurn;
+  $("dodgeBurnEnabled").checked = db.enabled;
+  setSlider("dodgeBurnLimit", db.limit);
+  setSlider("dodgeBurnContrast", db.contrast);
+  syncDodgeBurnUI();
+
   $("gradingEnabled").checked = params.grading.enabled;
   setSlider("toe", params.grading.toe);
   setSlider("shoulder", params.grading.shoulder);
@@ -847,6 +853,13 @@ function syncUI() {
 /** 커스텀 슬라이더 값을 프로그램적으로 설정한다 (통지 없음). */
 function setSlider(id, value) {
   if (sliders[id]) sliders[id].setValue(value);
+}
+
+/** 닷지·번이 꺼져 있으면 강도·대비 슬라이더를 감춘다 — 안 쓰는 조절값이 늘어놓여
+ * 있으면 뭐가 실제로 걸려 있는지 헷갈린다(피부 색역 설정과 같은 이유). */
+function syncDodgeBurnUI() {
+  const box = $("dodgeBurnOpts");
+  if (box) box.style.display = params.film.dodgeBurn.enabled ? "" : "none";
 }
 
 /* ------------------------------------------------- Selective Color 편집기 */
@@ -1163,6 +1176,14 @@ function wire() {
 
   bindCheckbox("filmEnabled", "film.enabled");
   bindSlider("filmExposure", "film.exposure");
+
+  $("dodgeBurnEnabled").addEventListener("change", () => {
+    params.film.dodgeBurn.enabled = $("dodgeBurnEnabled").checked;
+    syncDodgeBurnUI();
+    onParamsChanged();
+  });
+  bindSlider("dodgeBurnLimit", "film.dodgeBurn.limit");
+  bindSlider("dodgeBurnContrast", "film.dodgeBurn.contrast");
 
   $("btnApply").addEventListener("click", onApply);
 
