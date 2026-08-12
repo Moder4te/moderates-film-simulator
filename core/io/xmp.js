@@ -258,8 +258,20 @@ function buildXmp(params, opts) {
   }
 
   // buildForParams가 유제 → 스캐너 → 사용자 조정까지 굽는다.
-  // 즉 프로파일은 "현재 문서에 적용"과 같은 결과를 낸다.
-  const table = film.buildForParams(params, LUT_SIZE);
+  // 즉 프로파일은 "현재 문서에 적용"과 같은 결과를 낸다 — **입력이 ProPhoto일 때만**.
+  //
+  // ⚠️ **입력 전달함수는 패널 상태(`params.film.input`)를 따르지 않고 항상
+  // ProPhoto로 고정한다.** Lightroom/ACR은 파일을 자기 방식대로 렌더링할 뿐
+  // `decode-raw.py`가 뭘 했는지 알 방법이 없다 — 패널을 "리니어 +N스톱"으로 켜둔
+  // 채로(엔진에 리니어 TIFF를 먹이는 중이었다면 흔한 상태다) 이 버튼을 누르면,
+  // 나가는 프로파일은 "입력이 이미 N스톱 밀려 있다"고 가정한 커브가 된다. 그걸
+  // Lightroom의 정상 렌더링(=ProPhoto 근사)에 걸면 전부 하이라이트 숄더로
+  // 밀려 들어가 채도가 무너진다 — `core/color/inputs.js`의 `linear-h5`로 계산해
+  // 보면 18% 그레이가 그 상태에서 **+2.5스톱**으로 읽힌다.
+  // `.cube`(`core/io/cube.js`)는 입력을 고를 수 있게 열어 뒀지만, 그건 로그
+  // 촬영본처럼 **받는 쪽이 인코딩을 아는** 경로라서 다르다. Lightroom 프로파일은
+  // 그런 경로가 없다.
+  const table = film.buildForParams(params, LUT_SIZE, { input: "prophoto" });
 
   const binary = buildBinary(table, space.tail);
   const id = codec.md5(binary);

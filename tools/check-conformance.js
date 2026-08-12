@@ -345,6 +345,23 @@ const ref = PROBES.map((p) => {
     `선형 1.0 = 코드 ${codeAtLinear1.toFixed(3)} → 재격자였다면 코드의 ${((1 - codeAtLinear1) * 100).toFixed(0)}%가 흰색으로 뭉갬`);
 }
 
+// ── 5c. .xmp는 패널의 입력 소스를 무시하고 항상 ProPhoto다 ──────────────
+//
+// Lightroom은 decode-raw.py가 뭘 했는지 알 방법이 없다 — 패널을 「리니어 +N스톱」
+// 으로 켜둔 채 "Lightroom 프로파일" 내보내기를 누르면(엔진에 리니어 TIFF를 먹이던
+// 중이면 흔한 상태다) 나가는 프로파일이 입력을 N스톱 밀린 것으로 가정하게 되고,
+// 그걸 Lightroom의 정상 렌더링에 걸면 전부 하이라이트 숄더로 밀려 채도가 무너진다
+// (실측: 18% 그레이가 그 상태에서 +2.5스톱으로 읽혀 chroma가 절반 아래로 떨어짐 —
+// 2026-08-13 실사용 중 발견). `xmp.buildXmp`가 `input: "prophoto"`를 강제해야 한다.
+{
+  const withLinear = JSON.parse(JSON.stringify(params));
+  withLinear.film.input = "linear-h5";
+  const a = xmp.buildXmp(params, { space: "prophoto" });
+  const b = xmp.buildXmp(withLinear, { space: "prophoto" });
+  ok(".xmp는 params.film.input을 무시한다(항상 ProPhoto)", a === b,
+    a === b ? "동일" : "입력 소스에 따라 .xmp가 달라짐 — Lightroom에서 못 쓴다");
+}
+
 // ── 6. 그레이딩이 색역을 좁히지 않는가 ───────────────────────────────
 //
 // 이전 구현은 ProPhoto → sRGB → 그레이딩 → ProPhoto로 왕복하며 클램프해서
