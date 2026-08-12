@@ -59,8 +59,16 @@ class App:
         self.out_dir = None        # Path | None
         self.linear_cache = {}     # {str(path): np.ndarray} — 미리보기 측정용 캐시
         self.sizes_cache = {}      # {str(path): (w, h)} — rawpy raw.sizes, 가볍다
-        self.click_xy = None       # (x, y) raw 좌표
-        self.measured_value = None # 기준 프레임에서 잰 마지막 선형값
+        self.click_xy = None       # (x, y) raw 좌표 — 어느 파일을 보든 좌표는 공유된다
+        # ── 기준 프레임과 측정값은 "미리보기로 보고 있는 파일"과 분리한다 ──────
+        #
+        # 처음엔 "패치값 확인"이 미리보기 중인 파일을 그대로 쟀다. 그런데 여러 파일을
+        # 돌아가며 값을 눈으로 확인하다 보면(정상적인 탐색이다) `measured_value`가
+        # 마지막으로 본 파일 값으로 조용히 덮어써지고, "변환 시작"이 그걸 기준 프레임
+        # 값인 줄 알고 배치 전체에 건다 — 브래킷의 스톱 차이가 지워지는 사고다.
+        # 그래서 측정은 **명시적으로 고른 기준 프레임에만** 걸리게 분리했다.
+        self.reference_path = None   # Path | None — 배치 스케일의 근거가 되는 파일
+        self.measured_value = None   # 위 파일에서 잰 값. 기준 프레임이 바뀌면 초기화된다
         self.queue = queue.Queue()
         self.busy = False
 
@@ -91,7 +99,7 @@ class App:
         self.preview_label.pack(fill="x", pady=(4, 0))
 
         # 오른쪽 위 — 파일 목록
-        files_frame = ttk.LabelFrame(main, text="RAW 파일 (첫 줄 = 기준 프레임 미리보기)")
+        files_frame = ttk.LabelFrame(main, text="RAW 파일 (목록에서 고르면 왼쪽에 미리보기)")
         files_frame.grid(row=0, column=1, sticky="nsew", pady=(0, 8))
         files_frame.rowconfigure(0, weight=1)
         files_frame.columnconfigure(0, weight=1)
@@ -108,6 +116,15 @@ class App:
         ttk.Button(btns, text="파일 추가...", command=self._add_files).pack(side="left")
         ttk.Button(btns, text="선택 제거", command=self._remove_selected).pack(side="left", padx=4)
         ttk.Button(btns, text="목록 비우기", command=self._clear_files).pack(side="left")
+
+        ref_row = ttk.Frame(files_frame)
+        ref_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(2, 4))
+        ttk.Label(ref_row, text="기준 프레임(측정 대상):").pack(side="left")
+        self.reference_var = tk.StringVar()
+        self.reference_combo = ttk.Combobox(ref_row, textvariable=self.reference_var,
+                                             state="readonly", width=24)
+        self.reference_combo.pack(side="left", padx=(4, 0), fill="x", expand=True)
+        self.reference_combo.bind("<<ComboboxSelected>>", self._on_reference_change)
 
         # 오른쪽 아래 — 설정
         settings = ttk.LabelFrame(main, text="설정")
@@ -150,7 +167,7 @@ class App:
                          variable=self.per_file_probe).grid(
             row=4, column=0, columnspan=3, sticky="w", padx=4, pady=(6, 2))
 
-        ttk.Button(settings, text="미리보기에서 패치값 확인", command=self._check_patch).grid(
+        ttk.Button(settings, text="기준 프레임 측정 (위 콤보박스)", command=self._check_patch).grid(
             row=5, column=0, columnspan=3, sticky="ew", padx=4, pady=(6, 2))
 
         self.status_label = ttk.Label(settings, text="아직 측정 안 함", foreground="#555",
@@ -204,6 +221,7 @@ class App:
         if was_empty and self.files:
             self.listbox.selection_set(0)
             self._load_preview(self.files[0])
+        self._refresh_reference_combo()
 
     def _remove_selected(self):
         sel = list(self.listbox.curselection())
@@ -211,17 +229,45 @@ class App:
             del self.files[i]
             self.listbox.delete(i)
         self.click_xy = None
-        self.measured_value = None
-        self._log("선택한 파일을 목록에서 뺐다 — 측정값 초기화됨")
+        self._refresh_reference_combo()
+        self._log("선택한 파일을 목록에서 뺐다")
 
     def _clear_files(self):
         self.files.clear()
         self.listbox.delete(0, "end")
         self.canvas.delete("all")
         self.click_xy = None
-        self.measured_value = None
         self.linear_cache.clear()
         self.sizes_cache.clear()
+        self._refresh_reference_combo()
+
+    def _refresh_reference_combo(self):
+        """파일 목록이 바뀔 때마다 기준 프레임 콤보박스를 맞춘다.
+
+        기준 프레임이 목록에서 사라졌으면(선택 제거·목록 비우기) 첫 파일로 되돌리고
+        측정값을 지운다 — 사라진 파일의 값을 계속 배치에 쓰면 조용히 틀린다.
+        """
+        names = [p.name for p in self.files]
+        self.reference_combo["values"] = names
+        if self.reference_path not in self.files:
+            self.reference_path = self.files[0] if self.files else None
+            self.measured_value = None
+        if self.reference_path is not None:
+            self.reference_combo.current(self.files.index(self.reference_path))
+        else:
+            self.reference_var.set("")
+
+    def _on_reference_change(self, event=None):
+        idx = self.reference_combo.current()
+        if idx < 0 or idx >= len(self.files):
+            return
+        new_ref = self.files[idx]
+        if new_ref == self.reference_path:
+            return
+        self.reference_path = new_ref
+        self.measured_value = None
+        self.status_label.config(text=f"기준 프레임이 {new_ref.name}(으)로 바뀜 — 다시 측정하십시오.")
+        self._log(f"[기준 프레임] {new_ref.name}")
 
     def _on_list_select(self, event=None):
         sel = self.listbox.curselection()
@@ -234,12 +280,10 @@ class App:
         pass
 
     # ── 미리보기 ─────────────────────────────────────────────────────────
-
-    def _current_preview_path(self):
-        sel = self.listbox.curselection()
-        if sel:
-            return self.files[sel[0]]
-        return self.files[0] if self.files else None
+    #
+    # 미리보기는 목록에서 고른 아무 파일이나 볼 수 있다 — 좌표를 찍기 위한 것뿐이라
+    # 브래킷 전체가 같은 프레이밍이면 어느 파일을 보든 상관없다. **기준 프레임**(측정
+    # 대상)은 이것과 분리된 별도 콤보박스(`self.reference_path`)로 고른다.
 
     def _load_preview(self, path):
         try:
@@ -312,7 +356,7 @@ class App:
     # ── 패치값 확인 ──────────────────────────────────────────────────────
 
     def _check_patch(self):
-        path = self._current_preview_path()
+        path = self.reference_path
         if not path:
             messagebox.showwarning("파일 없음", "먼저 RAW 파일을 추가하십시오.")
             return
@@ -322,7 +366,7 @@ class App:
         if self.busy:
             return
         self.busy = True
-        self.status_label.config(text="측정 중... (raw 디코드에 몇 초~수십 초 걸린다)")
+        self.status_label.config(text=f"{path.name} 측정 중... (raw 디코드에 몇 초~수십 초 걸린다)")
         x, y, size = self.px.get(), self.py.get(), self.psize.get()
         headroom = self.headroom.get()
         threading.Thread(target=self._check_patch_worker, args=(path, x, y, size, headroom), daemon=True).start()
@@ -337,12 +381,21 @@ class App:
             target = 2.0 ** -headroom
             import math
             stops = math.log2(target / measured) if measured > 0 else float("nan")
+
+            if path != self.reference_path:
+                # 측정하는 동안 콤보박스에서 기준 프레임을 바꿨다 — 이 결과는 버린다.
+                # 안 버리면 방금 고른 새 기준이 옛 파일의 측정값을 들고 시작한다.
+                self.queue.put(("status", "기준 프레임이 측정 도중 바뀌어 결과를 버렸다 — 다시 누르십시오."))
+                self.queue.put(("log", f"[측정 취소] {path.name}: 기준 프레임이 바뀜"))
+                return
+
             self.measured_value = measured
-            msg = (f"패치 {box[0]},{box[1]} {box[2]}×{box[3]}  평균 선형 {measured:.6f}\n"
+            msg = (f"기준: {path.name}\n"
+                   f"패치 {box[0]},{box[1]} {box[2]}×{box[3]}  평균 선형 {measured:.6f}\n"
                    f"스케일 ×{target / measured:.4f} ({stops:+.2f}스톱) → 헤드룸 +{headroom}스톱 자리에 놓임\n"
-                   f"이 값을 배치 전체에 고정 적용한다(체크박스로 파일마다 재측정 가능)")
+                   f"이 값을 배치 전체(다른 스톱 파일 포함)에 고정 적용한다")
             self.queue.put(("status", msg))
-            self.queue.put(("log", f"[측정] {path.name}: {msg.splitlines()[0]}"))
+            self.queue.put(("log", f"[측정 — 기준: {path.name}] {msg.splitlines()[1]}"))
         except Exception as e:
             self.queue.put(("status", f"측정 실패: {e}"))
             self.queue.put(("log", f"⚠️ [측정 실패] {path.name}: {e}"))
@@ -370,7 +423,7 @@ class App:
         if not no_card and self.measured_value is None and not per_file:
             messagebox.showwarning(
                 "측정 안 됨",
-                "'미리보기에서 패치값 확인'을 먼저 누르거나, '카드 없음' 또는\n"
+                "'기준 프레임 측정'을 먼저 누르거나, '카드 없음' 또는\n"
                 "'파일마다 새로 측정'을 켜십시오.")
             return
 
@@ -380,6 +433,23 @@ class App:
         x, y, size = self.px.get(), self.py.get(), self.psize.get()
         fixed_midgray = None if (no_card or per_file) else self.measured_value
         probe_spec = f"{x},{y},{size}" if (per_file and not no_card) else None
+
+        # 이게 진짜 안전장치다 — 뭘 기준으로 얼마나 밀지 실행 직전에 한 번 더 보여준다.
+        # 콤보박스를 잘못 골라 놓고 눌렀어도 여기서 잡힌다.
+        if no_card:
+            summary = "스케일 없음 — 화이트 레벨 기준 선형 그대로(카드 없음)"
+        elif per_file:
+            summary = f"좌표 ({x},{y},{size})에서 파일마다 새로 측정"
+        else:
+            target = 2.0 ** -headroom
+            summary = (f"기준 프레임: {self.reference_path.name}\n"
+                       f"측정값 {self.measured_value:.6f} → 스케일 ×{target / self.measured_value:.4f}\n"
+                       f"이 스케일을 {len(self.files)}개 파일 전체(다른 스톱 포함)에 동일하게 건다")
+        if not messagebox.askyesno(
+            "변환 확인",
+            f"{summary}\n\n헤드룸 +{headroom}스톱, 출력 폴더 {outdir}\n\n진행할까?"
+        ):
+            return
 
         self.busy = True
         self.run_btn.config(state="disabled")
