@@ -46,7 +46,7 @@ async function exportCube(params, opts) {
  */
 async function exportXmpOne(params, opts) {
   const text = xmp.buildXmp(params, opts);
-  const suggested = xmp.fileNameFor(params);
+  const suggested = xmp.fileNameFor(params, opts);
   const file = await fs.getFileForSaving(suggested, { types: ["xmp"] });
   if (!file) return null;
   await file.write(text);
@@ -74,10 +74,10 @@ async function exportXmpSet(list, opts, onProgress) {
   const failed = [];
   for (let i = 0; i < list.length; i++) {
     const p = list[i];
-    const name = xmp.profileName(p);
+    const name = xmp.profileName(p, opts);
     try {
       const text = xmp.buildXmp(p, opts);
-      const file = await folder.createFile(xmp.fileNameFor(p), { overwrite: true });
+      const file = await folder.createFile(xmp.fileNameFor(p, opts), { overwrite: true });
       await file.write(text);
       written.push(file.name);
     } catch (e) {

@@ -350,56 +350,86 @@ const ref = PROBES.map((p) => {
     `선형 1.0 = 코드 ${codeAtLinear1.toFixed(3)} → 재격자였다면 코드의 ${((1 - codeAtLinear1) * 100).toFixed(0)}%가 흰색으로 뭉갬`);
 }
 
-// ── 5c. .xmp는 패널의 입력 소스를 무시하고 항상 acr-standard다 ───────────
+// ── 5c. .xmp는 패널의 입력 소스를 무시하고 opts.input(고정 선택지)만 따른다 ──
 //
 // Lightroom은 decode-raw.py가 뭘 했는지 알 방법이 없다 — 패널을 「리니어 +N스톱」
 // 으로 켜둔 채 "Lightroom 프로파일" 내보내기를 누르면(엔진에 리니어 TIFF를 먹이던
 // 중이면 흔한 상태다) 나가는 프로파일이 입력을 N스톱 밀린 것으로 가정하게 되고,
 // 그걸 Lightroom의 정상 렌더링에 걸면 전부 하이라이트 숄더로 밀려 채도가 무너진다
-// (2026-08-13 실사용 중 발견). `xmp.buildXmp`가 패널 상태를 무시하고 고정된 입력을
-// 써야 한다.
+// (2026-08-13 실사용 중 발견). `xmp.buildXmp`가 패널 상태를 무시하고 `opts.input`
+// (XMP_INPUTS 중 하나)만 써야 한다.
 //
-// 2026-08-13에 그 고정값을 `prophoto`에서 `acr-standard`로 바꿨다 — Lightroom도
+// 2026-08-13에 기본값을 `prophoto`에서 `acr-standard`로 바꿨다 — Lightroom도
 // raw를 열면 Photoshop의 Camera Raw와 같은 렌더링 엔진(같은 Process Version)을
 // 쓰므로, `.xmp`가 실제로 얹히는 표면은 순수 ProPhoto가 아니라 ACR의 숨은 톤
 // 커브가 걸린 값이다. `acr-standard`가 그 커브를 역산해 되돌리므로 실제 표면에
 // 더 맞는 가정이다(→ RESOLVED.md).
+//
+// 같은 날, "하이브리드 룩도 필요에 따라 사용할 수 있어야 한다"는 요청으로
+// `prophoto`(ACR 커브를 되돌리지 않고 그 위에 필름 커브를 얹는 원래 방식)를
+// 완전히 없애지 않고 opts.input으로 명시 선택 가능하게 남겼다 — ACR의 톤
+// 커브가 우연히 고대비 장면의 다이내믹 레인지를 눌러주는 효과가 있어, 場에
+// 따라 의도적으로 선택할 만하다(→ core/io/xmp.js의 XMP_INPUTS 주석).
+// 그래서 여기서는 (1) 입력 소스 무시 자체와 (2) 옵션 없을 때 기본값이
+// acr-standard라는 것, (3) prophoto를 명시하면 실제로 prophoto가 나온다는 것을
+// 모두 검증한다 — 어느 쪽도 "회귀"가 아니라 둘 다 살아있는 선택지이기 때문이다.
 {
   const withLinear = JSON.parse(JSON.stringify(params));
   withLinear.film.input = "linear-h5";
   const a = xmp.buildXmp(params, { space: "prophoto" });
   const b = xmp.buildXmp(withLinear, { space: "prophoto" });
-  ok(".xmp는 params.film.input을 무시한다(항상 고정값)", a === b,
+  ok(".xmp는 params.film.input을 무시한다(opts.input만 따른다)", a === b,
     a === b ? "동일" : "입력 소스에 따라 .xmp가 달라짐 — Lightroom에서 못 쓴다");
 
-  // 그 고정값이 실제로 acr-standard인지 — prophoto로 되돌아가는 회귀를 잡는다.
-  // buildXmp는 params.film.input을 안 보므로(위에서 이미 확인), params를 바꿔서는
-  // 못 가른다 — buildXmp가 실제로 구운 테이블을 두 가설과 직접 대조한다.
+  // opts.input을 안 주면(또는 acr-standard를 명시하면) 실제로 acr-standard가
+  // 나오는지 — prophoto로 되돌아가는 회귀를 잡는다. buildXmp는
+  // params.film.input을 안 보므로(위에서 이미 확인), params를 바꿔서는 못
+  // 가른다 — buildXmp가 실제로 구운 테이블을 두 가설과 직접 대조한다.
   const { N: xn, bin: xbin } = parseXmp(a);
   const tableAcr = film.buildForParams(params, xn, { input: "acr-standard" });
   const tableProphoto = film.buildForParams(params, xn, { input: "prophoto" });
-  function maxDiffAt(off) {
-    let maxAcr = 0, maxPro = 0;
-    for (let r = 0; r < xn; r++) {
-      for (let g = 0; g < xn; g++) {
-        for (let bch = 0; bch < xn; bch++) {
+  function decodeXmp(bin, n) {
+    const table = new Float64Array(n * n * n * 3);
+    for (let r = 0; r < n; r++) {
+      for (let g = 0; g < n; g++) {
+        for (let bch = 0; bch < n; bch++) {
           for (let c = 0; c < 3; c++) {
-            const o = 16 + ((r * xn + g) * xn + bch) * 6 + c * 2;
-            const s = xbin.readUInt16LE(o);
-            let dec = s / 65536 + [r, g, bch][c] / (xn - 1);
+            const o = 16 + ((r * n + g) * n + bch) * 6 + c * 2;
+            const s = bin.readUInt16LE(o);
+            let dec = s / 65536 + [r, g, bch][c] / (n - 1);
             if (dec > 1) dec -= 1;
-            const idx = ((bch * xn + g) * xn + r) * 3 + c;
-            maxAcr = Math.max(maxAcr, Math.abs(dec - Math.max(0, Math.min(1, tableAcr[idx]))));
-            maxPro = Math.max(maxPro, Math.abs(dec - Math.max(0, Math.min(1, tableProphoto[idx]))));
+            const idx = ((bch * n + g) * n + r) * 3 + c;
+            table[idx] = Math.max(0, Math.min(1, dec));
           }
         }
       }
     }
-    return { maxAcr, maxPro };
+    return table;
   }
-  const { maxAcr, maxPro } = maxDiffAt();
-  ok(".xmp의 고정값은 prophoto가 아니라 acr-standard다", maxAcr < 2e-5 && maxPro > 1e-3,
+  function maxDiff(t1, t2) {
+    let m = 0;
+    for (let i = 0; i < t1.length; i++) m = Math.max(m, Math.abs(t1[i] - Math.max(0, Math.min(1, t2[i]))));
+    return m;
+  }
+  const decodedA = decodeXmp(xbin, xn);
+  const maxAcr = maxDiff(decodedA, tableAcr);
+  const maxPro = maxDiff(decodedA, tableProphoto);
+  ok(".xmp의 기본값은 prophoto가 아니라 acr-standard다", maxAcr < 2e-5 && maxPro > 1e-3,
     `acr-standard 최대차 ${maxAcr.toExponential(2)}, prophoto 최대차 ${maxPro.toExponential(2)}`);
+
+  // prophoto(하이브리드)를 명시하면 실제로 prophoto 테이블이 나오는지 —
+  // 위 acr-standard 검증과 대칭. 이게 없으면 "선택 가능"이라는 말만 있고
+  // opts.input="prophoto" 경로 자체는 회귀해도 안 잡힌다.
+  const c = xmp.buildXmp(params, { space: "prophoto", input: "prophoto" });
+  const { N: cn, bin: cbin } = parseXmp(c);
+  const decodedC = decodeXmp(cbin, cn);
+  const tableProphoto2 = film.buildForParams(params, cn, { input: "prophoto" });
+  const tableAcr2 = film.buildForParams(params, cn, { input: "acr-standard" });
+  const maxProExplicit = maxDiff(decodedC, tableProphoto2);
+  const maxAcrExplicit = maxDiff(decodedC, tableAcr2);
+  ok("opts.input=\"prophoto\"를 명시하면 실제로 하이브리드가 나온다",
+    maxProExplicit < 2e-5 && maxAcrExplicit > 1e-3,
+    `prophoto 최대차 ${maxProExplicit.toExponential(2)}, acr-standard 최대차 ${maxAcrExplicit.toExponential(2)}`);
 }
 
 // ── 5d. 닷지·번 (실험적) ─────────────────────────────────────────────

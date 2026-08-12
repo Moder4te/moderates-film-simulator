@@ -735,6 +735,33 @@ const cubeOpts = {
   input: cubeexport.INPUTS[0].id,
 };
 
+/**
+ * Lightroom 프로파일(.xmp) 내보내기 설정. cubeOpts와 같은 이유로 params 밖에 둔다.
+ *
+ * 기본은 `acr-standard`(정확) — "하이브리드"(ACR 커브 그대로)를 고르면 ACR 자체의
+ * 압축이 고대비 장면에서 도움이 될 때 쓸 수 있다. core/io/xmp.js의 XMP_INPUTS 주석 참조.
+ */
+const xmpOpts = {
+  input: xmpexport.XMP_INPUTS[0].id,
+};
+
+function buildXmpChips() {
+  const host = $("xmpInputChips");
+  if (!host) return;
+  host.textContent = "";
+  for (const it of xmpexport.XMP_INPUTS) {
+    const chip = document.createElement("div");
+    chip.className = "chip-btn";
+    chip.textContent = it.displayName;
+    chip.dataset.xmpKey = it.id;
+    chip.addEventListener("click", () => {
+      xmpOpts.input = it.id;
+      syncCubeUI(); // xmpNote 갱신도 이 함수가 같이 한다
+    });
+    host.appendChild(chip);
+  }
+}
+
 /** 격자·색공간 선택 칩. 필름 칩과 같은 이유로 sp-picker를 쓰지 않는다. */
 function buildCubeChips() {
   const sizeHost = $("cubeSizeChips");
@@ -805,21 +832,29 @@ function syncCubeUI() {
     note.textContent = parts.join("  /  ");
   }
 
+  const xmpInputHost = $("xmpInputChips");
+  if (xmpInputHost) {
+    for (const chip of xmpInputHost.querySelectorAll(".chip-btn")) {
+      chip.classList.toggle("active", chip.dataset.xmpKey === xmpOpts.input);
+    }
+  }
+
   const xn = $("xmpNote");
   if (xn) {
     // 프로파일은 격자가 32로 고정이고(ACR이 그 이상을 받지 않는다) 색공간도
-    // ProPhoto로 고정이다. 입력은 항상 acr-standard로 굽는다(패널의 입력 소스
-    // 설정과 무관 — core/io/xmp.js buildXmp 참조) — Lightroom에서 Profile을
+    // ProPhoto로 고정이다. 입력은 패널의 입력 소스와 무관하게 위 칩에서 고른다
+    // (core/io/xmp.js buildXmp 참조) — "ACR 역산"이면 Lightroom에서 Profile을
     // Adobe Standard로, 슬라이더는 0으로 둬야 이 프로파일이 맞는다.
     let n = "";
     try {
-      n = xmpexport.profileName(params);
+      n = xmpexport.profileName(params, xmpOpts);
     } catch (e) {
       n = "";
     }
     const count = xmpexport.defaultSet(params).length;
+    const inp = xmpexport.xmpInputById(xmpOpts.input);
     xn.textContent =
-      `${xmpexport.LUT_SIZE}³ ProPhoto · Lightroom에서 Profile: Adobe Standard, 슬라이더 0 전제 · ` +
+      `${xmpexport.LUT_SIZE}³ ProPhoto · ${inp.note} · ` +
       `Profile Browser의 "${xmpexport.GROUP}" 그룹` +
       `${n ? `  /  현재: ${n}` : ""}  /  세트 ${count}개`;
   }
@@ -1130,7 +1165,7 @@ function wire() {
     btn.disabled = true;
     try {
       setStatus("프로파일 만드는 중...");
-      const name = await exportfile.exportXmpOne(params, { space: "prophoto" });
+      const name = await exportfile.exportXmpOne(params, { space: "prophoto", input: xmpOpts.input });
       setStatus(name ? `${name} 내보냄` : "취소됨");
     } catch (e) {
       setStatus(e.message || String(e), true);
@@ -1145,7 +1180,7 @@ function wire() {
     try {
       const list = xmpexport.defaultSet(params);
       setStatus(`${list.length}개 프로파일 — 저장할 폴더를 고르세요`);
-      const r = await exportfile.exportXmpSet(list, { space: "prophoto" }, (done, total) => {
+      const r = await exportfile.exportXmpSet(list, { space: "prophoto", input: xmpOpts.input }, (done, total) => {
         if (done < total) setStatus(`프로파일 ${done + 1}/${total} 생성 중...`);
       });
       if (!r) return setStatus("취소됨");
@@ -1197,6 +1232,7 @@ async function init() {
   buildFilmChips(); // syncUI가 칩 상태를 갱신하므로 먼저 만들어 둔다
   buildScannerChips();
   buildCubeChips();
+  buildXmpChips();
   syncUI();
   syncCubeUI();
   wheelCtrl = colorwheel.build($("wheel"), {

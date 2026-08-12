@@ -54,6 +54,12 @@ rmrf(OUT);
 copyDir(SRC, OUT);
 
 // ── 2. 프로파일 굽기 ───────────────────────────────────────────────────
+//
+// 입력 가정(acr-standard 정확 / prophoto 하이브리드)마다 전체 세트를 굽는다 —
+// "필요에 따라" 어느 쪽도 쓸 수 있어야 한다는 요청으로 2026-08-13에 추가했다.
+// Apply.lua의 필름 선택 팝업은 카탈로그의 `film` 필드에서 **고유값을 그대로**
+// 뽑아 만든다(`distinct("film")`) — 그래서 하이브리드 변형의 필름 이름에
+// 접미사를 붙이는 것만으로 **Lua 코드를 안 고치고** 새 선택지가 생긴다.
 const params = defaultParams();
 const set = xmp.defaultSet(params);
 const profDir = path.join(OUT, "profiles");
@@ -62,40 +68,43 @@ fs.mkdirSync(profDir, { recursive: true });
 let bytes = 0;
 const names = [];
 const catalog = [];
-for (const p of set) {
-  const text = xmp.buildXmp(p, { space: "prophoto" });
-  const file = xmp.fileNameFor(p);
-  fs.writeFileSync(path.join(profDir, file), text, "utf8");
-  bytes += Buffer.byteLength(text, "utf8");
+for (const variant of xmp.XMP_INPUTS) {
+  const inputOpts = { space: "prophoto", input: variant.id };
+  for (const p of set) {
+    const text = xmp.buildXmp(p, inputOpts);
+    const file = xmp.fileNameFor(p, inputOpts);
+    fs.writeFileSync(path.join(profDir, file), text, "utf8");
+    bytes += Buffer.byteLength(text, "utf8");
 
-  const name = xmp.profileName(p);
-  names.push(name);
+    const name = xmp.profileName(p, inputOpts);
+    names.push(name);
 
-  // UUID는 **생성된 파일에서 그대로 뽑는다.** 따로 계산하면 파일과 어긋날 수 있고,
-  // 어긋나면 플러그인이 존재하지 않는 프로파일을 가리켜 조용히 실패한다.
-  const m = text.match(/crs:UUID="([^"]+)"/);
-  if (!m) {
-    console.error(`UUID를 못 찾았습니다: ${file}`);
-    process.exit(1);
+    // UUID는 **생성된 파일에서 그대로 뽑는다.** 따로 계산하면 파일과 어긋날 수 있고,
+    // 어긋나면 플러그인이 존재하지 않는 프로파일을 가리켜 조용히 실패한다.
+    const m = text.match(/crs:UUID="([^"]+)"/);
+    if (!m) {
+      console.error(`UUID를 못 찾았습니다: ${file}`);
+      process.exit(1);
+    }
+
+    // RGBTable도 같이 뽑는다. **이게 실제 색 변환을 가리키는 키다.**
+    // UUID만 넘기면 Lightroom이 프로파일을 찾아 이름·강도까지는 표시하지만
+    // 색은 걸리지 않는다 — 실기에서 확인했다(RESOLVED 참조).
+    const t = text.match(/crs:RGBTable="([^"]+)"/);
+    if (!t) {
+      console.error(`RGBTable을 못 찾았습니다: ${file}`);
+      process.exit(1);
+    }
+
+    catalog.push({
+      film: films.byId(p.film.id).displayName + variant.suffix,
+      scanner: scanner.byId(p.film.scanner).displayName,
+      name,
+      uuid: m[1],
+      rgbTable: t[1],
+      file,
+    });
   }
-
-  // RGBTable도 같이 뽑는다. **이게 실제 색 변환을 가리키는 키다.**
-  // UUID만 넘기면 Lightroom이 프로파일을 찾아 이름·강도까지는 표시하지만
-  // 색은 걸리지 않는다 — 실기에서 확인했다(RESOLVED 참조).
-  const t = text.match(/crs:RGBTable="([^"]+)"/);
-  if (!t) {
-    console.error(`RGBTable을 못 찾았습니다: ${file}`);
-    process.exit(1);
-  }
-
-  catalog.push({
-    film: films.byId(p.film.id).displayName,
-    scanner: scanner.byId(p.film.scanner).displayName,
-    name,
-    uuid: m[1],
-    rgbTable: t[1],
-    file,
-  });
 }
 
 // ── 카탈로그를 Lua로 내보낸다 ──────────────────────────────────────────
@@ -122,9 +131,11 @@ fs.writeFileSync(path.join(OUT, "Profiles.lua"), lua, "utf8");
 // ── 3. 확인 ────────────────────────────────────────────────────────────
 // 이름이 겹치면 파일이 조용히 덮어써져 개수가 맞지 않는다. 세어서 못 박는다.
 const written = fs.readdirSync(profDir).filter((f) => f.endsWith(".xmp"));
-if (written.length !== set.length) {
+const expected = set.length * xmp.XMP_INPUTS.length;
+if (written.length !== expected) {
   console.error(
-    `프로파일 이름이 겹칩니다 — ${set.length}개를 굽었는데 파일은 ${written.length}개입니다.`
+    `프로파일 이름이 겹칩니다 — ${expected}개(세트 ${set.length} × 입력 ${xmp.XMP_INPUTS.length}종)를 ` +
+      `굽었는데 파일은 ${written.length}개입니다.`
   );
   process.exit(1);
 }

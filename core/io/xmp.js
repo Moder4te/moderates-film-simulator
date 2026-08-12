@@ -39,6 +39,39 @@ const LUT_SIZE = 32;
 const GROUP = "FilmSim";
 
 /**
+ * 프로파일이 얹히는 입력을 뭘로 가정할지 — **정확한 쪽 하나만 내보내지 않는다.**
+ *
+ * `acr-standard`(기본)가 실제로 맞는 가정이지만(위 `buildXmp` 주석), ACR 자체의
+ * 숨은 압축이 고대비 장면에서 우연히 도움이 되는 경우가 있다(→ RESOLVED.md
+ * "리니어 입력 + 고대비 장면에서 채도가 무너지는 문제" — 같은 원리로 ACR 커브가
+ * 명암을 미리 눌러 준다). **정확도만 밀어붙이면 그 우연한 이득까지 없어진다** —
+ * "하이브리드"(ACR 커브 + 필름 커브를 그대로 겹친 것, 예전 기본 동작)를 여전히
+ * 고를 수 있게 둔다. 어느 쪽이 "더 좋아 보이는가"는 장면·취향의 문제라 여기서
+ * 정하지 않는다.
+ */
+const XMP_INPUTS = [
+  {
+    id: "acr-standard",
+    displayName: "ACR 역산 (정확, 기본)",
+    suffix: "",
+    note: "ACR의 숨은 톤 커브를 역산해 되돌린 뒤 필름 커브를 태운다. " +
+      "Adobe Standard + 슬라이더 0 전제.",
+  },
+  {
+    id: "prophoto",
+    displayName: "하이브리드 (ACR 커브 그대로)",
+    suffix: " (하이브리드)",
+    note: "ACR 렌더링 위에 필름 커브를 그대로 얹는다 — 정확하진 않지만 ACR 자체의 " +
+      "압축이 고대비 장면을 도와줘 더 화사하게 나올 수 있다.",
+  },
+];
+const XMP_INPUT_BY_ID = new Map(XMP_INPUTS.map((i) => [i.id, i]));
+
+function xmpInputById(id) {
+  return XMP_INPUT_BY_ID.get(id) || XMP_INPUTS[0];
+}
+
+/**
  * 꼬리 12바이트에 실리는 색공간 식별자.
  *
  * ⚠️ **실측한 두 조합만 있다.** New Profile 대화상자에서 색공간만 바꿔 프로파일을
@@ -216,13 +249,14 @@ const TEMPLATE = (f) => `<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP 
 `;
 
 /** Profile Browser에 뜨는 이름. 필름 + 스캐너 + (노광). */
-function profileName(params) {
+function profileName(params, opts) {
   const f = films.byId(params.film.id);
   const sc = scanner.byId(params.film.scanner);
   const ev = params.film.exposure || 0;
   let n = f.displayName;
   if (sc.id !== "none") n += ` · ${sc.displayName}`;
   if (ev) n += ` ${ev > 0 ? "+" : ""}${ev}EV`;
+  n += xmpInputById((opts || {}).input).suffix;
   return n;
 }
 
@@ -233,9 +267,9 @@ function profileName(params) {
  * 압축 도구·Lightroom 사이를 오갈 때 인코딩이 어긋나면 조용히 깨지는데, 그 위험을
  * 파일 이름에서까지 감수할 이유가 없다.
  */
-function fileNameFor(params) {
+function fileNameFor(params, opts) {
   return (
-    `FilmSim - ${profileName(params)}`
+    `FilmSim - ${profileName(params, opts)}`
       .replace(/·/g, "-")
       .replace(/[\\/:*?"<>|]/g, "")
       .replace(/\s+/g, " ")
@@ -246,11 +280,12 @@ function fileNameFor(params) {
 /**
  * 현재 파라미터로 프로파일 XMP 텍스트를 만든다.
  * @param {object} params
- * @param {object} [opts]  { space: "prophoto" | "srgb" }
+ * @param {object} [opts]  { space: "prophoto" | "srgb", input: "acr-standard" | "prophoto" }
  */
 function buildXmp(params, opts) {
   const o = opts || {};
   const space = SPACES[o.space] || SPACES.prophoto;
+  const inputChoice = xmpInputById(o.input).id;
 
   // 필름이 꺼져 있어도 그레이딩만으로 유효한 프로파일이 된다.
   if (!film.hasEffect(params)) {
@@ -259,35 +294,36 @@ function buildXmp(params, opts) {
 
   // buildForParams가 유제 → 스캐너 → 사용자 조정까지 굽는다.
   //
-  // ⚠️ **입력 전달함수는 패널 상태(`params.film.input`)를 따르지 않고 항상
-  // `acr-standard`로 고정한다.** (2026-08-13 이전엔 `prophoto`를 강제했다 —
-  // 아래 "왜 prophoto가 아니라 acr-standard인가" 참조. 패널을 "리니어 +N스톱"으로
-  // 켜둔 채(엔진에 리니어 TIFF를 먹이는 중이었다면 흔한 상태다) 내보내면 안 되는
-  // 것은 그대로다 — 어느 쪽으로 고정하든, 패널 상태를 그대로 물려받으면 나가는
-  // 프로파일이 "입력이 이미 N스톱 밀려 있다"고 가정한 커브가 되고, 그걸 Lightroom의
-  // 정상 렌더링에 걸면 하이라이트 숄더로 밀려 채도가 무너진다 — `linear-h5`로
-  // 계산하면 18% 그레이가 그 상태에서 +2.5스톱으로 읽힌다.)
+  // ⚠️ **입력 전달함수는 패널 상태(`params.film.input`)를 절대 따르지 않는다.**
+  // 대신 `opts.input`(위 `XMP_INPUTS`, 기본 `acr-standard`)을 쓴다. 패널을
+  // "리니어 +N스톱"으로 켜둔 채(엔진에 리니어 TIFF를 먹이는 중이었다면 흔한
+  // 상태다) 그 상태를 그대로 물려받으면, 나가는 프로파일이 "입력이 이미 N스톱
+  // 밀려 있다"고 가정한 커브가 되고, 그걸 Lightroom의 정상 렌더링에 걸면
+  // 하이라이트 숄더로 밀려 채도가 무너진다 — `linear-h5`로 계산하면 18% 그레이가
+  // 그 상태에서 +2.5스톱으로 읽힌다(→ RESOLVED.md 2026-08-13).
   //
-  // **왜 `prophoto`가 아니라 `acr-standard`인가.** Lightroom도 raw를 열면
+  // **기본이 `prophoto`가 아니라 `acr-standard`인 이유.** Lightroom도 raw를 열면
   // Photoshop의 Camera Raw와 **같은 렌더링 엔진**(Adobe Camera Raw, 같은 Process
   // Version)을 쓴다 — 즉 `.xmp` 프로파일이 실제로 얹히는 표면은 순수 ProPhoto가
   // 아니라 그 자체로 이미 ACR의 숨은 톤 커브가 걸린 값이다(→ RESOLVED.md "ACR
   // Adobe Standard도 조건 (b)를 만족하지 않는다"). `prophoto`를 가정하고 구우면
-  // "Lightroom이 커브 없이 렌더링했다"고 잘못 전제하는 것이고, 그 프로파일을
-  // 실제 Lightroom(커브 있음)에 걸면 Photoshop에서 `prophoto` 입력으로 리니어
-  // TIFF를 잘못 먹였을 때와 **같은 종류의 실패**(고대비 장면 채도 붕괴)가 난다.
-  // `acr-standard`는 그 커브를 역산해 되돌리는 입력이므로, 프로파일이 실제로
-  // 얹히는 표면(ACR 렌더링)에 맞는 가정은 이쪽이다.
+  // "Lightroom이 커브 없이 렌더링했다"고 잘못 전제하는 것이다.
   //
-  // ⚠️ 여전히 근사다 — `acr-standard`는 Sony ILCE-7RM5 + ACR 18.3.2 한 세트에서
-  // 유도됐다(TODO N3, 다른 카메라 미검증). 그래도 "커브가 없다"(prophoto)고
-  // 가정하는 것보다는 "커브가 있고 대략 이런 모양"(acr-standard)이라고 가정하는
-  // 쪽이 실제 Lightroom 렌더링에 더 가깝다.
+  // **그런데도 `prophoto`(하이브리드)를 선택지로 남겨 둔 이유.** ACR의 그 숨은
+  // 커브는 "틀렸지만 고대비 장면의 다이내믹레인지를 우연히 압축해 준다"(→
+  // RESOLVED.md "리니어 입력 + 고대비 장면에서 채도가 무너지는 문제" — 닷지·번이
+  // 하는 일을 ACR이 의도치 않게 대신 해 준 것과 같다). `acr-standard`로 그 커브를
+  // 되돌리면 정확해지지만, 그 우연한 압축 효과도 같이 사라져서 명암 넓은 장면은
+  // 오히려 더 밋밋해 보일 수 있다. 어느 쪽이 "더 좋다"는 장면·취향의 문제라 여기서
+  // 강제하지 않는다 — `opts.input`으로 고르게 한다.
+  //
+  // ⚠️ `acr-standard`는 여전히 근사다 — Sony ILCE-7RM5 + ACR 18.3.2 한 세트에서
+  // 유도됐다(TODO N3, 다른 카메라 미검증).
   //
   // `.cube`(`core/io/cube.js`)는 입력을 고를 수 있게 열어 뒀지만, 그건 로그
   // 촬영본처럼 **받는 쪽이 인코딩을 아는** 경로라서 다르다. Lightroom 프로파일은
-  // 그런 경로가 없다.
-  const table = film.buildForParams(params, LUT_SIZE, { input: "acr-standard" });
+  // 그런 경로가 없어 여기서 직접 고르게 한다.
+  const table = film.buildForParams(params, LUT_SIZE, { input: inputChoice });
 
   const binary = buildBinary(table, space.tail);
   const id = codec.md5(binary);
@@ -297,7 +333,7 @@ function buildXmp(params, opts) {
   new DataView(payload.buffer).setUint32(0, binary.length, true);
   payload.set(z, 4);
 
-  const name = profileName(params);
+  const name = profileName(params, o);
   const f = films.byId(params.film.id);
   const note = (f.source && f.source.note) || "";
 
@@ -335,11 +371,11 @@ module.exports = {
   LUT_SIZE,
   GROUP,
   SPACES,
+  XMP_INPUTS,
+  xmpInputById,
   buildBinary,
   buildXmp,
   profileName,
   fileNameFor,
   defaultSet,
-
-
 };
