@@ -64,6 +64,11 @@ pip install rawpy numpy tifffile
 python tools/decode-raw.py in.ARW out.tiff        # 기본 헤드룸 +5스톱
 ```
 
+좌표를 몰라 `--probe`가 번거로우면 **GUI**(`tools/decode-raw-gui.py`)로 미리보기를
+클릭해서 잡을 수 있다 — `pip install ... pillow` 후 `python tools/decode-raw-gui.py`.
+브래킷(같은 장면, 다른 스톱)을 한 번에 돌릴 때 특히 유용하다: 기준 프레임 하나에서만
+측정하고 그 스케일을 배치 전체에 고정으로 건다. 사용법 → [`tools/README.md`](tools/README.md#decode-raw-guipy--데스크톱-gui).
+
 출력 TIFF는 Photoshop에서 **프로파일 지정 → ProPhoto RGB**로 지정한 뒤, 엔진 패널의
 **입력 소스**를 도구와 같은 헤드룸(「리니어 +5스톱」이 기본)으로 맞춘다. 어긋나면
 노광이 통째로 밀린다. 그레이 카드가 있으면 `--probe x,y`로 기준 그레이 위치까지

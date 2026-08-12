@@ -96,7 +96,13 @@ def probe_patch(lin, spec):
     return float(patch.mean()), (x0, y0, x1 - x0, y1 - y0)
 
 
-def decode(raw_path, out_path, headroom, exposure, midgray, probe):
+def load_linear(raw_path):
+    """RAW → 화이트 레벨 기준 선형 ProPhoto(0~1, HxWx3 float64).
+
+    `decode()`와 `decode-raw-gui.py`가 **이 함수 하나**를 공유한다 — postprocess
+    인자를 두 곳에 따로 두면 GUI 미리보기와 실제 내보내기가 조용히 다른 수를
+    낼 수 있다(`core/color/inputs.js`를 나눈 것과 같은 이유).
+    """
     import numpy as np
     import rawpy
 
@@ -109,7 +115,13 @@ def decode(raw_path, out_path, headroom, exposure, midgray, probe):
             output_bps=16,
             user_flip=0,
         )
-    lin = rgb.astype(np.float64) / 65535.0
+    return rgb.astype(np.float64) / 65535.0
+
+
+def decode(raw_path, out_path, headroom, exposure, midgray, probe):
+    import numpy as np
+
+    lin = load_linear(raw_path)
     h, w, _ = lin.shape
     target = 2.0 ** -headroom          # 기준 그레이가 가야 할 선형값
     notes = []
