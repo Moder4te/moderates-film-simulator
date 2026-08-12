@@ -26,6 +26,7 @@
  */
 
 const colorspace = require("./colorspace");
+const curve = require("./curve");
 
 const ANCHOR = 0.18;
 const WORKING_GAMMA = 1.8;
@@ -86,6 +87,92 @@ function linearInput(stops) {
   };
 }
 
+/**
+ * ACR "Adobe Standard" 렌더링의 숨은 톤 커브를 **역산해 되돌린다.**
+ *
+ * `docs/RESOLVED.md`(2026-08-12) "ACR Adobe Standard도 조건 (b)를 만족하지
+ * 않는다"에서 이 커브의 존재를 실측으로 확인했다 — Camera Raw로 "Adobe
+ * Standard" 프로필 + 슬라이더 전부 0으로 현상해도 암부는 게인이 더 걸리고
+ * 하이라이트는 덜 걸리는 매끈한 S자 대비가 남는다. 그 결과 지금까지는 raw를
+ * Camera Raw로 그냥 현상해 먹이면 필름 곡선이 엉뚱한 입력 위에서 돌았다.
+ *
+ * ── 유도 ────────────────────────────────────────────────────────────────
+ *
+ * 입사식 노출계로 기준을 잡은 −2/−1/0/+1/+2스톱 브래킷(ISO만 바꿔 정확히
+ * 1스톱씩 뗀다 — HDR 카메라 응답함수 복원과 같은 문제라 상대 노출을 정확히
+ * 아는 게 핵심이다) 5장을 "Adobe Standard" + 슬라이더 0으로 현상해
+ * `tools/derive-acr-curve.py`로 뽑았다 — 픽셀 2,160개(720지점 × RGB)에서
+ * Debevec–Malik류 최소자승으로 "ACR이 렌더링한 코드값 v → 실제 상대
+ * 로그노광" 응답함수를 복원한다. 원본(`N1braket/`)은 raw·360MB TIFF라
+ * 로컬 전용이고 저장소엔 없다 — 재현하려면:
+ *
+ *   python tools/derive-acr-curve.py \
+ *     a.tif:-2 b.tif:-1 c.tif:0 d.tif:1 e.tif:2
+ *
+ * **검산 — 왕복.** 복원한 곡선으로 같은 브래킷의 스톱 간격을 다시 재면:
+ *
+ *   구간         보정 전(median)   보정 후(median)
+ *   −2→−1스톱    1.58              0.97
+ *   −1→ 0스톱    1.43              1.02
+ *    0→+1스톱    1.06              1.01
+ *   +1→+2스톱    0.61              0.94
+ *
+ * 보정 전엔 0.61~1.58로 요동치던 것이 보정 후 전 구간 0.94~1.02로 모인다 —
+ * 곡선이 실제로 그 왜곡을 되돌린다는 뜻이다.
+ *
+ * ⚠️ **표본 범위는 인코딩값 0.0667~0.9647이다**(도구가 실제 표본이 있던
+ * 구간을 그대로 보고한다). 그 밖(깊은 그림자·거의 포화)은
+ * 실측이 없어 양끝 값으로 평평하게 고정한다(`curve.tabulate`) — 없는 데이터를
+ * 추정해 이어 붙이는 것보다 안전하다.
+ *
+ * ⚠️ **이 곡선은 Sony ILCE-7RM5 + ACR 18.3.2(Process Version 15.4) +
+ * "Adobe Standard" 프로필 한 세트에서 유도됐다.** DCP 프로필은 카메라
+ * 모델마다 조금씩 다르게 캘리브레이션되므로, 다른 카메라에서는 근사치다 —
+ * Process Version의 공유 톤 응답이 큰 비중일 가능성이 높지만 검증되지
+ * 않았다. 카드 없이 잰 조건 (a) 앵커도 마찬가지로 미확정이다(→ 아래
+ * `midGrayEncoded`는 실측이 아니라 `decode(v)=0.18`을 만족하는 v를 그대로
+ * 계산한 것 — 정박점 자체가 옳다는 보장은 없다. 노출 슬라이더로 상쇄된다).
+ */
+const ACR_STANDARD_CTRL = [
+  [0.0667, -1.71637],
+  [0.1139, -1.39018],
+  [0.1612, -1.09001],
+  [0.2085, -0.75702],
+  [0.2557, -0.53121],
+  [0.303, -0.37122],
+  [0.3503, -0.13622],
+  [0.3975, 0.04004],
+  [0.4448, 0.16576],
+  [0.4921, 0.27475],
+  [0.5393, 0.43225],
+  [0.5866, 0.61205],
+  [0.6338, 0.78349],
+  [0.6811, 0.90123],
+  [0.7284, 1.00162],
+  [0.7756, 1.19013],
+  [0.8229, 1.44852],
+  [0.8702, 1.57735],
+  [0.9174, 1.71878],
+  [0.9647, 1.88288],
+];
+// 제어점은 `tools/derive-acr-curve.py`가 낸 것을 그대로 옮긴 것이다(재현 명령은
+// 위 유도 문단 참조) — v_lo/v_hi가 어중간한 이유도 그 도구가 **실제 표본이 있던
+// 범위**를 그대로 보고하기 때문이다.
+const acrStandardG = curve.tabulate(curve.pchip(ACR_STANDARD_CTRL), 0.0667, 0.9647, 512);
+function acrStandardDecode(v) {
+  return ANCHOR * Math.exp(acrStandardG(v));
+}
+// `decode(v) = 0.18`을 만족하는 v — 이분법. 정박점 자체가 실측 앵커는 아니다(위 주석).
+function acrStandardMidGray() {
+  let lo = 0.0667, hi = 0.9647;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (acrStandardDecode(mid) < ANCHOR) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
 const INPUTS = [
   {
     id: "prophoto",
@@ -99,6 +186,17 @@ const INPUTS = [
     midGrayEncoded: Math.pow(ANCHOR, 1 / WORKING_GAMMA),
   },
   ...HEADROOMS.map(linearInput),
+  {
+    id: "acr-standard",
+    displayName: "ACR Adobe Standard (역산, 실험적)",
+    note:
+      "Camera Raw로 \"Adobe Standard\" 프로필 + 슬라이더 전부 0으로 그냥 현상한 파일용. " +
+      "숨은 톤 커브를 역산해 되돌린다 — decode-raw.py 없이 raw를 곧장 현상해도 된다. " +
+      "⚠️ Sony ILCE-7RM5 + ACR 18.3.2 한 세트에서 유도, 다른 카메라는 근사치.",
+    decode: acrStandardDecode,
+    hWhite: Math.log10(acrStandardDecode(1) / ANCHOR),
+    midGrayEncoded: acrStandardMidGray(),
+  },
   {
     id: "slog3",
     displayName: "Sony S-Log3",

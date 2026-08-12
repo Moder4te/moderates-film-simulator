@@ -94,6 +94,48 @@ python tools/decode-raw-gui.py
   같다) — 엔진 노출 슬라이더로 맞추면 된다.
 - 출력 파일명은 `{원본이름}_linear-h{헤드룸}.tiff`.
 
+## derive-acr-curve.py
+
+ACR("Camera Raw") "Adobe Standard" 렌더링의 숨은 톤 커브를 **역산**한다 —
+`core/color/inputs.js`의 `acr-standard` 입력이 여기서 나왔다. decode-raw.py가
+ACR을 건너뛰는 쪽이라면, 이건 ACR을 거치되 **결과를 역산해 되돌리는** 쪽이다 —
+Camera Raw로 그냥 현상한 파일을 외부 도구 없이 곧장 먹일 수 있게 한다.
+
+```
+pip install numpy tifffile
+
+python tools/derive-acr-curve.py --selftest    # raw 없이 저장된 곡선만 재확인
+python tools/derive-acr-curve.py \
+  a.tif:-2 b.tif:-1 c.tif:0 d.tif:1 e.tif:2     # 재유도
+```
+
+- 입력은 **입사식 노출계로 기준을 잡은 브래킷**(ISO만 바꿔 정확히 스톱을 뗀다)을
+  "Adobe Standard" + 슬라이더 전부 0으로 현상한 16bit TIFF 3장 이상. `FILE:스톱`
+  형식으로 넘긴다
+- HDR 카메라 응답함수 복원(Debevec–Malik 1997)과 같은 문제로 푼다 — 여러 물리적
+  지점에서 정확히 아는 상대 노출(ISO)과 관측된 렌더링값을 최소자승(`gsolve`)에
+  넣어 "렌더링값 → 실제 상대 로그노광" 응답함수를 복원한다
+- 출력 끝에 `core/color/inputs.js`의 `ACR_STANDARD_CTRL` 형식으로 제어점을 찍어준다.
+  `--out curve.json`으로 JSON도 남길 수 있다
+- ⚠️ **조건 (a)(절대 앵커)는 못 잡는다** — 최소자승 식의 널스페이스라 상수
+  하나가 미지수로 남는다. `--anchor-v`(기본 ProPhoto 18% 그레이 인코딩 0.3857)
+  에서 g=0이 되도록 임의로 맞춘다 — 노출 슬라이더로 상쇄되는 부분이라 급하지 않다
+- ⚠️ **표본 범위 밖은 평평하게 고정한다.** 출력에 찍히는 `표본 있는 범위`가
+  실제로 신뢰할 수 있는 v 구간이다 — 그 밖(깊은 그림자·거의 포화)은 데이터가
+  없어 외삽 대신 양끝 값을 그대로 쓴다
+- ⚠️ **카메라·프로필 종속이다.** 유도된 곡선은 그 브래킷을 찍은 카메라 모델 +
+  ACR 버전 + 프로필 조합에서만 검증된 것이다. DCP 프로필은 카메라마다 다르게
+  캘리브레이션되므로 다른 카메라는 근사치다
+
+### 검증 방법 (실제로 이렇게 확인했다)
+
+1. **왕복** — 복원한 곡선으로 같은 브래킷의 인접 스톱 간격을 다시 잰다. 보정
+   전엔 0.61~1.58로 요동치던 것이 보정 후 0.94~1.02로 모이면 성공이다(도구가
+   stderr에 자동으로 찍어준다)
+2. **다른 경로와 교차검증** — 같은 장면을 `tools/decode-raw.py`(ACR을 건너뛰는
+   완전히 다른 방법)로도 재서, 두 경로가 같은 "진짜 노광" 자리로 수렴하는지
+   본다. 2026-08-13 실사진(MDR03671)에서 확인됨(→ `docs/RESOLVED.md`)
+
 ## extract_tds_curves.py
 
 제조사 TDS PDF에서 필름 특성곡선(D-logE)을 추출해 JSON으로 내보낸다.

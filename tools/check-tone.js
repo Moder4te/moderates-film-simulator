@@ -157,6 +157,32 @@ check("디더가 평균값을 밀지 않음", Math.abs(s1 / NF - s2 / NF) < 0.6,
       rows.map((r) => r.toFixed(9)).join(" / "));
   }
 
+  // acr-standard — ACR "Adobe Standard" 렌더링 커브를 역산한 20개 제어점.
+  // 원본 브래킷(N1braket/)이 로컬 전용이라 여기서 왕복 전체를 재검산할 순
+  // 없다(→ tools/derive-acr-curve.py). 대신 저장된 곡선 자체가 지켜야 할
+  // 성질만 본다 — 단조성(안 지키면 톤이 뒤집힌다)과, 실측이 확인한 모양
+  // (암부일수록 가파르고 명부일수록 완만한 S자 보정)이 살아있는지.
+  {
+    const inputs = require("../core/color/inputs");
+    const acr = inputs.byId("acr-standard");
+    const vs = [0.08, 0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.93];
+    let monotonic = true;
+    for (let i = 1; i < vs.length; i++) {
+      if (acr.decode(vs[i]) <= acr.decode(vs[i - 1])) monotonic = false;
+    }
+    check("acr-standard — decode가 단조 증가", monotonic);
+
+    // 국소 기울기(로그 단위) — 암부 구간이 명부 구간보다 가팔라야 한다.
+    // (ACR이 암부는 게인을 더 걸고 명부는 덜 걸어서 생긴 왜곡을 되돌리는 것이므로,
+    // 되돌리는 쪽 기울기는 반대 모양이어야 한다 — 암부에서 크고 명부에서 작다)
+    const slope = (v0, v1) => (Math.log(acr.decode(v1)) - Math.log(acr.decode(v0))) / (v1 - v0);
+    const darkSlope = slope(0.1, 0.2);
+    const brightSlope = slope(0.8, 0.9);
+    check("acr-standard — 암부 기울기가 명부보다 가파르다(S자 보정 모양)",
+      darkSlope > brightSlope,
+      `암부 ${darkSlope.toFixed(3)} vs 명부 ${brightSlope.toFixed(3)}`);
+  }
+
   // 입력 전달함수의 규약 — `decode`와 `hWhite`가 서로 맞는가.
   //
   // ⚠️ 이걸 따로 박는 이유: `hWhite`는 화이트포인트 롤오프와 리버설 기준점에서만
