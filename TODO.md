@@ -617,7 +617,7 @@ raw를 톤 커브 없이 직접 풀면 (b)가 **구성상** 성립한다. ACR을
 
 ## C3. 영상용 Rec.709 `.cube` — 출력 쪽만 남았다
 
-**입력 쪽은 2026-08-10에 들어갔다.** `core/io/cube.js`의 `INPUTS`에 Sony S-Log3 /
+**입력 쪽은 2026-08-11에 들어갔다.** `core/io/cube.js`의 `INPUTS`에 Sony S-Log3 /
 S-Gamut3.Cine이 있고, 로그 소스용 비대칭 LUT(로그 in → 표시 out)이 구워진다.
 
 남은 것은 **출력 인코딩**이다. 지금 표시용 선택지는 `acr`(ProPhoto 원색 + sRGB 톤

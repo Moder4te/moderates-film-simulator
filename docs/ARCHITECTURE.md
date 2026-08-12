@@ -9,6 +9,7 @@
 ```
 core/     순수 계산. photoshop·uxp·DOM 접근 금지 (검사로 강제)
   color/    curve films film scanner lut colorspace simulate gamut analysis
+            paper inputs vectorscope
   optics/   format grainfield displace tone
   io/       cube xmp xmpcodec        직렬화만. 파일 쓰기는 앱이 한다
 host/     UXP 경계. batchPlay 디스크립터는 여기서만
@@ -22,7 +23,8 @@ apps/
     src/    main params pipeline grading halation grain batch presets
     lib/    ← core/optics · host · shared 만. 색이 없다
 tools/    check(.js 문법·BOM) check-boundaries check-paths check-load check-api
-          check-conformance check-tone · sync-libs build-ccx extract_tds_curves.py
+          check-conformance check-tone check-docs · sync-libs build-ccx
+          extract_tds_curves.py decode-raw.py
 ```
 
 `core/`가 순수하면 **노드에서 그대로 돌려 값을 전수 대조할 수 있다.** 색 검증
@@ -452,8 +454,8 @@ buildForParams(params, size)
 ```
 
 **네 경로가 전부 `buildForParams`를 통과해야 한다.** 한 경로만 고치는 실수를
-`tools/check-conformance.js`가 잡는다(최대차 실측: .cube 4.6e-7, .xmp 7.6e-6,
-putPixels 3.7e-5).
+`tools/check-conformance.js`가 잡는다(최대차 실측: .cube 4.2e-7, .xmp 7.6e-6,
+putPixels 2.5e-5).
 
 ## 레이어 이름
 

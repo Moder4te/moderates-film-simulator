@@ -17,7 +17,7 @@ v2.0.0 · finish 2.15.0에 멈춰 있는 동안 코드는 v2.1.0 · 2.15.1이었
 | 마감 | `apps/finish/manifest.json` |
 
 두 플러그인은 독립 버전이다. 릴리스 태그 하나로 묶어 배포한다.
-무엇이 언제 바뀌었는지는 아래 [최근 작업 흐름](#최근-작업-흐름-2026-08-04).
+무엇이 언제 바뀌었는지는 아래 [최근 작업 흐름](#최근-작업-흐름-2026-08-12).
 
 ## 동작하는 것
 
@@ -225,11 +225,24 @@ UUID·RGBTable은 생성된 `.xmp`에서 **직접 뽑는다** — 따로 계산�
 Core 1/1 · Mid 1/2 · Bleed 1/4. Core만 풀해상도인 이유는 **원반의 뚜렷한 경계**가
 축소·확대에서 뭉개지기 때문이다.
 
-## 최근 작업 흐름 (2026-08-04)
+## 최근 작업 흐름 (2026-08-12)
 
 되짚을 필요가 있을 때만 본다. 상세는 [`RESOLVED.md`](./RESOLVED.md).
 
 ```
+core   inputs.js 신설  입력 전달함수를 엔진·내보내기 공용 모듈로 분리.
+              「중립 현상」(ProPhoto γ1.8 + 18% 그레이 앵커)을 정의하고 문서
+              색공간이 어긋나면 적용 시 스톱 수치로 경고(colorspace.js
+              workingSpaceCheck) · Sony S-Log3/S-Gamut3.Cine 입력(비대칭
+              .cube, 원색 3×3 워핑) · 리니어 +4/5/6스톱 입력
+              (tools/decode-raw.py — raw를 톤커브 없이 직접 현상해 조건 (b)를
+              측정 대신 구성으로 만든다). → docs/ARCHITECTURE.md 「중립 현상이
+              정확히 무엇인가」, TODO.md N1
+docs   check-docs.js 신설  마크다운 앵커·파일 링크 상시 검사, check.js에 편입
+color  paper.js 신설  인화지 스테이지 분리 — 메인 톤을 인화지가 잡는다.
+              Kodak ENDURA Premier 실측 곡선 추가 · 인화 스케일로 암부 크러시
+              해결. Fuji는 인화지 특성곡선을 미발행해 S3a 종료
+tools         TDS 분광 도면 추출기 신설 — tungstenCast·crosstalk 유도
 finish 2.18.1  그레인 결함 2건 — 존 가중치 합이 c2=255·c2<c1에서 2가 되던 것
                (zoneRanges를 전 함수로 clamp+정렬, check-grain G4를 전 입력
                스윕으로 확장) · G5 회전이 격자 배열을 2.17배로 키우던 것
