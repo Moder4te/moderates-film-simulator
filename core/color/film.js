@@ -207,6 +207,70 @@ function referencePeak(points, printGamma, makePrint, input) {
 }
 
 /**
+ * 닷지·번 압축 — luma(농도 델타의 채널 평균)를 좁은 통에 넣는다.
+ *
+ * tanh로 −limit~+limit에 수렴시킨 뒤, 압축이 지운 중간톤 대비를 3차 S커브로
+ * 되돌린다. 순서가 중요하다 — 대비를 먼저 걸면 압축이 그걸 도로 눌러버린다.
+ */
+function dbCompress(m, limit, contrast) {
+  let y = Math.tanh(m / limit);
+  if (contrast) {
+    y = y + contrast * y * (1 - y * y);
+    y = y < -1 ? -1 : y > 1 ? 1 : y;
+  }
+  // **항등과 섞어 이득에 하한을 둔다.** 아래 DB_GAIN_FLOOR 참조 — 이게 없으면
+  // tanh가 완전히 포화해 그레이축이 역전된다.
+  return (1 - DB_GAIN_FLOOR) * limit * y + DB_GAIN_FLOOR * m;
+}
+
+/**
+ * 압축 이득의 **하한** — 극단이 완전히 포화하지 않게 막는다.
+ *
+ * ── 없으면 그레이축이 역전된다 (2026-08-13 결함, 2026-08-14 수정) ────────
+ *
+ * 압축량을 균일한 농도 시프트 `D_c + (T(m) − m)`로 걸면 채도가 농도 공간에서
+ * 그대로 남는다 — 이 기능의 목적이다. 그런데 **그레이축이 역전됐다.** Agfa
+ * Ultra 50 + Endura에서 입력이 밝아지는데 적·녹 출력이 내려간다
+ * (v 0.781→1.000에서 R 170.2→167.5). 9종 전부, 인화지 전부. 누적 하강 **11.74/255**.
+ *
+ * 원인은 구조적이다. 채널 c가 단조이려면
+ *
+ *     u_c' ≥ (1 − T'(m)) · mean(u')
+ *
+ * 이어야 하는데, tanh가 포화하면 `T' → 0`이라 **가장 완만한 채널이 반드시** 어긴다.
+ *
+ * 그래서 압축기를 항등과 섞어 `T' ≥ floor`를 만든다.
+ *
+ *     T_f(m) = (1 − floor)·T(m) + floor·m
+ *
+ * 중간톤은 애초에 `T(m) ≈ m`이라 **거의 안 바뀌고**, 달라지는 것은 꼬리뿐이다 —
+ * 역전이 나던 바로 그 자리다.
+ *
+ * ── 왜 0.5인가 ──────────────────────────────────────────────────────────
+ *
+ * 필름별 채널 기울기비(`dD_c/dv ÷ 평균`)의 최솟값을 재면 극단 발끝(v<0.08)을 빼고
+ * **0.54**다(Portra 400). `1 − 0.54 = 0.46`이 이론상 필요한 하한이고, 0.5는 그
+ * 위의 반올림값이다. 극단 발끝에서는 기울기비가 0까지 떨어지는 필름이 9종 중
+ * 4종이라 **완전한 보장은 없다** — 남는 하강은 v 0.05~0.16 구간에 몰린다.
+ *
+ * 실측 (Portra 800 + Endura, 8bit):
+ *
+ *   floor  누적하강   +4.3스톱 채도   +4.3스톱 밝기
+ *   0.0    11.74      0.0653          194
+ *   0.3     2.84      0.0612          213
+ *   **0.5    ~1.4      0.0580          226**
+ *   끔       —         0.0493(클립)    256(클립)
+ *
+ * 채도는 여전히 압축 없을 때보다 **높고**(어깨에서 클리핑을 피하므로), 하강은
+ * 8bit 1~2계단으로 떨어진다. 비례 압축(`u_c·T(m)/m`)도 시험했는데 하강 4.07에
+ * 채도가 절반(0.0306)으로 무너져 기각했다 — 색을 지키는 게 이 기능의 이유다.
+ *
+ * ⚠️ **`limit` 재튜닝이 필요할 수 있다.** 하한이 꼬리 압축을 절반으로 줄이므로,
+ * 예전 `limit`으로는 압축이 덜 걸린 것처럼 보인다. 더 세게 하려면 `limit`을 낮춘다.
+ */
+const DB_GAIN_FLOOR = 0.5;
+
+/**
  * 필름 정의에서 3D LUT을 굽는다.
  *
  * @param {object} film       films.js의 필름 정의
@@ -398,11 +462,16 @@ function buildLut(film, opts) {
   // 낸 최대 반사율)에서 0.74로 한 번 더 눌렸다. 게다가 곡선 인화지는 출력이 구조적으로
   // 1을 넘을 수 없어(P = 10^(−Dp) ≤ 10^(−Dmin)) 원래 목적인 클리핑 방지도 필요 없다.
   const wp = pp && pp.curves ? "clip" : film.whitePoint || "rolloff";
-  // 닷지·번은 지금은 실측 곡선 인화지(wp==="clip")하고만 맞춰 뒀다 — 그게
-  // 실제로 쓰는 조합(Endura Premier 등)이고, 그 경우 이 블록 자체가 원래
-  // 건너뛰어진다. 다른 인화지와 조합하면(아래 !dodgeBurnOn) 이득 계산을
-  // 생략한다 — 프로토타입 범위 밖.
-  if (wp !== "clip" && info.sign > 0 && !dodgeBurnOn) {
+  // ⚠️ **닷지·번일 때도 반드시 걸어야 한다.** 예전엔 `!dodgeBurnOn`으로 이 블록을
+  // 통째로 건너뛰었다("실측 곡선 인화지하고만 맞춰 뒀다"). 그런데 가드의 `pp`는
+  // **어떤 인화지든 참**이라 강제가 안 됐고, 기본 인화지(`normalized`) + 닷지·번
+  // 조합에서 33³의 **23.2%가 일부 채널만 1.0에 붙었다** — 색상이 틀어진다
+  // (그레이축 채널폭 v=0.90에서 15.7 → 29.6, 청색이 255에 고정).
+  //
+  // 닷지·번 모드는 `axis`를 안 쓰고 격자점마다 인화하므로, 여기서 만든 소프트
+  // 클립을 **안쪽 루프에서** 건다(아래 `softClip`). 계산식은 같다.
+  let softClip = null;
+  if (wp !== "clip" && info.sign > 0) {
     const rowSum = [
       (m[0][0] + m[0][1] + m[0][2]) / 100,
       (m[1][0] + m[1][1] + m[1][2]) / 100,
@@ -410,17 +479,25 @@ function buildLut(film, opts) {
     ];
     const peaks = ["r", "g", "b"].map((ch, i) => referencePeak(cur[ch], pg, makePrint(ch), inp) * Math.max(rowSum[i], 1));
 
-    if (wp === "scalar") {
-      const peak = Math.max(...peaks);
-      if (peak > 1) {
-        const gain = 1 / peak;
-        for (let c = 0; c < 3; c++) for (let i = 0; i < size; i++) axis[c][i] *= gain;
+    // ⚠️ scalar·perChannel은 채널별 이득이라 닷지·번(격자점 계산)과 섞으려면
+    // 채널 인덱스가 필요하다. 지금 어느 필름도 `whitePoint`를 지정하지 않아
+    // 도달하지 않는 경로이므로, 그 조합이 생기면 **조용히 넘어가지 말고 멈춘다.**
+    if (wp === "scalar" || wp === "perChannel") {
+      if (dodgeBurnOn) {
+        throw new Error(`whitePoint "${wp}" + 닷지·번 조합은 아직 지원하지 않습니다 (${film.id})`);
       }
-    } else if (wp === "perChannel") {
-      for (let c = 0; c < 3; c++) {
-        if (peaks[c] > 0) {
-          const gain = 1 / peaks[c];
-          for (let i = 0; i < size; i++) axis[c][i] *= gain;
+      if (wp === "scalar") {
+        const peak = Math.max(...peaks);
+        if (peak > 1) {
+          const gain = 1 / peak;
+          for (let c = 0; c < 3; c++) for (let i = 0; i < size; i++) axis[c][i] *= gain;
+        }
+      } else {
+        for (let c = 0; c < 3; c++) {
+          if (peaks[c] > 0) {
+            const gain = 1 / peaks[c];
+            for (let i = 0; i < size; i++) axis[c][i] *= gain;
+          }
         }
       }
     } else {
@@ -428,9 +505,12 @@ function buildLut(film, opts) {
       const knee = film.rolloffKnee || 0.5;
       const span = 1 - knee;
       const soft = (p) => (p <= knee ? p : knee + span * (1 - Math.exp(-(p - knee) / span)));
+      softClip = soft;
 
-      for (let c = 0; c < 3; c++) {
-        for (let i = 0; i < size; i++) axis[c][i] = soft(axis[c][i]);
+      if (!dodgeBurnOn) {
+        for (let c = 0; c < 3; c++) {
+          for (let i = 0; i < size; i++) axis[c][i] = soft(axis[c][i]);
+        }
       }
 
       // 롤오프 뒤에 이득을 붙여 상한을 1.0에 맞추는 것도 해봤는데 채택하지 않았다.
@@ -466,19 +546,15 @@ function buildLut(film, opts) {
           const d0 = dbState.d0;
           const dr = Dr - d0[0], dg = Dg - d0[1], db_ = Db - d0[2];
           const lumaDelta = (dr + dg + db_) / 3;
-          // 압축(tanh, -1~1로 수렴) 뒤 S자 대비를 더한다. 압축이 지운 중간톤
-          // 대비를 정규화 구간(-1~1)에서 3차 곡선으로 되돌린다 — 순서가
-          // 중요하다: 대비를 먼저 걸면 압축이 그걸 도로 눌러버린다.
-          let y = Math.tanh(lumaDelta / dbLimit);
-          if (dbContrast) {
-            y = y + dbContrast * y * (1 - y * y);
-            y = y < -1 ? -1 : y > 1 ? 1 : y;
-          }
-          const lumaC = dbLimit * y;
-          const s = lumaC - lumaDelta;
-          pr = dbState.print[0](Dr + s);
-          pgv = dbState.print[1](Dg + s);
-          pb = dbState.print[2](Db + s);
+          // 압축된 luma와 그 자리의 **국소 이득**. 채도(luma에서 벗어난 양)도
+          // 같은 이득으로 스케일한다 — 아래 `dbCompress` 주석의 이유.
+          // 압축량을 **균일한 농도 시프트**로 건다 — 채도(luma에서 벗어난 양)를
+          // 농도 공간에서 그대로 남기기 위해서다. 그게 이 기능의 목적이다.
+          const s2 = dbCompress(lumaDelta, dbLimit, dbContrast) - lumaDelta;
+          pr = dbState.print[0](Dr + s2);
+          pgv = dbState.print[1](Dg + s2);
+          pb = dbState.print[2](Db + s2);
+          if (softClip) { pr = softClip(pr); pgv = softClip(pgv); pb = softClip(pb); }
         } else {
           pr = axis[0][ri];
           pgv = axis[1][gi];

@@ -199,6 +199,52 @@ check("디더가 평균값을 밀지 않음", Math.abs(s1 / NF - s2 / NF) < 0.6,
       worstMid = Math.max(worstMid, Math.abs(i.decode(i.midGrayEncoded) - 0.18));
       names.push(i.id);
     }
+    // **전 입력 공통 불변식 — 평평한 구간이 없어야 한다.**
+    //
+    // ⚠️ N4가 정확히 여기서 났다. `acr-standard`가 표본 범위 밖을 양끝 값으로
+    // 고정해, 인코딩 하단 6.6%(8bit 0~17)와 상단 3.5%(246~255)가 각각 한 값으로
+    // 뭉갰다 — 서로 다른 코드값이 같은 밝기가 되니 계조가 통째로 사라진다.
+    // "없는 데이터를 추정하지 않는다"는 원칙으로 넣은 고정이었는데, 평평은
+    // 추정을 안 하는 게 아니라 **틀린 추정**이었다.
+    {
+      let flat = 0, rev = 0, worstId = null;
+      for (const i of inputs.all()) {
+        let prev = null, f = 0, r = 0;
+        for (let k = 0; k <= 2000; k++) {
+          const d = i.decode(k / 2000);
+          if (prev !== null) {
+            if (Math.abs(d - prev) < 1e-14) f++;
+            if (d < prev - 1e-14) r++;
+          }
+          prev = d;
+        }
+        if (f + r > flat + rev) worstId = i.id;
+        flat += f; rev += r;
+      }
+      check("입력 전달함수에 평평한 구간이 없다", flat === 0,
+        flat ? `평평 ${flat}스텝 (최악 ${worstId})` : `${inputs.all().length}종 × 2001점`);
+      check("입력 전달함수가 단조 증가", rev === 0, rev ? `역전 ${rev}회 (${worstId})` : "");
+      // **암부에서 거듭제곱꼴을 유지하는가** — 유효감마 `log(d2/d1)/log(v2/v1)`.
+      //
+      // ⚠️ `decode(0) === 0`으로는 못 잡는다. 구현이 `v<=0`을 먼저 걸러 0을 돌려주면
+      // 그 앞 구간이 어떻게 생겼든 통과한다(실제로 그렇게 짰다가 헛돌았다).
+      // 봐야 하는 것은 **0 근처의 모양**이다. 평평하면 0, v축 선형 외삽이면 0.17,
+      // ln v 축 외삽이면 0.61, 순수 거듭제곱이면 1.8이 나온다. 0.4를 문턱으로 둔다.
+      //
+      // decode가 음수인 구간이 있는 입력(S-Log3은 블랙포인트 아래가 음수다)은
+      // 로그를 못 취하므로 건너뛴다 — 그쪽은 규약상 정상이다.
+      const V1 = 0.01, V2 = 0.04;
+      const shallow = [];
+      for (const i of inputs.all()) {
+        const d1 = i.decode(V1), d2 = i.decode(V2);
+        if (d1 <= 0 || d2 <= 0) continue;
+        const g = Math.log(d2 / d1) / Math.log(V2 / V1);
+        if (g < 0.4) shallow.push(`${i.id} γ=${g.toFixed(3)}`);
+      }
+      check("암부가 거듭제곱꼴을 유지한다 (유효감마 ≥ 0.4)", shallow.length === 0,
+        shallow.length ? shallow.join(", ") : `v ${V1}~${V2} 구간`);
+    }
+
     check("입력 hWhite = log10(decode(1)/0.18)", worstH < 1e-12,
       `${names.length}종(${names.join(", ")}) 최대편차 ${worstH.toExponential(1)}`);
     check("입력 midGrayEncoded가 정확히 0.18로 디코드", worstMid < 1e-12,
