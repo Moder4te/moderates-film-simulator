@@ -1,0 +1,1236 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>필름 시뮬레이터 코드 해부</title>
+<style>
+/* ─────────────────────────────────────────────────────────────
+   토큰 — 라이트가 기본, 다크는 토큰만 재정의한다.
+   중립색은 청회색 쪽으로 살짝 기울였다(라이트박스·스캐너 광원).
+   강조색은 컬러 네거티브의 오렌지 마스크에서 가져왔다.
+   R/G/B는 장식이 아니라 유제 3층을 가리키는 의미색이다.
+   ───────────────────────────────────────────────────────────── */
+:root {
+  --bg:        #E6E9EC;
+  --surface:   #F4F6F7;
+  --surface-2: #DDE2E6;
+  --ink:       #161A1D;
+  --ink-soft:  #3A444B;
+  --muted:     #5C666E;
+  --rule:      #C6CDD3;
+  --rule-soft: #D6DCE1;
+  --accent:    #A85A24;
+  --accent-bg: #F0E2D6;
+  --layer-r:   #B0403A;
+  --layer-g:   #37764A;
+  --layer-b:   #37649F;
+  --crit:      #A93B35;
+  --warn:      #86671A;
+  --ok:        #256E57;
+  --crit-bg:   #F2DEDC;
+  --warn-bg:   #EFE7D2;
+  --ok-bg:     #DCEBE5;
+  --shadow:    0 1px 2px rgba(20,30,38,.06), 0 8px 24px -16px rgba(20,30,38,.30);
+
+  --sans: "Pretendard", "Pretendard Variable", -apple-system, BlinkMacSystemFont,
+          "Apple SD Gothic Neo", "Segoe UI", "Malgun Gothic", "Noto Sans KR", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, "Cascadia Mono",
+          Consolas, "D2Coding", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:        #0E1114;
+    --surface:   #171B1F;
+    --surface-2: #1E2429;
+    --ink:       #DFE4E9;
+    --ink-soft:  #B6BFC7;
+    --muted:     #8A949C;
+    --rule:      #2A3138;
+    --rule-soft: #222930;
+    --accent:    #E0954F;
+    --accent-bg: #2A2118;
+    --layer-r:   #E0655C;
+    --layer-g:   #63B378;
+    --layer-b:   #6D9CDD;
+    --crit:      #E26A60;
+    --warn:      #D0A845;
+    --ok:        #4CAE8B;
+    --crit-bg:   #2C1A19;
+    --warn-bg:   #292317;
+    --ok-bg:     #16261F;
+    --shadow:    0 1px 2px rgba(0,0,0,.40), 0 10px 30px -18px rgba(0,0,0,.80);
+  }
+}
+:root[data-theme="dark"] {
+  --bg:        #0E1114;
+  --surface:   #171B1F;
+  --surface-2: #1E2429;
+  --ink:       #DFE4E9;
+  --ink-soft:  #B6BFC7;
+  --muted:     #8A949C;
+  --rule:      #2A3138;
+  --rule-soft: #222930;
+  --accent:    #E0954F;
+  --accent-bg: #2A2118;
+  --layer-r:   #E0655C;
+  --layer-g:   #63B378;
+  --layer-b:   #6D9CDD;
+  --crit:      #E26A60;
+  --warn:      #D0A845;
+  --ok:        #4CAE8B;
+  --crit-bg:   #2C1A19;
+  --warn-bg:   #292317;
+  --ok-bg:     #16261F;
+  --shadow:    0 1px 2px rgba(0,0,0,.40), 0 10px 30px -18px rgba(0,0,0,.80);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.72;
+  -webkit-font-smoothing: antialiased;
+  word-break: keep-all;
+}
+
+.page {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 0 24px 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 64px;
+}
+.col { max-width: 68ch; }
+
+/* ── 타이포 ────────────────────────────────────────────────── */
+h1, h2, h3 { text-wrap: balance; margin: 0; font-weight: 700; letter-spacing: -0.02em; }
+h1 { font-size: clamp(30px, 5vw, 42px); line-height: 1.18; }
+h2 { font-size: clamp(21px, 3vw, 26px); line-height: 1.3; }
+h3 { font-size: 17px; line-height: 1.45; letter-spacing: -0.01em; }
+p  { margin: 0; }
+a  { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible, .tocnav a:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px;
+}
+strong { font-weight: 650; color: var(--ink); }
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 10px;
+}
+.lede { font-size: 18px; line-height: 1.65; color: var(--ink-soft); }
+.note { font-size: 14px; line-height: 1.65; color: var(--muted); }
+code, .m {
+  font-family: var(--mono);
+  font-size: .875em;
+  font-variant-numeric: tabular-nums;
+}
+code {
+  background: var(--surface-2);
+  padding: .1em .35em;
+  border-radius: 3px;
+}
+
+/* ── 섹션 ─────────────────────────────────────────────────── */
+section { display: flex; flex-direction: column; gap: 22px; scroll-margin-top: 20px; }
+.stack  { display: flex; flex-direction: column; gap: 14px; }
+.stack-s{ display: flex; flex-direction: column; gap: 8px; }
+hr.rule { border: 0; border-top: 1px solid var(--rule); margin: 0; }
+
+/* ── 헤더 ─────────────────────────────────────────────────── */
+header.hero {
+  padding: 72px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.hero-meta {
+  display: flex; flex-wrap: wrap; gap: 8px 20px;
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+}
+.hero-meta span { white-space: nowrap; }
+
+.plot {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  box-shadow: var(--shadow);
+  padding: 20px 22px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.plot-wrap { overflow-x: auto; }
+.plot svg { display: block; width: 100%; min-width: 340px; height: auto; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-family: var(--mono); font-size: 12px; }
+.legend b { font-weight: 500; }
+.swatch-dot {
+  display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  margin-right: 6px; vertical-align: 1px;
+}
+
+/* ── 목차 ─────────────────────────────────────────────────── */
+.tocnav {
+  display: flex; flex-wrap: wrap; gap: 6px 8px;
+  font-family: var(--mono); font-size: 12.5px;
+}
+.tocnav a {
+  text-decoration: none;
+  color: var(--ink-soft);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 4px 12px;
+  background: var(--surface);
+  transition: border-color .15s, color .15s;
+}
+.tocnav a:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ── 표 ───────────────────────────────────────────────────── */
+.tablewrap {
+  overflow-x: auto;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--surface);
+}
+table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 14.5px; }
+th, td { text-align: left; padding: 11px 16px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+thead th {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--muted); font-weight: 500;
+  background: var(--surface-2); border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+tbody tr:last-child td { border-bottom: 0; }
+td.path { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; color: var(--ink-soft); }
+td.num  { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ── 단계 목록 (실제 순서가 있는 것에만 쓴다) ───────────────── */
+ol.steps { list-style: none; counter-reset: s; margin: 0; padding: 0; display: flex; flex-direction: column; }
+ol.steps > li {
+  counter-increment: s;
+  position: relative;
+  padding: 0 0 20px 46px;
+  border-left: 1px solid var(--rule);
+  margin-left: 13px;
+}
+ol.steps > li:last-child { border-left-color: transparent; padding-bottom: 0; }
+ol.steps > li::before {
+  content: counter(s);
+  position: absolute; left: -13px; top: 1px;
+  width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--surface); border: 1px solid var(--rule);
+  font-family: var(--mono); font-size: 12px; color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+ol.steps h3 { margin-bottom: 4px; }
+ol.steps .formula {
+  font-family: var(--mono); font-size: 13px; color: var(--ink-soft);
+  background: var(--surface-2); border-radius: 3px;
+  padding: 5px 10px; display: inline-block; margin-top: 6px;
+  overflow-x: auto; max-width: 100%;
+}
+
+/* ── 목록 ─────────────────────────────────────────────────── */
+ul.plain { margin: 0; padding-left: 1.15em; display: flex; flex-direction: column; gap: 8px; }
+ul.plain li::marker { color: var(--muted); }
+
+/* ── 카드 ─────────────────────────────────────────────────── */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 7px;
+}
+.card h3 { font-size: 15px; }
+.card .note { font-size: 13.5px; }
+
+/* ── 결함 항목 ────────────────────────────────────────────── */
+.finding {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--sev, var(--muted));
+  border-radius: 4px;
+  padding: 16px 20px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.finding.hi  { --sev: var(--crit); }
+.finding.mid { --sev: var(--warn); }
+.finding.lo  { --sev: var(--ok); }
+.finding-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; }
+.finding-head h3 { flex: 1 1 260px; }
+.chip {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; padding: 3px 9px; border-radius: 999px;
+  white-space: nowrap; font-weight: 600;
+}
+.chip.hi  { background: var(--crit-bg); color: var(--crit); }
+.chip.mid { background: var(--warn-bg); color: var(--warn); }
+.chip.lo  { background: var(--ok-bg);   color: var(--ok); }
+.loc {
+  font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+  overflow-x: auto; white-space: nowrap; padding-bottom: 2px;
+}
+.finding dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 14.5px; }
+.finding dt {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--muted); padding-top: 4px;
+}
+.finding dd { margin: 0; color: var(--ink-soft); }
+@media (max-width: 560px) {
+  .finding dl { grid-template-columns: 1fr; gap: 2px; }
+  .finding dd { margin-bottom: 8px; }
+}
+
+pre {
+  margin: 0; overflow-x: auto;
+  background: var(--surface-2);
+  border-radius: 4px; padding: 12px 14px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+/* ── 점수 ─────────────────────────────────────────────────── */
+.bar {
+  position: relative; height: 6px; border-radius: 3px;
+  background: var(--surface-2); min-width: 90px; margin-top: 8px;
+}
+.bar > i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--accent); }
+.total {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px;
+  background: var(--surface); border: 1px solid var(--rule);
+  border-radius: 4px; padding: 22px 24px; box-shadow: var(--shadow);
+}
+.total .score {
+  font-family: var(--mono); font-size: 44px; font-weight: 600;
+  color: var(--accent); line-height: 1; font-variant-numeric: tabular-nums;
+}
+.total .grade {
+  font-family: var(--mono); font-size: 13px; letter-spacing: .12em;
+  color: var(--muted); text-transform: uppercase;
+}
+
+footer {
+  border-top: 1px solid var(--rule);
+  padding-top: 20px;
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+  display: flex; flex-wrap: wrap; gap: 6px 20px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="hero">
+  <div class="col stack">
+    <p class="eyebrow">코드 해부 · 2026-08-13</p>
+    <h1>Moderate&rsquo;s Film Simulator<br>코드 해부와 평가</h1>
+    <p class="lede">
+      디지털 사진에 아날로그 필름의 광학적·화학적 특성을 재현하는 Photoshop UXP 플러그인.
+      색을 눈대중으로 만들지 않고 제조사 기술자료(TDS)의 <span class="m">D-logE</span>
+      특성곡선에서 유도한다. 이 문서는 저장소 전체를 읽고 <b>무슨 역할을 하는지</b>,
+      <b>어떻게 쓰는지</b>, <b>어디가 깨져 있는지</b>를 정리한 것이다.
+    </p>
+    <p class="hero-meta">
+      <span>JS·PY·LUA 65개 파일</span>
+      <span>약 16,500줄</span>
+      <span>문서 5,200줄</span>
+      <span>런타임 의존성 0</span>
+      <span>브랜치 claude/code-analysis-documentation-pw3vzl</span>
+    </p>
+  </div>
+
+  <div class="plot">
+    <div class="plot-wrap">
+      <!-- Portra 400의 실제 특성곡선(core/color/films.js)을 그대로 플롯한 것이다. -->
+      <svg viewBox="0 0 320 200" role="img"
+           aria-label="Kodak Portra 400의 적·녹·청 감광층 D-logE 특성곡선. 세 곡선의 기울기가 서로 다르다.">
+        <g stroke="var(--rule)" stroke-width=".5">
+          <line x1="34" y1="176" x2="310" y2="176"/>
+          <line x1="34" y1="135" x2="310" y2="135"/>
+          <line x1="34" y1="94"  x2="310" y2="94"/>
+          <line x1="34" y1="53"  x2="310" y2="53"/>
+          <line x1="34" y1="12"  x2="310" y2="12"/>
+          <line x1="34"  y1="12" x2="34"  y2="176"/>
+          <line x1="103" y1="12" x2="103" y2="176"/>
+          <line x1="241" y1="12" x2="241" y2="176"/>
+          <line x1="310" y1="12" x2="310" y2="176"/>
+        </g>
+        <line x1="172" y1="8" x2="172" y2="176" stroke="var(--accent)" stroke-width=".8" stroke-dasharray="3 3"/>
+        <text x="172" y="6" fill="var(--accent)" font-size="7" font-family="ui-monospace, monospace"
+              text-anchor="middle">H = 0 · 18% 그레이</text>
+        <g fill="none" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round">
+          <polyline stroke="var(--layer-b)" points="34.0,131.6 47.8,131.3 61.6,130.7 75.4,128.5 89.2,123.9 103.0,117.9 116.8,111.5 130.6,105.1 144.4,98.6 158.2,92.1 172.0,85.6 185.8,79.1 199.6,72.6 213.4,66.0 227.2,59.5 241.0,52.9 254.8,46.3 268.6,39.7 282.4,33.1 296.2,26.5 310.0,19.7"/>
+          <polyline stroke="var(--layer-g)" points="34.0,142.9 47.8,142.7 61.6,142.3 75.4,141.6 89.2,139.1 103.0,134.6 116.8,128.9 130.6,123.2 144.4,117.5 158.2,111.7 172.0,106.1 185.8,100.4 199.6,94.7 213.4,89.1 227.2,83.5 241.0,77.8 254.8,72.3 268.6,66.7 282.4,61.1 296.2,55.5 310.0,49.9"/>
+          <polyline stroke="var(--layer-r)" points="34.0,164.8 47.8,164.5 61.6,164.1 75.4,163.5 89.2,161.3 103.0,157.1 116.8,151.8 130.6,146.6 144.4,141.3 158.2,135.9 172.0,130.5 185.8,124.9 199.6,119.4 213.4,113.7 227.2,108.0 241.0,102.3 254.8,96.4 268.6,90.6 282.4,84.7 296.2,78.8 310.0,72.7"/>
+        </g>
+        <g fill="var(--muted)" font-size="7" font-family="ui-monospace, monospace">
+          <text x="29" y="179" text-anchor="end">0.0</text>
+          <text x="29" y="138" text-anchor="end">0.8</text>
+          <text x="29" y="97"  text-anchor="end">1.6</text>
+          <text x="29" y="56"  text-anchor="end">2.4</text>
+          <text x="29" y="15"  text-anchor="end">3.2</text>
+          <text x="34"  y="190" text-anchor="middle">-2</text>
+          <text x="103" y="190" text-anchor="middle">-1</text>
+          <text x="241" y="190" text-anchor="middle">+1</text>
+          <text x="310" y="190" text-anchor="middle">+2</text>
+          <text x="8" y="100" text-anchor="middle" transform="rotate(-90 8 100)">농도 D</text>
+          <text x="172" y="199" text-anchor="middle">상대 로그노광 H (스톱)</text>
+        </g>
+      </svg>
+    </div>
+    <div class="legend">
+      <span><i class="swatch-dot" style="background:var(--layer-r)"></i><b>적감층</b> γ 0.536</span>
+      <span><i class="swatch-dot" style="background:var(--layer-g)"></i><b>녹감층</b> γ 0.554</span>
+      <span><i class="swatch-dot" style="background:var(--layer-b)"></i><b>청감층</b> γ 0.634</span>
+    </div>
+    <p class="note">
+      Kodak Portra 400의 실제 TDS 수치(<span class="m">core/color/films.js</span>)를 그대로 그린 것이다.
+      <b>세 곡선의 절대 위치가 아니라 기울기 차이가 곧 색이다</b> — 청감층이 가장 가파르므로
+      하이라이트로 갈수록 청색 농도가 빨리 올라가고, 인화 뒤 하이라이트가 따뜻해진다.
+      필름마다 다른 &ldquo;색감&rdquo;의 정체가 이것이고, 이 프로젝트가 TDS 수치를 그대로 쓰는 이유다.
+    </p>
+  </div>
+
+  <nav class="tocnav" aria-label="목차">
+    <a href="#what">무엇인가</a>
+    <a href="#layers">층 구조</a>
+    <a href="#color">색 파이프라인</a>
+    <a href="#finish">마감 파이프라인</a>
+    <a href="#map">모듈 지도</a>
+    <a href="#usage">사용법</a>
+    <a href="#checks">검사 스위트</a>
+    <a href="#bugs">발견한 결함</a>
+    <a href="#known">이미 알려진 한계</a>
+    <a href="#score">종합 점수</a>
+  </nav>
+</header>
+
+<hr class="rule">
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="what">
+  <div class="col stack">
+    <p class="eyebrow">무엇인가</p>
+    <h2>두 개의 플러그인, 하나의 순수 계산 코어</h2>
+    <p>
+      저장소는 Photoshop 플러그인 두 개, Lightroom Classic 플러그인 하나, 그리고
+      그 셋이 공유하는 <b>순수 JavaScript 계산 코어</b>로 이루어져 있다. 코어에는
+      <span class="m">photoshop</span>·<span class="m">uxp</span>·DOM 접근이 한 줄도 없고,
+      그 사실을 정적 검사가 강제한다. 그래서 색을 만드는 코드 전부를
+      <b>Node에서 그대로 돌려 값으로 대조할 수 있다</b> — 이 프로젝트의 검증 가능성이
+      전부 여기서 나온다.
+    </p>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <p class="eyebrow" style="margin:0">엔진 · com.filmsim.photoshop</p>
+      <h3>색을 정한다</h3>
+      <p class="note">
+        필름 유제 → 인화지 → 스캐너 → 사용자 색 조정을 <b>3D LUT 한 장</b>에 굽고
+        픽셀 레이어로 올린다. <span class="m">.cube</span>·Lightroom 프로파일로도 같은 표를 뽑는다.
+        입력은 16bit ProPhoto.
+      </p>
+    </div>
+    <div class="card">
+      <p class="eyebrow" style="margin:0">마감 · com.filmsim.finish</p>
+      <h3>매체를 얹는다</h3>
+      <p class="note">
+        그레이딩 → 디퓨전 → 할레이션 → 그레인. 색 코드가 <b>물리적으로 들어 있지 않다</b>
+        (<span class="m">lib/</span>에 <span class="m">core/color</span>를 아예 복사하지 않는다).
+        8bit JPEG이 정상 입력이다.
+      </p>
+    </div>
+    <div class="card">
+      <p class="eyebrow" style="margin:0">lrplugin</p>
+      <h3>프로파일을 나른다</h3>
+      <p class="note">
+        색을 계산하지 않는다. 엔진이 구운 <span class="m">.xmp</span> 36종(필름 9 × 스캐너 2 ×
+        입력 가정 2)을 담아 설치·적용만 한다. LrC SDK가 픽셀에 접근할 수 없기 때문이다.
+      </p>
+    </div>
+  </div>
+
+  <div class="col">
+    <p class="note">
+      두 Photoshop 플러그인은 같은 문서에 겹쳐 쓰는 것이 정상이다. 레이어 접두사가
+      <span class="m">FilmSim Color</span> / <span class="m">FilmSim Finish</span>로 갈려 서로의
+      결과를 지우지 않는다. 나눈 이유는 명확하다 — 색은 순수 계산이고 마감은 Photoshop 액션이라,
+      섞여 있으면 마감을 손보다 색이 망가지고 <b>그 실수는 결과를 보기 전까지 드러나지 않는다.</b>
+    </p>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="layers">
+  <div class="col stack">
+    <p class="eyebrow">층 구조</p>
+    <h2>불변식 여섯 개가 구조를 붙들고 있다</h2>
+    <p>
+      <span class="m">tools/check-boundaries.js</span>가 정적으로 강제하는 규칙들이다.
+      하나라도 깨지면 검사가 실패한다. 규칙 번호는 그 파일의 주석과 같다.
+    </p>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>#</th><th>불변식</th><th>깨지면</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="num">1</td><td><span class="m">core/</span>가 <span class="m">photoshop</span>·<span class="m">uxp</span>·DOM을 부르지 않는다</td><td>Node 검증 불가 — 색을 값으로 대조할 수 없다</td></tr>
+        <tr><td class="num">2</td><td>앱 코드에 <span class="m">batchPlay</span>라는 <b>이름이 나오지 않는다</b></td><td>디스크립터가 흩어져 추적 불가</td></tr>
+        <tr><td class="num">2.5</td><td>디스크립터를 여러 개 내는 헬퍼는 <span class="m">...</span>로 펼쳐 쓴다</td><td>배경이 덮여 <b>원본 소실</b></td></tr>
+        <tr><td class="num">2.7</td><td><span class="m">getPixels</span> 값은 심도 정규화 + 색공간 변환 후 쓴다</td><td>16bit·ProPhoto에서 색 붕괴</td></tr>
+        <tr><td class="num">3</td><td>마감 앱은 <span class="m">core/color</span>를 참조하지 않는다</td><td>분리 취지 소멸</td></tr>
+        <tr><td class="num">4</td><td>두 앱의 레이어 접두사가 겹치지 않는다</td><td>한쪽이 다른 쪽 결과를 지운다</td></tr>
+        <tr><td class="num">5</td><td>앱 진입 모듈이 앱 밖(<span class="m">../</span>)을 참조하지 않는다</td><td>패키징 시 파일 누락</td></tr>
+        <tr><td class="num">6</td><td>재적용 격리 — <b>두 앱 모두</b></td><td>색·그레인·할레이션 중복 적용</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col stack">
+    <p class="note">
+      <span class="m">apps/*/lib/</span>는 <b>산출물</b>이다. <span class="m">core/</span>가 원본이고
+      <span class="m">tools/sync-libs.js</span>가 복사한다 — 복사 목록이 곧 경계 선언이다.
+      엔진 <span class="m">lib/</span>에는 <span class="m">core/color</span>·<span class="m">core/io</span>·<span class="m">host</span>·<span class="m">shared</span>가,
+      마감 <span class="m">lib/</span>에는 <span class="m">core/optics</span>·<span class="m">host</span>·<span class="m">shared</span>만 들어간다.
+    </p>
+    <p class="note">
+      배치 적용의 원본 보호는 <span class="m">shared/paths.js</span>의 <span class="m">samePath</span> 하나에 걸려 있다.
+      그 함수를 <span class="m">batch.js</span> 안에 두면 파일 맨 위에서 <span class="m">photoshop</span>을
+      require하므로 Node에서 못 부른다 — <b>검사할 수 있는 자리에 두는 것까지가 방어의 일부</b>라는
+      판단으로 공유 층에 올려 뒀다.
+    </p>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="color">
+  <div class="col stack">
+    <p class="eyebrow">색 파이프라인 · core/color/film.js</p>
+    <h2>격자점 하나가 지나는 일곱 단계</h2>
+    <p>
+      <span class="m">buildLut()</span>이 필름 정의 하나를 <span class="m">size³ × 3</span> Float32 표로 굽는다.
+      1&ndash;4단계는 채널끼리 독립이라 <b>축마다 한 번씩만</b> 계산하고, <span class="m">size³</span> 루프에는
+      크로스토크와 인코딩만 남는다. 33³ 생성이 1ms라 캐시가 필요 없다.
+    </p>
+  </div>
+
+  <div class="col">
+    <ol class="steps">
+      <li>
+        <h3>인코딩 해제</h3>
+        <p class="note">문서 코드값을 선형 광량으로 되돌린다. 어떤 전달함수를 쓸지는
+          <span class="m">core/color/inputs.js</span>가 소유한다 — ProPhoto γ1.8(기본),
+          리니어 +4/+5/+6스톱, ACR 역산, S-Log3.</p>
+        <p class="formula">L = decode(v)</p>
+      </li>
+      <li>
+        <h3>로그 노광</h3>
+        <p class="note">18% 그레이를 <span class="m">H = 0</span>에 앵커한다. 이 지점이 곧 TDS의
+          <span class="m">Log H Ref</span> = &ldquo;박스 스피드 정상 노광&rdquo;이다.
+          텅스텐 필름은 여기에 캐스트가 더해진다.</p>
+        <p class="formula">H = log₁₀(L / 0.18) + 노광시프트 + tungstenCast</p>
+      </li>
+      <li>
+        <h3>특성곡선</h3>
+        <p class="note">TDS 샘플점을 PCHIP(단조 3차)으로 보간해 층별 농도를 얻는다.
+          일반 스플라인은 점 사이에서 튀어 없던 색 왜곡을 만들기 때문에 쓸 수 없다.
+          PAVA 단조 보정이 도면상 물리적으로 불가능한 하강을 눌러 준다.</p>
+        <p class="formula">D = curve(H)</p>
+      </li>
+      <li>
+        <h3>인화 — 메인 톤을 잡는 자리</h3>
+        <p class="note"><b>이 단계가 모델의 핵심이다.</b> 네거티브가 확대기 빛을 막고, 인화지가
+          그것을 받아 포지티브를 만든다. 밝은 피사체 → 네거 농도 높음 → 인화 노광 적음 →
+          인화지 <b>발끝</b> → 밝은 인화물. 즉 인화지의 발끝이 하이라이트를, 어깨가 암부를 만든다.
+          <span class="m">k</span>는 채널별 인화 노광 = 확대기 색 필터이고, 이것이 오렌지 마스크를 상쇄한다.</p>
+        <p class="formula">P = 10^(−paper(k − D))</p>
+      </li>
+      <li>
+        <h3>크로스토크</h3>
+        <p class="note">유제층 간 색 유출을 선형 공간에서 3×3으로 근사한다. 항등이면 곱셈을 건너뛴다.</p>
+        <p class="formula">P′ = M · P</p>
+      </li>
+      <li>
+        <h3>스캐너 스테이지 <span class="m" style="color:var(--warn)">(튜닝값)</span></h3>
+        <p class="note">레벨 → 틴트(암부·중간톤·명부 3점) → S커브 → 채도.
+          Frontier와 Noritsu 두 종. <b>측정이 아니라 현상소 비교 문헌의 정성 서술을 옮긴 값이다</b> —
+          필름 룩의 상당 부분이 이 단계에서 나오므로 여기가 추정이면 결과물 전체가 추정이다.
+          기본값은 <span class="m">none</span>.</p>
+      </li>
+      <li>
+        <h3>화이트포인트 · 인코딩</h3>
+        <p class="note">채널별 소프트 롤오프로 상한 근처만 눌러 1.0으로 수렴시킨다.
+          <b>실측 곡선 인화지(Endura)를 고르면 이 단계를 끈다</b> — 인화지 발끝이 그 역할을
+          물리적으로 하므로 둘 다 걸면 이중 압축이다.</p>
+        <p class="formula">v′ = P′^(1/1.8)</p>
+      </li>
+    </ol>
+  </div>
+
+  <div class="col stack">
+    <h3>그 위에 얹히는 두 가지</h3>
+    <p class="note">
+      <b>사용자 색 조정(그레이딩).</b> 색역별 CMY·채널 게인·발끝/어깨를 <span class="m">bakeGrading</span>이
+      완성된 LUT 위에 굽는다. 판정은 sRGB 대리색으로 하고 <b>적용은 클램프하지 않은 선형광</b>에
+      한다 — 이전 구현은 왕복 전체를 sRGB에서 해서 33³ 격자점의 82.5%가 잘려 나갔다.
+    </p>
+    <p class="note">
+      <b>닷지·번(실험적).</b> 필름의 H→D 응답은 건드리지 않고 인화 직전에 딱 한 지점만 끼운다 —
+      세 채널 농도 델타의 평균(luma)만 <span class="m">tanh</span>로 압축하고 채널 간 편차(=색)는
+      그대로 더해 돌려준다. 채널마다 따로 압축하면 채도가 같이 눌린다. 기본은 꺼짐.
+    </p>
+  </div>
+
+  <div class="col stack">
+    <h3>네 산출 경로가 같은 색을 내야 한다</h3>
+    <pre>buildForParams(params, size)
+   ├─→ apps/engine/src/pipeline.js   문서 적용 (putPixels)   최대차 2.5e-5
+   ├─→ core/io/cube.js               .cube                   최대차 4.2e-7
+   ├─→ core/io/xmp.js                Lightroom/ACR 프로파일   최대차 7.6e-6
+   └─→ apps/engine/src/preview.js    미리보기</pre>
+    <p class="note">
+      한 경로만 고치는 실수를 <span class="m">tools/check-conformance.js</span>가 잡는다.
+      값만 보는 것이 아니라 <b>구조도 본다</b> — &ldquo;엔진 함수를 부르는 곳이 몇 군데인가&rdquo;를 세어,
+      각 경로에 같은 변환을 복붙한 구조를 잡아낸다.
+    </p>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="finish">
+  <div class="col stack">
+    <p class="eyebrow">마감 파이프라인 · apps/finish/src/pipeline.js</p>
+    <h2>순서가 결과를 결정한다</h2>
+    <p>
+      네 단계의 순서는 취향이 아니라 제약이다. 하나라도 자리를 바꾸면 되돌릴 수 없는
+      스탬프가 잘못된 시점의 픽셀을 굽는다.
+    </p>
+  </div>
+
+  <div class="col">
+    <ol class="steps">
+      <li>
+        <h3>그레이딩 <span class="m" style="color:var(--muted)">core/optics/tone.js</span></h3>
+        <p class="note">노출·색온도만 선형광에서, 나머지는 인코딩 공간에서. 채널 체인 전체를
+          <b>1D LUT으로 구워</b> 안쪽 루프에 <span class="m">Math.pow</span>를 하나도 남기지 않는다
+          (24MP 4.4초 → 0.88초). 양자화는 마지막 한 번, 8bit에는 TPDF 디더
+          (평균 띠폭 35.3px → 2.3px). <b>제일 앞이어야</b> 할레이션이 조정된 하이라이트에서 발생한다.</p>
+      </li>
+      <li>
+        <h3>디퓨전 <span class="m" style="color:var(--muted)">core/optics/displace.js</span></h3>
+        <p class="note">해상도를 입자 크기에 묶어 razor 엣지를 없앤다. 기본은 변위 방식 —
+          입자 크기 셀 단위로 이웃을 무작위로 집어 미세 선을 <b>조각낸다</b>(블러는 흐리게 남긴다).
+          <b>할레이션보다 먼저여야 한다</b> — 합성본을 스탬프하므로 할레이션이 이미 있으면
+          그 픽셀이 구워져 나중에 끌 수 없다.</p>
+      </li>
+      <li>
+        <h3>할레이션 <span class="m" style="color:var(--muted)">apps/finish/src/halation.js</span></h3>
+        <p class="note">Core(×0.3 Color Dodge) · Mid(×1.1 Linear Dodge) · Bleed(×4.0 Linear Dodge)
+          세 스케일. 추출은 <b>적색 채널 구동</b>이다 — 휘도로 뽑으면 포화 적색 네온이 임계에 안 걸린다.
+          소스를 애초에 오렌지-레드로 칠해 채널 확산차가 만든 붉은 링을 살린다.
+          원반(Maximum 필터)으로 경계를 세우고, 넓은 스케일은 1/2·1/4 해상도에서 계산한다.</p>
+      </li>
+      <li>
+        <h3>그레인 <span class="m" style="color:var(--muted)">core/optics/grainfield.js</span></h3>
+        <p class="note"><b>값 노이즈</b>로 생성한다 — 블러는 반경을 키우면 대비가 함께 떨어져 mush가
+          되지만 값 노이즈는 셀을 키우면 대비를 유지한 채 blob이 실제로 커진다.
+          텍스처 한 벌을 세 존(암부·중간톤·명부)이 Overlay + Blend If로 나눠 쓰고,
+          교차점 2개에서 존 범위를 유도해 <b>가중치 합이 항상 정확히 1</b>이다.</p>
+      </li>
+    </ol>
+  </div>
+
+  <div class="col stack">
+    <h3>입자 크기는 물리로 나온다</h3>
+    <pre>µm        = 10 · (ISO/400)^0.44        감도 → 필름면 유효 입자 지름 (4~25µm)
+px_per_mm = 이미지_긴변_px / 프레임_긴변_mm
+grain_px  = (µm / 1000) × px_per_mm</pre>
+    <p class="note">
+      입자 크기는 <b>필름면에서 고정</b>이다. 최종 이미지에서 달라 보이는 것은 확대율 차이다 —
+      4×5는 35mm보다 프레임이 3.5배 크니 같은 출력 크기까지 확대할 때 배율이 1/3.5이고
+      입자도 그만큼 곱게 보인다. 할레이션 반경도 같은 배율을 쓴다.
+    </p>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="map">
+  <div class="col stack">
+    <p class="eyebrow">모듈 지도</p>
+    <h2>파일 하나하나가 무슨 일을 하는가</h2>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>경로</th><th>줄</th><th>역할</th></tr></thead>
+      <tbody>
+        <tr><td class="path">core/color/film.js</td><td class="num">783</td><td>센시토메트리 엔진. <span class="m">buildLut</span>·<span class="m">buildForParams</span>·<span class="m">bakeGrading</span>·<span class="m">hasEffect</span>. 네 산출 경로가 전부 여기를 지난다</td></tr>
+        <tr><td class="path">core/color/films.js</td><td class="num">497</td><td>필름 9종의 TDS 특성곡선 데이터와 출처 기록. 전부 컬러 네거티브</td></tr>
+        <tr><td class="path">core/color/curve.js</td><td class="num">162</td><td>PCHIP 보간 · PAVA 단조 보정 · 배열 룩업 테이블화</td></tr>
+        <tr><td class="path">core/color/paper.js</td><td class="num">252</td><td>인화지 스테이지. <span class="m">normalized</span>(구 동작) / <span class="m">shared</span> / Kodak Endura Premier 실측 곡선</td></tr>
+        <tr><td class="path">core/color/inputs.js</td><td class="num">237</td><td>입력 전달함수 6종. 엔진과 내보내기가 <b>같은 정의</b>를 쓰게 하는 단일 소유자</td></tr>
+        <tr><td class="path">core/color/scanner.js</td><td class="num">297</td><td>스캐너 렌더링(레벨·틴트·S커브·채도) + 색상 보존 <span class="m">fitGamut</span></td></tr>
+        <tr><td class="path">core/color/colorspace.js</td><td class="num">327</td><td>ProPhoto·sRGB·Adobe RGB·S-Log3 변환, 작업 색공간 점검 경고문</td></tr>
+        <tr><td class="path">core/color/lut.js</td><td class="num">238</td><td>3D LUT 생성·사면체 보간·버퍼 적용·<span class="m">.cube</span> 직렬화. PS 16bit는 0~32768</td></tr>
+        <tr><td class="path">core/color/gamut.js</td><td class="num">219</td><td>색역 판정과 피부톤 의사 색역(<span class="m">skinWeight</span> — 색상각 + 채도 창)</td></tr>
+        <tr><td class="path">core/color/simulate.js</td><td class="num">224</td><td>Selective Color 근사. 팔레트 미리보기와 <span class="m">bakeGrading</span>이 공유</td></tr>
+        <tr><td class="path">core/color/analysis.js</td><td class="num">95</td><td>사진 색역별 누적·대표색 (순수 집계기)</td></tr>
+        <tr><td class="path">core/color/vectorscope.js</td><td class="num">139</td><td>분포 밀도 격자. 반경은 HSV 채도가 아니라 <b>크로마</b></td></tr>
+        <tr><td class="path">core/optics/tone.js</td><td class="num">319</td><td>마감 그레이딩 — 채널 LUT·TPDF 디더·<span class="m">fitGamut</span></td></tr>
+        <tr><td class="path">core/optics/grainfield.js</td><td class="num">198</td><td>값 노이즈 그레인 필드. 격자 마디는 저장 대신 좌표 해시</td></tr>
+        <tr><td class="path">core/optics/grainzones.js</td><td class="num">93</td><td>교차점 2개 → 세 존 Blend If 범위. 가중치 합 항상 1</td></tr>
+        <tr><td class="path">core/optics/format.js</td><td class="num">243</td><td>필름 포맷·출력 해상도 → 입자 픽셀 크기, 다이클라우드 계수</td></tr>
+        <tr><td class="path">core/optics/displace.js</td><td class="num">84</td><td>셀 단위 확산(디퓨전)</td></tr>
+        <tr><td class="path">core/io/cube.js</td><td class="num">316</td><td><span class="m">.cube</span> 빌드. 대칭 변환 / 원색 변환 / 출력만 재인코딩 세 갈래</td></tr>
+        <tr><td class="path">core/io/xmp.js</td><td class="num">381</td><td>ACR Look 프로파일 직접 생성. 축 순서 반전 + 잔차 인코딩</td></tr>
+        <tr><td class="path">core/io/xmpcodec.js</td><td class="num">217</td><td>md5 · zlib(stored) · Adobe Base85 — 외부 의존성 없이 직접 구현</td></tr>
+        <tr><td class="path">host/ps.js</td><td class="num">398</td><td>UXP 경계. batchPlay 디스크립터가 나오는 <b>유일한</b> 파일</td></tr>
+        <tr><td class="path">shared/paths.js</td><td class="num">46</td><td>경로 비교 — 배치 원본 보호의 뿌리</td></tr>
+        <tr><td class="path">shared/ui/cslider.js</td><td class="num">172</td><td>커스텀 슬라이더. UXP의 sp-slider가 느리고 input[range]는 렌더되지 않는다</td></tr>
+        <tr><td class="path">apps/engine/src/*</td><td class="num">2693</td><td>패널 UI · 파이프라인 · LUT 적용 · 미리보기 · 컬러휠 · 사진 분석 · 내보내기</td></tr>
+        <tr><td class="path">apps/finish/src/*</td><td class="num">1647</td><td>패널 UI · 파이프라인 · 그레이딩 · 할레이션 · 그레인 · 배치</td></tr>
+        <tr><td class="path">tools/*</td><td class="num">5660</td><td>검사 8종 · sync-libs · 패키징 · TDS 추출(Python) · raw 디코더 + GUI</td></tr>
+        <tr><td class="path">lrplugin/*.lua</td><td class="num">580</td><td>LrC 플러그인 — 설치 · 적용 · 진단 · 자동 생성 카탈로그</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="usage">
+  <div class="col stack">
+    <p class="eyebrow">사용법</p>
+    <h2>색 먼저, 마감 나중</h2>
+    <p>
+      마감의 디퓨전 레이어는 그 시점 화면을 구운 파괴적 스탬프라, 그 뒤에 색을 적용하면
+      이미 구워진 픽셀을 다시 칠할 수 없다. 순서를 어기면 색이 중복되거나 안 먹은 것처럼 보인다.
+    </p>
+  </div>
+
+  <div class="col">
+    <ol class="steps">
+      <li>
+        <h3>설치</h3>
+        <p class="note">Photoshop 2023(v24) 이상. 릴리스의 <span class="m">.ccx</span>를 더블클릭한다.
+          재시작하면 <b>Film Sim 엔진</b> · <b>미리보기</b> · <b>분포</b> · <b>마감</b> 네 패널이 뜬다.
+          필요한 것만 설치해도 동작한다.</p>
+      </li>
+      <li>
+        <h3>「중립 현상」으로 raw를 푼다</h3>
+        <p class="note">엔진은 <b>입력의 전달함수가 감마 1.8 거듭제곱 하나뿐</b>이라고 전제한다.
+          Camera Raw는 슬라이더를 전부 0으로 둬도 이 조건을 만족하지 않는다(실측: 암부 +0.62 /
+          명부 −0.24스톱의 S자 대비 커브). 세 가지 길이 있다.</p>
+        <pre># 공식 경로 — ACR을 아예 안 거친다
+pip install rawpy numpy tifffile
+python tools/decode-raw.py in.ARW out.tiff        # 기본 헤드룸 +5스톱
+python tools/decode-raw-gui.py                    # 좌표를 클릭으로 잡는 GUI</pre>
+        <p class="note">출력 TIFF는 Photoshop에서 <b>프로파일 지정 → ProPhoto RGB</b>로 지정하고,
+          패널의 <b>입력 소스</b>를 도구와 같은 헤드룸(「리니어 +5스톱」)으로 맞춘다. 어긋나면
+          노광이 통째로 밀린다. 외부 도구 없이 가려면 ACR로 &ldquo;Adobe Standard&rdquo; + 슬라이더 0으로
+          현상한 뒤 입력 소스를 <b>「ACR Adobe Standard (역산)」</b>로 고른다
+          — 단 <a href="#known">알려진 계조 버그</a>가 있다.</p>
+      </li>
+      <li>
+        <h3>엔진 — 색을 정한다</h3>
+        <p class="note">필름 · 입력 소스 · 인화지 · 스캐너를 칩으로 고르고 노광을 맞춘 뒤
+          <b>[현재 문서에 적용]</b>. 컬러휠에서 대표색 마커를 끌면 그 색역의 CMY가 조절된다.
+          피부톤은 색상각+채도 창으로 잡는 별도 색역이고, 전경색 스포이드로 중심 각을 옮길 수 있다.
+          미리보기 패널은 색만 반영한다(할레이션·그레인은 공간 연산이라 제외).
+          분포 패널은 적용 결과의 색이 색상·채도 평면에 어떻게 퍼져 있는지 보여준다.</p>
+      </li>
+      <li>
+        <h3>마감 — 매체를 얹는다</h3>
+        <p class="note"><b>매체</b>(필름 포맷 · 입자 크기 기준) → <b>할레이션</b> → <b>그레인</b> 순으로
+          조절하고 적용한다. 작업 파일과 최종 출력 크기가 다르면 <b>출력 크기로 리사이즈한 뒤</b>
+          마감을 적용하거나, &ldquo;입자 크기 기준&rdquo;에 최종 긴 변을 직접 지정한다.
+          배치는 출력 폴더가 원본 폴더와 같으면 실행 전에 거부하고, 저장 직전에 파일 단위로 한 번 더 본다.</p>
+      </li>
+      <li>
+        <h3>내보내기</h3>
+        <p class="note"><b><span class="m">.cube</span></b> — 33³/65³. &ldquo;적용&rdquo;과 같은 결과다.
+          Sony S-Log3을 고르면 로그 촬영본에 바로 거는 룩 LUT이 된다(비대칭 LUT이라 &ldquo;적용&rdquo;과 다른 소스다).
+          Photoshop에서는 조정 레이어 → 색상 검색 → 3DLUT 로드 — <b>GPU 가속 + 비파괴</b>라 대용량에서
+          픽셀 적용보다 빠르다.</p>
+        <p class="note"><b>Lightroom 프로파일(<span class="m">.xmp</span>)</b> — 입력 가정을 고르고 세트 전체를 굽는다.
+          <b>ACR 역산</b>(정확)과 <b>하이브리드</b>(ACR 커브 그대로 — 고대비 장면에서 오히려 보기 좋을 때가 있다)
+          두 가지다. 프로파일은 격자 32³ 고정 — ACR이 어떤 크기를 넣어도 32로 리샘플하므로 처음부터 32로 구워
+          보간을 한 번 줄인다.</p>
+      </li>
+      <li>
+        <h3>개발</h3>
+        <pre>node tools/sync-libs.js    # core/를 고쳤으면 반드시 — 각 앱 lib/로 복사
+node tools/check.js        # 문법·경계·경로·로드·함수·정합성·톤·그레인. 약 13초
+node tools/build-lrplugin.js   # dist/FilmSim.lrplugin/ — 프로파일 36종을 굽는다
+
+uxp service start          # 별도 터미널. 떠 있어야 packaging이 된다
+node tools/build-ccx.js
+uxp service stop           # 반드시 끈다 — 켜져 있으면 UDT가 플러그인을 못 올린다</pre>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="checks">
+  <div class="col stack">
+    <p class="eyebrow">검사 스위트</p>
+    <h2>검사 8종이 10여 초에 돈다 — 그리고 실제로 돈다</h2>
+    <p>
+      순수 코어가 만든 최대의 이득이 이것이다. 외부 의존성이 0이라
+      (<span class="m">package.json</span>조차 없다) GitHub Actions 워크플로 한 장이면 끝난다.
+      Node 20·24 두 벌에서 push·PR마다 돈다.
+    </p>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>검사</th><th>보는 것</th></tr></thead>
+      <tbody>
+        <tr><td class="path">check.js</td><td>문법 · BOM · Lua UTF-8 · 맨 <span class="m">pcall</span> 금지 · HTML div 균형</td></tr>
+        <tr><td class="path">check-docs.js</td><td>마크다운 앵커·파일 링크가 실제로 가리키는 곳이 있는가</td></tr>
+        <tr><td class="path">check-boundaries.js</td><td>불변식 1&ndash;6. 규칙 2와 2.7은 <b>함수 단위</b>로 판정한다</td></tr>
+        <tr><td class="path">check-paths.js</td><td>배치가 원본을 덮어쓸 길이 없는가 — 되돌릴 수 없는 유일한 결함</td></tr>
+        <tr><td class="path">check-load.js</td><td>두 앱이 예외 없이 뜨는가, 없는 id를 참조하지 않는가</td></tr>
+        <tr><td class="path">check-api.js</td><td>앱이 부르는 <span class="m">모듈.함수()</span>가 실제로 존재하는가</td></tr>
+        <tr><td class="path">check-conformance.js</td><td>네 산출 경로가 같은 색을 내는가 + 구조 중복 탐지</td></tr>
+        <tr><td class="path">check-tone.js</td><td>항등 · 단조성 · 중립 보존 · 디더 주기 · S-Log3 왕복 · 입력 6종 앵커</td></tr>
+        <tr><td class="path">check-grain.js</td><td>채널 상관 · 존 가중치 합 · 격자 인공물 점수를 값으로 못 박는다</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <p class="note">
+      이 저장소가 스스로 적어 둔 교훈이 하나 있다 — <b>&ldquo;검사는 일부러 깨뜨려 확인한다.
+      통과했다는 것이 검사가 실제로 돈다는 뜻은 아니다.&rdquo;</b>
+      <span class="m">check-api</span>를 만들 때 두 번 헛돌았고, 둘 다 통과 표시를 내면서
+      아무것도 검사하지 않고 있었다. 이번 리뷰에서도 전 항목이 통과하는 것을 직접 돌려 확인했다
+      (실측 약 13초 — <span class="m">README.md</span>·<span class="m">TODO.md</span>·
+      <span class="m">docs/STATUS.md</span>에도 같은 &ldquo;3초&rdquo;가 남아 있는데, 실제로 돌려 보니
+      더 걸렸다. 옛 수치를 검증 없이 옮긴 것으로 보여 이 문서만 실측값으로 고쳤다 — 나머지 세 파일은
+      아직 옛 수치 그대로다).
+    </p>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="bugs">
+  <div class="col stack">
+    <p class="eyebrow">발견한 결함 · 9건</p>
+    <h2>이번 리뷰에서 새로 찾은 것</h2>
+    <p>
+      전부 <span class="m">TODO.md</span>·<span class="m">STATUS.md</span>에 없는 항목이다.
+      검사 스위트가 전 항목 통과하는 상태에서 나온 것들이므로, 정적 검사가 아직 안 보는 자리에 몰려 있다 —
+      <b>UI 상태 갱신, 파일명 생성, 호스트 어댑터.</b>
+    </p>
+  </div>
+
+  <div class="stack">
+
+    <article class="finding hi">
+      <div class="finding-head">
+        <h3>시각화 LUT 캐시 키에 닷지·번이 빠졌다</h3>
+        <span class="chip hi">높음</span>
+      </div>
+      <p class="loc">apps/engine/src/main.js:503 · visualTables()</p>
+      <pre>const key = JSON.stringify([f.enabled, f.id, f.exposure, f.input, f.paper, f.scanner, params.grading]);
+//                                                                        ↑ f.dodgeBurn 이 없다</pre>
+      <dl>
+        <dt>증상</dt>
+        <dd>닷지·번을 켜거나 <span class="m">limit</span>·<span class="m">contrast</span> 슬라이더를 움직여도
+          <b>팔레트 스와치와 컬러휠 기준색이 갱신되지 않는다.</b> 미리보기 이미지는
+          <span class="m">buildForParams</span>를 매번 새로 부르므로 바뀐다 — 한 화면 안에서 두 표시가 서로 어긋난다.</dd>
+        <dt>확인</dt>
+        <dd><span class="m">check-conformance</span>가 &ldquo;buildForParams가 film.dodgeBurn.enabled를 반영한다 — 최대차 0.1274&rdquo;로
+          이미 못 박아 뒀다. 즉 <b>결과는 확실히 달라지는데 캐시가 그것을 모른다.</b></dd>
+        <dt>맥락</dt>
+        <dd>같은 클래스의 버그를 이미 한 번 고쳤다. 바로 위 주석이 그렇게 적혀 있다 —
+          <i>&ldquo;캐시 키에는 결과를 바꾸는 것이 전부 들어가야 한다. 이전 키에는 스캐너와 enabled가
+          빠져 있어서 스캐너를 바꿔도 팔레트가 갱신되지 않았다.&rdquo;</i></dd>
+        <dt>고치기</dt>
+        <dd>키 배열에 <span class="m">f.dodgeBurn</span>을 넣는다. 더 나은 방법은
+          <span class="m">JSON.stringify(params.film)</span> + <span class="m">params.grading</span>으로 바꿔
+          <b>필름 쪽 필드가 늘어날 때마다 같은 실수를 반복하지 않게</b> 하는 것이다.</dd>
+      </dl>
+    </article>
+
+    <article class="finding mid">
+      <div class="finding-head">
+        <h3>노광 슬라이더가 정확히 0을 만들 수 없고, 그 값이 파일명에 새어 나간다</h3>
+        <span class="chip mid">중간</span>
+      </div>
+      <p class="loc">apps/engine/index.html:411 (data-step="0.333") · shared/ui/cslider.js:55-57</p>
+      <pre>x = Math.round((x - min) / step) * step + min;   // min=-2, max=2, step=0.333
+quantize(0)  →  -0.002
+도달 가능한 값: … -0.668, -0.335, -0.002, 0.331, 0.664 …   (0 이 없다)</pre>
+      <dl>
+        <dt>증상</dt>
+        <dd>슬라이더를 한 번 만지면 <span class="m">film.exposure</span>가 다시는 정확히 0이 되지 않는다.
+          더블탭 리셋도 <span class="m">defaultValue = quantize(0) = -0.002</span>라 소용없다.</dd>
+        <dt>영향</dt>
+        <dd>색 자체는 0.002스톱이라 무시할 수준이다. 문제는 <b>이름</b>이다 —
+          <span class="m">cube.suggestName</span>·<span class="m">cube.title</span>·<span class="m">xmp.profileName</span>이
+          전부 <span class="m">if (ev)</span>로 판정하므로, 내보낸 파일과 Lightroom Profile Browser 항목에
+          <span class="m">-0.002EV</span>가 붙는다.</dd>
+        <dt>고치기</dt>
+        <dd>최소 수정은 <span class="m">data-step</span>을 4의 약수로 바꾸는 것(<span class="m">0.25</span> 또는 <span class="m">0.5</span>).
+          1/3스톱 눈금을 유지하려면 <span class="m">cslider.quantize</span>가 <span class="m">min</span>이 아니라
+          <b>0을 기준으로 스냅</b>하게 하거나, 이름 판정을 <span class="m">Math.abs(ev) &gt;= 0.005</span>로 바꾼다.</dd>
+      </dl>
+    </article>
+
+    <article class="finding mid">
+      <div class="finding-head">
+        <h3>사진 분석이 이미 적용된 FilmSim 레이어를 격리하지 않는다</h3>
+        <span class="chip mid">중간</span>
+      </div>
+      <p class="loc">apps/engine/src/photoanalysis.js:43-69 · cf. apps/engine/src/preview.js:199-212</p>
+      <dl>
+        <dt>증상</dt>
+        <dd><span class="m">preview.js</span>는 <span class="m">getPixels</span> 전에 FilmSim 레이어를 숨겼다가
+          복원한다 — &ldquo;원본 → LUT&rdquo;을 보여야 하는데 구워진 색 레이어를 또 읽으면 <b>중복 적용된 상태로 보이기</b>
+          때문이다. 분석 경로에는 그 격리가 없다.</dd>
+        <dt>재현</dt>
+        <dd>색을 [적용]한 뒤 다른 문서로 갔다가 돌아온다 → <span class="m">refreshForActiveDoc</span>이
+          재분석하면서 <b>구워진 합성본</b>을 읽는다 → <span class="m">renderWheel</span>이 그 대표색에
+          <span class="m">throughLut</span>을 또 걸어 컬러휠 기준색이 두 번 적용된 색이 된다.</dd>
+        <dt>고치기</dt>
+        <dd><span class="m">preview.js</span>의 숨김/복원 블록을 그대로 옮기되, <b>복사하지 말고
+          <span class="m">host/ps.js</span>로 빼서 한 벌로 만든다</b> — 이 저장소가 가장 자주 낸 결함이
+          &ldquo;구현이 둘이 되면 갈라진다&rdquo;이고, <span class="m">collectLayers</span>를 공유 층에 올린 이유가 정확히 그것이다.</dd>
+      </dl>
+    </article>
+
+    <article class="finding mid">
+      <div class="finding-head">
+        <h3><span class="m">.cube</span> 저장 파일명이 확장자를 두 번 단다</h3>
+        <span class="chip mid">중간</span>
+      </div>
+      <p class="loc">apps/engine/src/exportfile.js:36</p>
+      <pre>const suggested = slugify(cube.suggestName(params, opts)) + ".cube";
+// suggestName()은 이미 `${parts.join("_")}.cube` 를 돌려준다 (core/io/cube.js:247)
+
+실제 결과:  Portra_400_Fuji_Frontier_33_prophoto.cube.cube</pre>
+      <dl>
+        <dt>확인</dt>
+        <dd>Node로 재현했다. 패널의 안내문(<span class="m">syncCubeUI</span>)은
+          <span class="m">suggestName</span>을 그대로 보여주므로 <b>미리 보이는 이름과 실제 저장 이름이 다르다.</b></dd>
+        <dt>고치기</dt>
+        <dd><span class="m">+ ".cube"</span>를 지운다. 같은 파일의 <span class="m">exportXmpOne</span>은
+          <span class="m">xmp.fileNameFor</span>가 붙여 주는 확장자를 그대로 쓰므로 문제가 없다 — 이쪽만 어긋나 있다.</dd>
+      </dl>
+    </article>
+
+    <article class="finding lo">
+      <div class="finding-head">
+        <h3>분석 경로의 <span class="m">imageData</span>가 예외 시 샌다</h3>
+        <span class="chip lo">낮음</span>
+      </div>
+      <p class="loc">apps/engine/src/photoanalysis.js:65-66</p>
+      <dl>
+        <dt>증상</dt>
+        <dd><span class="m">dispose()</span>가 <span class="m">try/finally</span> 밖에 직선으로 놓여 있다.
+          집계 루프나 <span class="m">store.result()</span>가 던지면 네이티브 버퍼가 그대로 남는다.</dd>
+        <dt>맥락</dt>
+        <dd><span class="m">preview.js</span>가 <b>같은 자리를 이미 고쳤고 그 이유를 주석에 길게 적어 뒀다</b> —
+          <i>&ldquo;apply.js·grading.js·halation.js·grain.js는 전부 try/finally로 지키는데 여기만 직선 코드였다.&rdquo;</i>
+          그 목록에 <span class="m">photoanalysis.js</span>가 빠져 있었다. 문서 전환마다 도는 경로라 반복 실패 시 누적된다.</dd>
+      </dl>
+    </article>
+
+    <article class="finding lo">
+      <div class="finding-head">
+        <h3>그레인·할레이션이 정수 버퍼에 반올림 없이 대입한다</h3>
+        <span class="chip lo">낮음</span>
+      </div>
+      <p class="loc">core/optics/grainfield.js:179,192 · apps/finish/src/halation.js:91-93</p>
+      <pre>out[o2 + c] = c > 2 ? maxV : v;        // v 는 float — 0 쪽으로 버려진다
+out[o]      = v * tint[0];            // 같은 문제</pre>
+      <dl>
+        <dt>규약</dt>
+        <dd><span class="m">docs/ARCHITECTURE.md</span>「양자화 규약」이 못 박아 뒀다 —
+          <i>&ldquo;정수 버퍼로 나가는 자리는 <b>반드시 반올림한다</b>. float을 대입하면 조용히 버려져
+          채널당 평균 −0.5LSB 편향이 생긴다.&rdquo;</i>
+          <span class="m">lut.js</span>와 <span class="m">tone.js</span>는 <span class="m">(v+0.5)|0</span>으로 지키는데
+          이 두 곳만 안 지킨다.</dd>
+        <dt>실측</dt>
+        <dd>200×200 필드에서 <span class="m">mid=128</span> 기준 평균 <span class="m">127.44</span> —
+          그중 정확히 −0.5가 절삭분이다. Overlay 중성점이 미세하게 어두운 쪽으로 치우친다.</dd>
+        <dt>판단</dt>
+        <dd>8bit 0.5LSB라 지금은 눈에 안 띈다. <b>규약 위반이라는 점이 문제</b>다 —
+          진폭을 낮추거나 존 불투명도를 줄이면 상대 비중이 그만큼 커진다.</dd>
+      </dl>
+    </article>
+
+    <article class="finding lo">
+      <div class="finding-head">
+        <h3>엔진의 <span class="m">lutSize</span>가 UI에 없다</h3>
+        <span class="chip lo">낮음</span>
+      </div>
+      <p class="loc">apps/engine/src/params.js:52 · apps/engine/src/pipeline.js:64</p>
+      <dl>
+        <dt>상태</dt>
+        <dd>스키마에 <span class="m">lutSize: 33 // 33 = 일반, 65 = 정밀</span>이 있고 파이프라인이 그것을 읽는데,
+          <b>패널 어디에서도 이 값을 바꿀 수 없다.</b> 33/65 칩은 <span class="m">.cube</span> 내보내기에만 있다.</dd>
+        <dt>판단</dt>
+        <dd>죽은 손잡이거나 빠진 UI 둘 중 하나다. 프리셋 JSON을 손으로 고치면 동작하므로 &ldquo;조용히 되는&rdquo; 상태 —
+          어느 쪽이든 <b>스키마와 UI 중 하나를 지워야</b> 다음 사람이 헷갈리지 않는다.</dd>
+      </dl>
+    </article>
+
+    <article class="finding lo">
+      <div class="finding-head">
+        <h3>슬라이더 틱마다 프로파일 세트를 통째로 복제한다</h3>
+        <span class="chip lo">낮음</span>
+      </div>
+      <p class="loc">apps/engine/src/main.js:854 · syncCubeUI()</p>
+      <pre>const count = xmpexport.defaultSet(params).length;   // 개수를 세려고 부른다
+// defaultSet 은 조합마다 JSON.parse(JSON.stringify(params)) 를 한다 → params 깊은 복사 18벌</pre>
+      <dl>
+        <dt>경로</dt>
+        <dd><span class="m">onParamsChanged → syncCubeUI</span>는 <b>슬라이더를 움직이는 동안 계속</b> 불린다.
+          UXP 렌더 파이프가 팔레트 div 15개만으로도 밀린 기록이 있는 코드베이스에서 아까운 낭비다.</dd>
+        <dt>고치기</dt>
+        <dd><span class="m">films.all().length * (scanner.all().length - 1)</span>로 세거나,
+          <span class="m">xmp</span>에 <span class="m">defaultSetSize()</span>를 하나 둔다.</dd>
+      </dl>
+    </article>
+
+    <article class="finding lo">
+      <div class="finding-head">
+        <h3>죽은 코드와 실기에 한 번도 안 탄 경로</h3>
+        <span class="chip lo">낮음</span>
+      </div>
+      <p class="loc">core/color/film.js:180,526 · apps/engine/src/preview.js:103</p>
+      <dl>
+        <dt>죽은 것</dt>
+        <dd><span class="m">film.js</span>의 <span class="m">H_WHITE</span> 상수 — 정의만 하고 아무도 안 쓴다
+          (실제 기준점은 <span class="m">inputs.byId(...).hWhite</span>로 옮겨 갔다).
+          <span class="m">preview.renderPixels</span>의 <span class="m">params</span> 인자도 쓰이지 않는다.</dd>
+        <dt>안 탄 것</dt>
+        <dd><span class="m">color-reversal</span>(리버설)과 <span class="m">bw-negative</span>(흑백) 경로.
+          <span class="m">films.js</span>에 해당 필름이 <b>하나도 없어</b> 실기는 물론 검사 스위트도 이 코드를 지나지 않는다.
+          <span class="m">buildMonoLut</span>은 <span class="m">opts.paper</span>를 아예 무시하는데 그 사실이 어디에도 적혀 있지 않다.</dd>
+        <dt>판단</dt>
+        <dd>지금 깨져 있다는 뜻은 아니다. <b>필름을 추가하는 순간 검증 없이 처음 돌게 된다</b>는
+          위험을 적어 두는 것이다 — 리버설·흑백 필름을 넣을 때는 합성 곡선으로 먼저 값을 대조할 것.</dd>
+      </dl>
+    </article>
+
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="known">
+  <div class="col stack">
+    <p class="eyebrow">이미 알려진 한계</p>
+    <h2>저장소가 스스로 적어 둔 것</h2>
+    <p>
+      아래는 <b>새로 찾은 것이 아니다.</b> 이 프로젝트는 자기 한계를 문서에 정직하게 적어 두는 편이고,
+      그 점이 평가에서 가산 요인이다. 다만 심각도 순으로 다시 정렬해 둘 필요는 있다.
+    </p>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>항목</th><th>내용</th><th>출처</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b style="color:var(--crit)">계조 깨짐</b></td>
+          <td><span class="m">acr-standard</span> 역산 곡선의 표본 범위가 <span class="m">v = 0.0667~0.9647</span>뿐이라
+            그 밖은 양끝 값으로 <b>평평하게 고정</b>된다. 인코딩 축 하단 6.7% + 상단 3.5%의 서로 다른 코드값이
+            디코드 후 전부 같은 값이 되어, 실사진의 깊은 그림자·거의 흰 하이라이트에서 계조가 통째로 사라진다.
+            브래킷을 −4&hellip;+4스톱 9장으로 다시 찍어 곡선을 재유도해야 한다.</td>
+          <td class="path">TODO.md N4</td>
+        </tr>
+        <tr>
+          <td><b style="color:var(--warn)">조용히 틀림</b></td>
+          <td>「입자 크기 기준」과 문서 장변이 다르면 그레인 크기가 <b>틀린 채로 저장되는데 UI에 아무 힌트가 없다.</b>
+            색→마감 순서 위반에는 경고가 붙었지만 여기는 아직이다.</td>
+          <td class="path">TODO.md W1</td>
+        </tr>
+        <tr>
+          <td>추정값</td>
+          <td>스캐너 파라미터(Frontier·Noritsu)는 측정이 아니라 문헌 서술을 옮긴 <b>튜닝값</b>이다.
+            필름 룩의 상당 부분이 여기서 나오므로 결과물 전체가 그만큼 추정이다.</td>
+          <td class="path">TODO.md A1</td>
+        </tr>
+        <tr>
+          <td>미확정</td>
+          <td><span class="m">MID_GRAY_OFFSET</span>이 0으로 남아 있다. 절대 앵커를 잡을 &ldquo;정답 스캔&rdquo;이 아직 없다 —
+            다만 앵커 오차는 노출 시프트와 대수적으로 동일해서 노출 슬라이더로 상쇄된다.</td>
+          <td class="path">TODO.md A2</td>
+        </tr>
+        <tr>
+          <td>기본값</td>
+          <td>인화지 기본값이 아직 <span class="m">normalized</span>(구 동작)이다 — 실측 Endura 곡선을 쓰려면
+            사용자가 직접 골라야 한다. 닷지·번의 <span class="m">limit=0.4</span>·<span class="m">contrast=0.6</span>도
+            실사진 한 장으로 고른 값이다.</td>
+          <td class="path">TODO.md S3b · N2</td>
+        </tr>
+        <tr>
+          <td>설계상</td>
+          <td>적용이 비파괴가 아니다(Photoshop이 batchPlay로 LUT 주입을 허용하지 않는다).
+            미리보기는 색만 보여준다. 그레인 입자 크기가 필름별로 다르지 않다(현행 Kodak TDS가 PGI를 쓰는데
+            구형 RMS granularity와 변환 관계가 없다고 명시돼 있다).</td>
+          <td class="path">STATUS.md</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="score">
+  <div class="col stack">
+    <p class="eyebrow">종합 점수</p>
+    <h2>85 / 100 — 연구 노트로서 뛰어나고, 제품으로서 마지막 10%가 남았다</h2>
+  </div>
+
+  <div class="total">
+    <span class="score">85</span>
+    <div class="stack-s">
+      <span class="grade">A− · 상위권</span>
+      <span class="note" style="max-width:52ch">
+        같은 규모의 개인 프로젝트에서 보기 드문 수준의 구조·문서·검증을 갖췄다.
+        깎이는 곳은 코드가 아니라 <b>데이터의 출처</b>와 <b>정적 검사가 아직 못 보는 층</b>이다.
+      </span>
+    </div>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>항목</th><th>가중</th><th>점수</th><th>근거</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>아키텍처 · 층 분리</b><div class="bar"><i style="width:95%"></i></div></td>
+          <td class="num">15%</td><td class="num">9.5</td>
+          <td>순수 코어를 <b>선언이 아니라 검사로</b> 강제한다. 마감 앱에 색 코드가 물리적으로 들어갈 수 없게
+            복사 목록을 경계 선언으로 쓰는 발상이 특히 좋다. batchPlay가 파일 하나에만 나오고,
+            공유가 필요한 함수는 &ldquo;검사할 수 있는 자리&rdquo;를 기준으로 배치된다.</td>
+        </tr>
+        <tr>
+          <td><b>문서화</b><div class="bar"><i style="width:95%"></i></div></td>
+          <td class="num">10%</td><td class="num">9.5</td>
+          <td>정적/동적 문서를 구분하고 갱신 규칙까지 문서화했다. 주석이 <b>&ldquo;무엇&rdquo;이 아니라 &ldquo;왜, 그리고 무엇을
+            시도했다 실패했는가&rdquo;</b>를 적는다 — 실측 수치와 함께. 링크 무결성까지 검사한다.
+            감점 요인은 하나: 주석이 코드보다 긴 파일이 여럿이라 <b>코드를 고칠 때 주석 유지비가 실제로 든다.</b></td>
+        </tr>
+        <tr>
+          <td><b>검증 · 테스트</b><div class="bar"><i style="width:85%"></i></div></td>
+          <td class="num">20%</td><td class="num">8.5</td>
+          <td>순수 코어 쪽은 훌륭하다 — 네 산출 경로 정합성, 단조성, 디더 주기, 존 가중치 합을 <b>값으로</b> 못 박는다.
+            CI도 붙어 있다. 다만 <b>호스트 경로(UXP)와 UI 상태는 전부 수동</b>이고, 이번에 찾은 결함 9건 중
+            5건이 정확히 그 층에 있다. 단위 테스트 프레임워크나 골든 이미지 회귀도 없다.</td>
+        </tr>
+        <tr>
+          <td><b>도메인 정확성</b><div class="bar"><i style="width:80%"></i></div></td>
+          <td class="num">20%</td><td class="num">8.0</td>
+          <td>특성곡선·인화지·S-Log3·크로스토크는 실측 데이터에서 왔고 외부 구현과 대조까지 했다
+            (colour-science 대비 편차 0.0). 반면 <b>스캐너는 문헌 정성 서술의 수치화, 입자 µm는 감성 근사,
+            절대 앵커는 미확정</b>이다. 본인들이 ⚠️로 명시하는 점이 크게 유리하지만, 점수는 결과 기준으로 매긴다.</td>
+        </tr>
+        <tr>
+          <td><b>코드 품질</b><div class="bar"><i style="width:85%"></i></div></td>
+          <td class="num">10%</td><td class="num">8.5</td>
+          <td>이름이 일관되고 함수 경계가 명확하다. 성능 최적화가 <b>측정에 근거한다</b>(4.4초 → 0.88초, 격자 383MB → 해시).
+            핫 루프에서 할당을 피하는 습관도 좋다. 죽은 상수·안 쓰는 인자·UI 없는 스키마 필드가 조금 남아 있다.</td>
+        </tr>
+        <tr>
+          <td><b>견고성 · 실패 처리</b><div class="bar"><i style="width:80%"></i></div></td>
+          <td class="num">10%</td><td class="num">8.0</td>
+          <td>배치의 원본 보호가 <b>2단계(경로 정규화 + 크기·수정시각 대조)</b>로 설계돼 있고,
+            &ldquo;과잉 차단이 조용한 원본 손실보다 낫다&rdquo;는 판단 기준까지 적혀 있다. 배치·프로파일 세트가
+            한 건 실패로 멈추지 않는다. 감점은 <span class="m">dispose</span> 누락 1건과 레이어 격리 누락 1건.</td>
+        </tr>
+        <tr>
+          <td><b>UI · 사용성</b><div class="bar"><i style="width:75%"></i></div></td>
+          <td class="num">10%</td><td class="num">7.5</td>
+          <td>UXP의 제약(sp-slider 지연, canvas 블랙아웃, SVG 불가)을 실측으로 파악하고 우회한 점은 좋다.
+            그러나 <b>노광 0을 못 만들고</b>, 해상도 불일치에 경고가 없고, <span class="m">lutSize</span>는 노출되지 않았고,
+            캐시 누락으로 화면 안에서 표시가 서로 어긋난다.</td>
+        </tr>
+        <tr>
+          <td><b>유지보수성</b><div class="bar"><i style="width:85%"></i></div></td>
+          <td class="num">5%</td><td class="num">8.5</td>
+          <td>런타임 의존성 0, 검사 스위트 10여 초, 데이터 추가 절차가 문서화돼 있다. 반면 <b>모든 주석과 문서가 한국어</b>라
+            기여자 풀이 좁고, 리버설·흑백처럼 <b>구현은 있는데 데이터가 없어 한 번도 안 돈 경로</b>가 남아 있다.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col stack">
+    <h3>가장 값진 것 하나만 꼽으면</h3>
+    <p>
+      <b>&ldquo;통과했다는 것이 검사가 실제로 돈다는 뜻은 아니다&rdquo;</b>를 코드에 새겨 둔 태도다.
+      코너 8점 일치를 보고 XMP 포맷이 맞다고 판단했다가 그 8점이 잘못된 가설도 통과시킨다는 것을
+      나중에 발견한 기록이 <span class="m">core/io/xmp.js</span>에 그대로 남아 있다. 그 경험이
+      &ldquo;검사를 일부러 깨뜨려 확인한다&rdquo;는 규칙으로 굳었고, 그 규칙이 다시 <span class="m">check-conformance</span>의
+      구조 검사(값이 아니라 &ldquo;몇 군데서 부르는가&rdquo;)로 이어졌다. 이건 흉내로 나오는 게 아니다.
+    </p>
+    <h3>다음에 손댈 순서를 굳이 정한다면</h3>
+    <ul class="plain">
+      <li><b>지금 당장</b> — 캐시 키에 <span class="m">dodgeBurn</span> 추가, <span class="m">.cube</span> 이중 확장자,
+        노광 슬라이더 step. 세 줄이면 끝나고 셋 다 사용자 눈에 보인다.</li>
+      <li><b>그다음</b> — 분석 경로의 레이어 격리와 <span class="m">dispose</span>를
+        <span class="m">host/ps.js</span>의 헬퍼 하나로 합친다. 이 저장소가 반복해서 낸 결함이 &ldquo;구현이 둘이 되면 갈라진다&rdquo;이고,
+        여기가 지금 갈라져 있는 자리다.</li>
+      <li><b>구조적으로</b> — <span class="m">check-boundaries</span>에 &ldquo;<b>캐시 키 검사</b>&rdquo;를 하나 더 붙일 수 있다.
+        결과에 영향을 주는 <span class="m">params.film</span> 필드 목록과 <span class="m">visualTables</span>의 키 배열을
+        대조하면, 이번 1번 같은 결함은 <b>다시는 사람 눈에 의존하지 않아도 된다.</b></li>
+      <li><b>가장 큰 것</b> — <span class="m">N4</span>(ACR 역산 계조 깨짐)와 <span class="m">A1</span>(스캐너 측정).
+        둘 다 코드가 아니라 <b>데이터를 다시 찍는 일</b>이라 시간이 든다. 그러나 위 점수에서 깎인 20점 중
+        절반이 여기 있다.</li>
+      <li><b>2026-08-14 갱신</b> — N4의 &ldquo;평평 고정으로 계조가 통째로 사라지는&rdquo; 부분은 그 사이
+        <span class="m">core/color/inputs.js</span>에서 고쳐졌다(<span class="m">acrStandardDecode</span>가
+        표본 밖을 <span class="m">ln v</span> 축으로 외삽). 남은 것은 &ldquo;표본 범위 자체가 좁아 외삽에
+        의존한다&rdquo;는 더 약한 문제다 — 이 문서가 <b>가장 큰 것</b>으로 꼽은 시점(2026-08-13)의 심각도보다는
+        낮아졌다는 뜻이다. 위 점수표의 &ldquo;도메인 정확성&rdquo; 항목도 그만큼 재평가가 필요하다.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <span>Moderate&rsquo;s Film Simulator</span>
+  <span>코드 해부 · 2026-08-13</span>
+  <span>검사 스위트 전 항목 통과 상태에서 작성</span>
+  <span>docs/code-overview.html</span>
+</footer>
+
+</div>
+</body>
+</html>
