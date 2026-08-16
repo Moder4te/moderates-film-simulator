@@ -382,20 +382,36 @@ for (const app of ["engine", "finish"]) {
       problems.push("apps/engine/src/apply.js — 숨긴 레이어 가시성을 되돌리지 않는다(.visible = true 없음).");
     }
   }
-  // (c) 미리보기도 getPixels 전에 FilmSim 레이어를 숨겨야 한다 — 안 그러면 적용된
-  //     색을 다시 읽어 미리보기가 중복 적용된 것처럼 보인다.
-  const pv = path.join(ROOT, "apps/engine/src/preview.js");
-  if (fs.existsSync(pv)) {
-    const s = fs.readFileSync(pv, "utf8");
-    const hide = s.indexOf(".visible = false");
-    const get = s.indexOf("imaging.getPixels");
-    if (!/startsWith\("FilmSim"\)/.test(s) || hide < 0) {
-      problems.push("apps/engine/src/preview.js — 미리보기가 FilmSim 레이어를 격리하지 않는다. 적용 후 미리보기가 중복으로 보인다.");
-    } else if (get < 0 || hide > get) {
-      problems.push("apps/engine/src/preview.js — FilmSim 레이어를 getPixels 전에 숨겨야 한다(순서 어긋남).");
+  // (c) `host/ps.js`의 `withFilmSimHidden` — 미리보기·사진 분석이 공유하는 격리
+  //     헬퍼 자체가 숨김/복원을 실제로 하는지. 두 앱 lib 어느 사본을 봐도 된다.
+  const helper = path.join(ROOT, "host/ps.js");
+  if (fs.existsSync(helper)) {
+    const s = fs.readFileSync(helper, "utf8");
+    const i = s.indexOf("function withFilmSimHidden(");
+    if (i < 0) {
+      problems.push("host/ps.js — withFilmSimHidden이 없다. 미리보기·사진 분석이 각자 격리를 다시 구현하게 된다.");
+    } else {
+      const body = s.slice(i, s.indexOf("\n}", i));
+      if (!/startsWith\("FilmSim"\)/.test(body) || !/\.visible = false/.test(body)) {
+        problems.push("host/ps.js — withFilmSimHidden이 FilmSim 레이어를 숨기지 않는다.");
+      }
+      if (!/\.visible = true/.test(body) || !/finally/.test(body)) {
+        problems.push("host/ps.js — withFilmSimHidden이 숨긴 레이어 가시성을 되돌리지 않는다(.visible = true 없음, 또는 finally 밖).");
+      }
     }
-    if (!/\.visible = true/.test(s)) {
-      problems.push("apps/engine/src/preview.js — 숨긴 레이어 가시성을 되돌리지 않는다.");
+  }
+  // (d) getPixels로 원본을 읽는 호출자는 반드시 그 헬퍼를 거쳐야 한다 — 안 그러면
+  //     적용된 색을 다시 읽어 결과가 중복 적용된 것처럼 보인다(미리보기·컬러휠 둘 다).
+  for (const rel of ["apps/engine/src/preview.js", "apps/engine/src/photoanalysis.js"]) {
+    const p = path.join(ROOT, rel);
+    if (!fs.existsSync(p)) continue;
+    const s = fs.readFileSync(p, "utf8");
+    const hide = s.indexOf("withFilmSimHidden(");
+    const get = s.indexOf("imaging.getPixels");
+    if (hide < 0) {
+      problems.push(`${rel} — getPixels 전에 ps.withFilmSimHidden으로 FilmSim 레이어를 격리하지 않는다. 적용 후 결과가 중복으로 보인다.`);
+    } else if (get < 0 || hide > get) {
+      problems.push(`${rel} — FilmSim 레이어를 getPixels 전에 숨겨야 한다(순서 어긋남).`);
     }
   }
 })();

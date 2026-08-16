@@ -52,8 +52,10 @@ function init(el) {
       s = Math.round(s / step) * step;
       return round3(min * Math.pow(2, s));
     }
-    let x = Math.max(min, Math.min(max, v));
-    x = Math.round((x - min) / step) * step + min;
+    // min 기준으로 스냅하면 min이 step의 배수가 아닐 때 0에 정확히 못 닿는다
+    // (예: min=-2, step=0.333 → 0 근처가 -0.002). 0 기준으로 스냅해 0을 격자점에 둔다.
+    let x = Math.round(v / step) * step;
+    x = Math.max(min, Math.min(max, x));
     return round3(x);
   }
 

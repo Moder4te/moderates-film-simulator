@@ -175,6 +175,7 @@ function generate(w, h, comps, opts) {
     for (let p = 0; p < npx; p++) {
       let v = mid + f[p] * amp;
       v = v < 0 ? 0 : v > maxV ? maxV : v;
+      v = (v + 0.5) | 0;
       const o2 = p * comps;
       for (let c = 0; c < comps; c++) out[o2 + c] = c > 2 ? maxV : v;
     }
@@ -189,7 +190,8 @@ function generate(w, h, comps, opts) {
     const f = channelField(w, h, cell * cc, clumpScale, mulberry32(baseSeed + c * 101));
     for (let p = 0; p < npx; p++) {
       let v = mid + f[p] * amp * ca;
-      out[p * comps + c] = v < 0 ? 0 : v > maxV ? maxV : v;
+      v = v < 0 ? 0 : v > maxV ? maxV : v;
+      out[p * comps + c] = (v + 0.5) | 0;
     }
   }
   return out;

@@ -59,6 +59,41 @@ function collectLayers(layers, pred, out) {
   return out;
 }
 
+/**
+ * FilmSim 레이어를 잠시 숨긴 채 `fn`을 실행하고, 끝나면(예외가 나도) 되돌린다.
+ *
+ * `getPixels`는 합성본을 읽으므로, 색이 이미 [적용]돼 있으면 그 결과 위에 LUT을
+ * 또 얹어 **중복 적용된 값을 읽는다.** 원본 픽셀이 필요한 호출자(미리보기, 사진
+ * 분석)는 전부 이 문제를 안고 있었는데 `preview.js`만 고쳐져 있었다 — 여기 두면
+ * 두 번째 자리에서 같은 결함을 새로 안 낸다("구현이 둘이 되면 갈라진다").
+ *
+ * `executeAsModal`의 콜백 안에서, `suspendHistory`로 감싸 호출해야 한다
+ * (숨김→fn→복원이 히스토리에 안 남게).
+ *
+ * @param {object} ctx        `executeAsModal` 콜백이 받는 컨텍스트(`hostControl` 필요)
+ * @param {object} doc        대상 문서 (`app.activeDocument`)
+ * @param {number} docId      `suspendHistory`에 넘길 문서 id
+ * @param {string} historyName  히스토리 항목 이름(취소선 안 보임 — suspend라 기록 자체가 없다)
+ * @param {function} fn       async () => T — 레이어가 숨겨진 동안 실행
+ * @returns {Promise<T>}
+ */
+async function withFilmSimHidden(ctx, doc, docId, historyName, fn) {
+  const hidden = [];
+  const history = await ctx.hostControl.suspendHistory({ documentID: docId, name: historyName });
+  try {
+    const foreign = collectLayers(doc.layers, (l) => l.name && l.name.startsWith("FilmSim"), []);
+    for (const l of foreign) {
+      if (l.visible) { l.visible = false; hidden.push(l); }
+    }
+    return await fn();
+  } finally {
+    for (const l of hidden) {
+      try { l.visible = true; } catch (e) { /* 이미 지워진 참조 */ }
+    }
+    await ctx.hostControl.resumeHistory(history);
+  }
+}
+
 const TARGET_LAYER = { _ref: "layer", _enum: "ordinal", _value: "targetEnum" };
 
 /** id로 레이어를 선택한다. `makeVisible: false` — 선택만 하고 가시성은 안 건드린다. */
@@ -379,6 +414,7 @@ module.exports = {
   profileOf,
   foregroundRgb,
   collectLayers,
+  withFilmSimHidden,
   selectLayer,
   anchorTopLevel,
   TARGET_LAYER,

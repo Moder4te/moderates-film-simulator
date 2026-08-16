@@ -33,7 +33,7 @@ function slugify(name) {
  */
 async function exportCube(params, opts) {
   const text = cube.build(params, opts); // 내보낼 것이 없으면 여기서 던진다
-  const suggested = slugify(cube.suggestName(params, opts)) + ".cube";
+  const suggested = slugify(cube.suggestName(params, opts));
   const file = await fs.getFileForSaving(suggested, { types: ["cube"] });
   if (!file) return null;
   await file.write(text);

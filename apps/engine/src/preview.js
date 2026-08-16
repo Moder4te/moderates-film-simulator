@@ -100,7 +100,7 @@ function clamp255(v) {
  *
  * 출력이 항상 8bit인 이유는 encodeImageData가 JPEG를 만들기 때문이다.
  */
-function renderPixels(data, comps, pixelCount, params, table, size, toDisplay) {
+function renderPixels(data, comps, pixelCount, table, size, toDisplay) {
   // 출력은 항상 w*h*3 이어야 한다(createImageDataFromBuffer가 크기를 검사한다).
   // 소스가 짧으면 읽기만 줄이고 남는 픽셀은 0으로 둔다.
   const rgb = new Uint8Array(pixelCount * 3);
@@ -179,43 +179,12 @@ async function renderOnce(params) {
 
   await core.executeAsModal(
     async (ctx) => {
-      // ── 격리: FilmSim 레이어를 숨겨 '깨끗한 원본'만 읽는다 ─────────────────
-      //
-      // getPixels는 합성본을 읽는다. 색을 [적용]하면 문서에 색 레이어가 구워지는데,
-      // 그걸 그대로 읽어 LUT을 또 얹으면 미리보기가 **중복 적용된 상태로 보인다**
-      // (실제 이미지는 멀쩡한데 미리보기만 두 번 먹은 것처럼). 미리보기는 "원본 →
-      // LUT"을 보여야 하므로, 이미 얹힌 색·마감(FilmSim 전부)을 잠시 숨기고 읽는다.
-      //
-      // 히스토리 오염 방지를 위해 suspendHistory로 감싼다. 숨김→읽기→복원이 한
-      // 모달 안에서 끝나 순 변화가 없으므로 캔버스 플리커도 없다.
+      // 격리: FilmSim 레이어를 숨겨 '깨끗한 원본'만 읽는다 — 근거는 host/ps.js 참조.
       const doc = app.activeDocument;
-      const hidden = [];
-      const history = await ctx.hostControl.suspendHistory({
-        documentID: docId,
-        name: "미리보기",
-      });
-      let px;
-      try {
-        const foreign = ps.collectLayers(
-          doc.layers,
-          (l) => l.name && l.name.startsWith("FilmSim"),
-          []
-        );
-        for (const l of foreign) {
-          if (l.visible) { l.visible = false; hidden.push(l); }
-        }
+      const px = await ps.withFilmSimHidden(ctx, doc, docId, "미리보기", () =>
         // colorSpace를 RGB로 고정해 그레이스케일·CMYK 문서에서도 RGB로 받는다.
-        px = await imaging.getPixels({
-          documentID: docId,
-          targetSize: { width: PV_WIDTH },
-          colorSpace: "RGB",
-        });
-      } finally {
-        for (const l of hidden) {
-          try { l.visible = true; } catch (e) { /* 이미 지워진 참조 */ }
-        }
-        await ctx.hostControl.resumeHistory(history);
-      }
+        imaging.getPixels({ documentID: docId, targetSize: { width: PV_WIDTH }, colorSpace: "RGB" })
+      );
       // ── imageData 수명 ─────────────────────────────────────────────────
       //
       // `imageData`는 네이티브 버퍼를 잡는다. `dispose()`를 못 부르면 그대로 샌다.
@@ -232,7 +201,7 @@ async function renderOnce(params) {
         const comps = px.imageData.components;
         const data = await px.imageData.getData({ chunky: true });
 
-        const rgb = renderPixels(data, comps, w * h, params, table, size, toDisplay);
+        const rgb = renderPixels(data, comps, w * h, table, size, toDisplay);
 
         rgbID = await imaging.createImageDataFromBuffer(rgb, {
           width: w,

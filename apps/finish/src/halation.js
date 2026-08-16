@@ -88,9 +88,9 @@ async function buildRedSource(doc, threshold, hue, sat, prefix) {
       s = s < 0 ? 0 : s > 1 ? 1 : s;
       s = s * s * (3 - 2 * s);
       const v = s * maxV;
-      out[o] = v * tint[0];
-      out[o + 1] = v * tint[1];
-      out[o + 2] = v * tint[2];
+      out[o] = (v * tint[0] + 0.5) | 0;
+      out[o + 1] = (v * tint[1] + 0.5) | 0;
+      out[o + 2] = (v * tint[2] + 0.5) | 0;
       if (comps > 3) out[o + 3] = maxV; // 불투명
     }
 

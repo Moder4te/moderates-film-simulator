@@ -500,7 +500,7 @@ function visualTables() {
 
   // ⚠️ 캐시 키에는 결과를 바꾸는 것이 **전부** 들어가야 한다. 이전 키에는
   // 스캐너와 enabled가 빠져 있어서, 스캐너를 바꿔도 팔레트가 갱신되지 않았다.
-  const key = JSON.stringify([f.enabled, f.id, f.exposure, f.input, f.paper, f.scanner, params.grading]);
+  const key = JSON.stringify([f.enabled, f.id, f.exposure, f.input, f.paper, f.scanner, f.dodgeBurn, params.grading]);
   if (lutCache.key === key) return lutCache;
 
   try {
@@ -676,6 +676,26 @@ function buildScannerChips() {
   buildChoiceChips("scannerChips", "scanner", scanner.all());
 }
 
+// params.film.lutSize는 원래 있었지만(.cube 내보내기 칩과는 별개 값 — 이건 [적용]
+// 결과 LUT 격자다) 고를 UI가 없어 프리셋 JSON을 손으로 고쳐야만 65³로 바뀌었다.
+function buildLutSizeChips() {
+  const host = $("lutSizeChips");
+  if (!host) return;
+  host.textContent = "";
+  for (const n of [33, 65]) {
+    const chip = document.createElement("div");
+    chip.className = "chip-btn";
+    chip.textContent = n === 33 ? "33³ 일반" : "65³ 정밀";
+    chip.dataset.lutSize = String(n);
+    chip.addEventListener("click", () => {
+      params.film.lutSize = n;
+      syncFilmUI();
+      onParamsChanged();
+    });
+    host.appendChild(chip);
+  }
+}
+
 function syncFilmUI() {
   const host = $("filmChips");
   if (host) {
@@ -688,6 +708,12 @@ function syncFilmUI() {
     if (!h) continue;
     for (const chip of h.querySelectorAll(".chip-btn")) {
       chip.classList.toggle("active", chip.dataset.choiceId === params.film[key]);
+    }
+  }
+  const lsHost = $("lutSizeChips");
+  if (lsHost) {
+    for (const chip of lsHost.querySelectorAll(".chip-btn")) {
+      chip.classList.toggle("active", Number(chip.dataset.lutSize) === (params.film.lutSize || 33));
     }
   }
   const note = $("filmNote");
@@ -738,8 +764,9 @@ const cubeOpts = {
 /**
  * Lightroom 프로파일(.xmp) 내보내기 설정. cubeOpts와 같은 이유로 params 밖에 둔다.
  *
- * 기본은 `acr-standard`(정확) — "하이브리드"(ACR 커브 그대로)를 고르면 ACR 자체의
- * 압축이 고대비 장면에서 도움이 될 때 쓸 수 있다. core/io/xmp.js의 XMP_INPUTS 주석 참조.
+ * 기본은 `prophoto`(하이브리드, 2026-08-17부터) — `acr-standard`는 톤은 정확하지만
+ * 색을 안 돌려 채도 있는 피사체에서 색이 틀어진다(TODO N6). core/io/xmp.js의
+ * XMP_INPUTS 주석 참조.
  */
 const xmpOpts = {
   input: xmpexport.XMP_INPUTS[0].id,
@@ -851,7 +878,7 @@ function syncCubeUI() {
     } catch (e) {
       n = "";
     }
-    const count = xmpexport.defaultSet(params).length;
+    const count = films.all().length * (scanner.all().length - 1); // defaultSet()과 같은 조합 수 — 세려고 params 18벌 복제 안 함
     const inp = xmpexport.xmpInputById(xmpOpts.input);
     xn.textContent =
       `${xmpexport.LUT_SIZE}³ ProPhoto · ${inp.note} · ` +
@@ -1231,6 +1258,7 @@ async function init() {
   wire();
   buildFilmChips(); // syncUI가 칩 상태를 갱신하므로 먼저 만들어 둔다
   buildScannerChips();
+  buildLutSizeChips();
   buildCubeChips();
   buildXmpChips();
   syncUI();

@@ -41,29 +41,33 @@ async function analyze() {
   const toSrgb = colorspace.displayConverter(await ps.documentProfile());
 
   await core.executeAsModal(
-    async () => {
-      // colorSpace를 RGB로 고정해 그레이스케일·CMYK 문서에서도 RGB로 받는다.
-      const px = await imaging.getPixels({
-        documentID: doc.id,
-        targetSize: { width: SAMPLE_WIDTH },
-        colorSpace: "RGB",
-      });
-      const comps = px.imageData.components;
-      const data = await px.imageData.getData({ chunky: true });
+    async (ctx) => {
+      // 격리: FilmSim 레이어를 숨겨 '깨끗한 원본'만 읽는다 — 근거는 host/ps.js 참조.
+      // 없으면 색을 [적용]한 뒤 재분석할 때 이미 구워진 색을 또 분석해 컬러휠
+      // 기준색이 중복 적용된다(preview.js가 먼저 고쳐져 있던 것과 같은 문제).
+      const px = await ps.withFilmSimHidden(ctx, doc, doc.id, "사진 분석", () =>
+        // colorSpace를 RGB로 고정해 그레이스케일·CMYK 문서에서도 RGB로 받는다.
+        imaging.getPixels({ documentID: doc.id, targetSize: { width: SAMPLE_WIDTH }, colorSpace: "RGB" })
+      );
+      try {
+        const comps = px.imageData.components;
+        const data = await px.imageData.getData({ chunky: true });
 
-      const store = analysis.createStore();
-      const inv = 1 / lut.maxValueFor(data); // 16bit면 1/32768, 8bit면 1/255
-      const gOff = comps > 1 ? 1 : 0; // 그레이스케일은 단일 채널을 3채널로 복제
-      const bOff = comps > 2 ? 2 : 0;
-      const srgb = [0, 0, 0];
+        const store = analysis.createStore();
+        const inv = 1 / lut.maxValueFor(data); // 16bit면 1/32768, 8bit면 1/255
+        const gOff = comps > 1 ? 1 : 0; // 그레이스케일은 단일 채널을 3채널로 복제
+        const bOff = comps > 2 ? 2 : 0;
+        const srgb = [0, 0, 0];
 
-      for (let i = 0; i < data.length; i += comps) {
-        toSrgb(data[i] * inv, data[i + gOff] * inv, data[i + bOff] * inv, srgb);
-        store.add(srgb[0] * 255, srgb[1] * 255, srgb[2] * 255);
+        for (let i = 0; i < data.length; i += comps) {
+          toSrgb(data[i] * inv, data[i + gOff] * inv, data[i + bOff] * inv, srgb);
+          store.add(srgb[0] * 255, srgb[1] * 255, srgb[2] * 255);
+        }
+
+        result = store.result();
+      } finally {
+        px.imageData.dispose();
       }
-
-      result = store.result();
-      px.imageData.dispose();
     },
     { commandName: "사진 색 분석" }
   );

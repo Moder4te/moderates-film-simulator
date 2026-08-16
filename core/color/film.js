@@ -176,9 +176,6 @@ function channelResponse(points, printGamma, exposureStops, sign, wbShift, makeP
   };
 }
 
-// v=1(선형 L=1)에 대응하는 로그 노광. 화이트포인트 기준점.
-const H_WHITE = Math.log10(1 / ANCHOR);
-
 // 입력 전달함수는 `core/color/inputs.js`가 소유한다 — 엔진과 내보내기가 같은 정의를
 // 써야 하기 때문이다. 기본(ProPhoto γ1.8)이 곧 「중립 현상」의 정의다.
 const PROPHOTO_INPUT = inputs.byId("prophoto");
