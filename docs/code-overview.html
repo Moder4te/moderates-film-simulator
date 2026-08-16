@@ -787,7 +787,7 @@ python tools/decode-raw-gui.py                    # 좌표를 클릭으로 잡�
       <li>
         <h3>개발</h3>
         <pre>node tools/sync-libs.js    # core/를 고쳤으면 반드시 — 각 앱 lib/로 복사
-node tools/check.js        # 문법·경계·경로·로드·함수·정합성·톤·그레인. 3초
+node tools/check.js        # 문법·경계·경로·로드·함수·정합성·톤·그레인. 약 13초
 node tools/build-lrplugin.js   # dist/FilmSim.lrplugin/ — 프로파일 36종을 굽는다
 
 uxp service start          # 별도 터미널. 떠 있어야 packaging이 된다
@@ -804,7 +804,7 @@ uxp service stop           # 반드시 끈다 — 켜져 있으면 UDT가 플러
 <section id="checks">
   <div class="col stack">
     <p class="eyebrow">검사 스위트</p>
-    <h2>검사 8종이 3초에 돈다 — 그리고 실제로 돈다</h2>
+    <h2>검사 8종이 10여 초에 돈다 — 그리고 실제로 돈다</h2>
     <p>
       순수 코어가 만든 최대의 이득이 이것이다. 외부 의존성이 0이라
       (<span class="m">package.json</span>조차 없다) GitHub Actions 워크플로 한 장이면 끝난다.
@@ -832,7 +832,11 @@ uxp service stop           # 반드시 끈다 — 켜져 있으면 UDT가 플러
       이 저장소가 스스로 적어 둔 교훈이 하나 있다 — <b>&ldquo;검사는 일부러 깨뜨려 확인한다.
       통과했다는 것이 검사가 실제로 돈다는 뜻은 아니다.&rdquo;</b>
       <span class="m">check-api</span>를 만들 때 두 번 헛돌았고, 둘 다 통과 표시를 내면서
-      아무것도 검사하지 않고 있었다. 이번 리뷰에서도 전 항목이 통과하는 것을 직접 돌려 확인했다.
+      아무것도 검사하지 않고 있었다. 이번 리뷰에서도 전 항목이 통과하는 것을 직접 돌려 확인했다
+      (실측 약 13초 — <span class="m">README.md</span>·<span class="m">TODO.md</span>·
+      <span class="m">docs/STATUS.md</span>에도 같은 &ldquo;3초&rdquo;가 남아 있는데, 실제로 돌려 보니
+      더 걸렸다. 옛 수치를 검증 없이 옮긴 것으로 보여 이 문서만 실측값으로 고쳤다 — 나머지 세 파일은
+      아직 옛 수치 그대로다).
     </p>
   </div>
 </section>
@@ -1182,7 +1186,7 @@ out[o]      = v * tint[0];            // 같은 문제</pre>
         <tr>
           <td><b>유지보수성</b><div class="bar"><i style="width:85%"></i></div></td>
           <td class="num">5%</td><td class="num">8.5</td>
-          <td>런타임 의존성 0, 빌드 3초, 데이터 추가 절차가 문서화돼 있다. 반면 <b>모든 주석과 문서가 한국어</b>라
+          <td>런타임 의존성 0, 검사 스위트 10여 초, 데이터 추가 절차가 문서화돼 있다. 반면 <b>모든 주석과 문서가 한국어</b>라
             기여자 풀이 좁고, 리버설·흑백처럼 <b>구현은 있는데 데이터가 없어 한 번도 안 돈 경로</b>가 남아 있다.</td>
         </tr>
       </tbody>
@@ -1211,6 +1215,11 @@ out[o]      = v * tint[0];            // 같은 문제</pre>
       <li><b>가장 큰 것</b> — <span class="m">N4</span>(ACR 역산 계조 깨짐)와 <span class="m">A1</span>(스캐너 측정).
         둘 다 코드가 아니라 <b>데이터를 다시 찍는 일</b>이라 시간이 든다. 그러나 위 점수에서 깎인 20점 중
         절반이 여기 있다.</li>
+      <li><b>2026-08-14 갱신</b> — N4의 &ldquo;평평 고정으로 계조가 통째로 사라지는&rdquo; 부분은 그 사이
+        <span class="m">core/color/inputs.js</span>에서 고쳐졌다(<span class="m">acrStandardDecode</span>가
+        표본 밖을 <span class="m">ln v</span> 축으로 외삽). 남은 것은 &ldquo;표본 범위 자체가 좁아 외삽에
+        의존한다&rdquo;는 더 약한 문제다 — 이 문서가 <b>가장 큰 것</b>으로 꼽은 시점(2026-08-13)의 심각도보다는
+        낮아졌다는 뜻이다. 위 점수표의 &ldquo;도메인 정확성&rdquo; 항목도 그만큼 재평가가 필요하다.</li>
     </ul>
   </div>
 </section>
