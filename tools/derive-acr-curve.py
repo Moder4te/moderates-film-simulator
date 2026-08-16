@@ -125,7 +125,11 @@ def derive(specs, n_bins, n_strata, n_per_stratum, smoothness, anchor_v, seed):
 
     stops = [s for _, s in specs]
     imgs = {s: load_linear_v(p) for p, s in specs}
-    ref_stop = stops[len(stops) // 2]
+    # 층화 표본은 이 프레임의 luma로 뽑는다 — **입사식 노출계로 잡은 0스톱
+    # 프레임**이어야 한다(노출계 기준점이지 "리스트 중간"이 아니다). 프레임을
+    # 짝수 개 넘기면 len//2가 0스톱과 다른 인덱스를 골라 표본 위치가 통째로
+    # 바뀐다(브래킷에 프레임을 추가/제거할 때마다 표본이 흔들려 재현성이 깨짐).
+    ref_stop = 0 if 0 in stops else stops[len(stops) // 2]
     h, w, _ = imgs[ref_stop].shape
     for s, im in imgs.items():
         if im.shape != (h, w, 3):
@@ -186,7 +190,7 @@ def validate(Z, order, g, zgrid):
         d_before = np.log2((v1 ** 1.8) / np.maximum(v0 ** 1.8, 1e-12))
         d_after = (g_interp(v1) - g_interp(v0)) / LOG2
         sys.stderr.write(
-            f"  {order[j]:+d}→{order[j+1]:+d}stop  "
+            f"  {order[j]:+.3f}→{order[j+1]:+.3f}stop  "
             f"보정 전={np.median(d_before):.3f}  보정 후={np.median(d_after):.3f}  "
             f"(표준편차 {np.std(d_after):.3f})\n"
         )
