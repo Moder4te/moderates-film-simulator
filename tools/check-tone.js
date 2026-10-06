@@ -181,6 +181,47 @@ check("디더가 평균값을 밀지 않음", Math.abs(s1 / NF - s2 / NF) < 0.6,
     check("acr-standard — 암부 기울기가 명부보다 가파르다(S자 보정 모양)",
       darkSlope > brightSlope,
       `암부 ${darkSlope.toFixed(3)} vs 명부 ${brightSlope.toFixed(3)}`);
+
+    // 기울기가 매끄러운가 — 국소 기울기 dg/dv의 극값 개수.
+    // ⚠️ N6이 정확히 여기서 났다. 채도 = g(v_최대) − g(v_최소)라서 기울기가 출렁이면
+    // 밝기에 따라 채도가 출렁인다(피부가 회색·분홍 얼룩). 무채색은 세 채널이 같아
+    // 단조성·왕복 검산으로는 안 걸린다 — 예전 Debevec 커브는 극값 19개로 다 통과했다.
+    // S자 역함수는 극값 1개(중간톤 최소)면 충분하다.
+    {
+      const lg = (v) => Math.log(acr.decode(v));
+      const vs2 = [], sl = [];
+      for (let k = 0; k <= 200; k++) vs2.push(0.05 + (0.93 * k) / 200);
+      for (let k = 1; k < vs2.length; k++) sl.push((lg(vs2[k]) - lg(vs2[k - 1])) / (vs2[k] - vs2[k - 1]));
+      let ext = 0;
+      for (let k = 2; k < sl.length; k++) if ((sl[k] - sl[k - 1]) * (sl[k - 1] - sl[k - 2]) < 0) ext++;
+      check("acr-standard — 기울기가 출렁이지 않는다(극값 ≤ 2)", ext <= 2, `극값 ${ext}개, v 0.05~0.98`);
+    }
+
+    // 색상 보존 역(N6) — ACR 순방향 `RefBaselineRGBTone`을 합성해 넣고 되돌아오는가.
+    // 순방향: 최대·최소 채널 코드 = decode⁻¹(선형), 중간 채널은 y=v^1.8 공간에서
+    // 원래 비율로 보간. 역은 채널별 decode(remap된 코드)가 원래 선형을 내야 한다.
+    const inv = (L) => { let lo = 0, hi = 1; for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (acr.decode(m) < L) lo = m; else hi = m; } return (lo + hi) / 2; };
+    const toneFwd = (x) => {
+      const v = x.map(inv);
+      const [mn, md, mx] = [0, 1, 2].sort((a, b) => x[a] - x[b]);
+      const y = (c) => Math.pow(v[c], 1.8);
+      v[md] = Math.pow(y(mn) + (y(mx) - y(mn)) * (x[md] - x[mn]) / (x[mx] - x[mn]), 1 / 1.8);
+      return v;
+    };
+    const out = new Float64Array(3);
+    const roundTrip = (remap, fwd) => {
+      let worst = 0;
+      for (const x of [[0.30, 0.12, 0.05], [0.02, 0.4, 0.1], [0.9, 1.2, 0.05], [0.004, 0.003, 0.03], [0.18, 0.5, 0.6]]) {
+        remap(...fwd(x), out);
+        for (let c = 0; c < 3; c++) worst = Math.max(worst, Math.abs(acr.decode(out[c]) / x[c] - 1));
+      }
+      return worst;
+    };
+    const toneOnly = inputs.remapCodes(acr);
+    const w1 = roundTrip(toneOnly, toneFwd);
+    check("acr-standard — 색상 보존 역이 ACR 순방향을 되돌린다", w1 < 1e-3, `상대오차 최대 ${w1.toExponential(1)}`);
+    check("acr-standard — 무채색은 역이 손대지 않는다", toneOnly(0.4, 0.4, 0.4, out) === false);
+
   }
 
   // 입력 전달함수의 규약 — `decode`와 `hWhite`가 서로 맞는가.

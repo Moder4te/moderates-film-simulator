@@ -26,7 +26,6 @@
  */
 
 const colorspace = require("./colorspace");
-const curve = require("./curve");
 
 const ANCHOR = 0.18;
 const WORKING_GAMMA = 1.8;
@@ -96,140 +95,134 @@ function linearInput(stops) {
  * 하이라이트는 덜 걸리는 매끈한 S자 대비가 남는다. 그 결과 지금까지는 raw를
  * Camera Raw로 그냥 현상해 먹이면 필름 곡선이 엉뚱한 입력 위에서 돌았다.
  *
- * ── 유도 (2026-08-16 재촬영, N4) ─────────────────────────────────────────
+ * ── 유도 (2026-10-07, N6) ────────────────────────────────────────────────
  *
- * 입사식 노출계로 기준(0스톱)을 잡고 조리개·셔터를 고정한 채 **ISO만 바꿔**
- * 10스톱(−4~+4.36)을 "Adobe Standard" + 슬라이더 0으로 현상해
- * `tools/derive-acr-curve.py`로 뽑았다. 예전(2026-08-12)엔 −2~+2 5장뿐이라
- * 표본이 v=0.0667~0.9647만 덮었다 — 그 밖은 평평 고정(→ln v축 외삽으로
- * 응급 처치, RESOLVED.md 참조)이었는데 이번이 근본 해결이다.
- *
- * 처음엔 8장(−4~+2.36)만 찍었는데 +3·+4스톱이 카메라 ISO 상한(12800)에
- * 막혀 두 프레임이 같은 노출로 나왔다(조리개·셔터 고정 + ISO도 같으면
- * 센서에 닿은 빛의 양이 같다) — 그래서 ISO를 확장 범위(25600·51200)까지
- * 올려 두 장을 더 찍었다. 최종 10장의 실측 스톱(EXIF ISO에서 역산,
- * ISO2500=0스톱 기준 `log2(iso/2500)`):
- * −3.9658 · −2.9658 · −1.9658 · −1 · 0 · +1 · +2 · +2.3561 · +3.3561 · +4.3561.
- * 원본(`N1braket/9stopbraket/`)은 raw·360MB TIFF라 로컬 전용, 저장소엔 없다.
+ * 24색 차트를 입사식 노출계 기준 −4~+4스톱 9장(ISO만 바꿈)으로 찍고
+ * (`N1braket/9stopwithcolor/`, 로컬 전용), 같은 raw를 두 길로 풀었다 — ACR
+ * "Adobe Standard" + 슬라이더 0 현상(코드 v)과 libraw 선형(`decode-raw.py`의
+ * `load_linear`). **무채색 6패치 × 9스톱 × 3채널**의 (v, 선형) 쌍에 ln v 축 3차
+ * 다항식 + 어깨 항 −ln(1.05−v)을 최소자승으로 맞췄다. 잔차 RMS 0.100스톱. 표본
+ * 범위 v=0.016~0.984.
  * 재현:
  *
- *   python tools/derive-acr-curve.py \
- *     a.tif:-3.9658 b.tif:-2.9658 c.tif:-1.9658 d.tif:-1 e.tif:0 \
- *     f.tif:1 g.tif:2 h.tif:2.3561 i.tif:3.3561 j.tif:4.3561
+ *   python tools/measure-chart.py N1braket/9stopwithcolor/tiff N1braket/9stopwithcolor --fit-curve
  *
- * ⚠️ **프레임을 짝수로 넘기면 도구가 표본 위치를 뽑는 기준 프레임이 바뀐다**
- * (`derive-acr-curve.py`의 `ref_stop`은 0스톱을 명시적으로 찾는다 — 2026-08-16
- * 이전엔 `stops[len(stops)//2]`라 프레임 개수에 따라 조용히 딴 프레임을 골랐다.
- * 8장으로 처음 돌렸을 때 암부 유효감마가 0.610→0.680으로만 움직였는데, 그
- * 버그를 안 고치고 10장으로 늘렸더니 0.340까지 튀어서 발견했다).
- *
- * **검산 — 왕복.** 복원한 곡선으로 같은 브래킷의 스톱 간격을 다시 재면:
- *
- *   구간              보정 전(median)   보정 후(median)
- *   −3.966→−2.966     1.41              0.90
- *   −2.966→−1.966     1.83              1.05
- *   −1.966→−1.000     1.53              0.95
- *   −1.000→ 0.000     1.39              1.01
- *    0.000→+1.000     0.99              1.03
- *   +1.000→+2.000     0.59              1.05
- *   +2.000→+2.356     0.11              0.27
- *   +2.356→+3.356     0.11              0.88
- *   +3.356→+4.356     0.06              0.92
- *
- * −1~+2, +2.356~+4.356 구간은 0.88~1.05로 잘 모인다. +2→+2.356만 0.27로 낮은데,
- * 그 좁은 구간(0.356스톱)에 ACR 하이라이트 롤오프의 시작점이 걸려 있어 로그-로그
- * 비례가 깨지는 게 정상이다 — 어깨 자체가 압축이다.
- *
- * ⚠️ **표본 범위는 인코딩값 0.0196~1.0000이다**(도구가 실제 표본이 있던 구간을
- * 그대로 보고한다). **명부 쪽은 이번에 v=1(코드 최대값)까지 실측으로 닿았다** —
- * 8장짜리 시도(+2.356스톱까지)와 달리 더 이상 위쪽 외삽이 없다. 아래쪽만
- * v<0.0196(8bit 기준 0~5)이 여전히 외삽이다(아래 `ACR_LO_SLOPE` 참조) — 카메라
- * 다이내믹레인지의 물리적 하한이라 브래킷을 더 넓혀도 완전히는 못 없앤다.
+ * **왜 예전 유도(벽 브래킷 + Debevec, `tools/derive-acr-curve.py`)를 버렸나.**
+ * 그 커브는 국소 기울기 dg/dv가 0.85~6.75로 **출렁였다**(극값 19개). 무채색은
+ * 세 채널이 같은 값이라 출렁임이 안 드러나 왕복 검산·정합성 검사를 다 통과했다.
+ * 그런데 채도는 g(v_최대) − g(v_최소)라서, 기울기가 출렁이면 **밝기에 따라 채도가
+ * 출렁인다** — 실사진(sample/MDR03671) 피부가 회색·분홍 얼룩으로 갈라졌다(N6
+ * 보고의 실제 원인). 저차 다항식은 기울기가 매끄럽다는 것을 구성으로 보장한다
+ * (극값 1개 — 암부 가파름 → 중간 완만 → 어깨에서 다시 가파름, S자 역함수 꼴).
+ * 얼굴의 채도비 흩어짐(리니어 대비) 0.336 → 0.086.
  *
  * ⚠️ **이 곡선은 Sony ILCE-7RM5 + ACR 18.3.2(Process Version 15.4) +
- * "Adobe Standard" 프로필 한 세트에서 유도됐다.** DCP 프로필은 카메라
- * 모델마다 조금씩 다르게 캘리브레이션되므로, 다른 카메라에서는 근사치다 —
- * Process Version의 공유 톤 응답이 큰 비중일 가능성이 높지만 검증되지
- * 않았다. 카드 없이 잰 조건 (a) 앵커도 마찬가지로 미확정이다(→ 아래
- * `midGrayEncoded`는 실측이 아니라 `decode(v)=0.18`을 만족하는 v를 그대로
- * 계산한 것 — 정박점 자체가 옳다는 보장은 없다. 노출 슬라이더로 상쇄된다).
+ * "Adobe Standard" 프로필 한 세트에서 유도됐다.** 다른 카메라는 근사치다(N3).
+ * 조건 (a) 앵커도 실측이 아니다 — `midGrayEncoded`는 `decode(v)=0.18`을 만족하는
+ * v를 그대로 계산한 것이다. 같은 사진의 linear-h5와 1.3스톱 어긋났다(노출
+ * 슬라이더로 상쇄된다).
  */
-const ACR_STANDARD_CTRL = [
-  [0.0196, -2.76411],
-  [0.0712, -1.88521],
-  [0.1228, -1.24895],
-  [0.1744, -1.07966],
-  [0.226, -0.61452],
-  [0.2776, -0.4685],
-  [0.3292, -0.35432],
-  [0.3808, -0.03594],
-  [0.4324, 0.19309],
-  [0.484, 0.23688],
-  [0.5356, 0.34259],
-  [0.5872, 0.59712],
-  [0.6388, 0.86635],
-  [0.6904, 0.95298],
-  [0.742, 1.009],
-  [0.7936, 1.20493],
-  [0.8452, 1.55328],
-  [0.8968, 1.72263],
-  [0.9484, 2.05702],
-  [1.0, 3.27813],
-];
-// 제어점은 `tools/derive-acr-curve.py`가 낸 것을 그대로 옮긴 것이다(재현 명령은
-// 위 유도 문단 참조) — v_lo가 어중간한 이유는 그 도구가 **실제 표본이 있던
-// 범위**를 그대로 보고하기 때문이다. v_hi는 이제 정확히 1이다(위 참조).
-//
-// ⚠️ **맨 끝 두 점의 기울기가 급하다** — [0.9484,2.057]→[1.0,3.278]는 secant
-// ≈23.7(그 앞 구간들의 secant는 4~7대). 처음엔 클리핑 픽셀이 섞여 든 잡음으로
-// 의심해 잘라내려 했으나, `--ctrl-points 50`으로 더 촘촘히 뽑아 보니 v=0.90→1.00
-// 구간이 1.73→1.81→1.94→2.27→2.67→3.28로 **매끈하게 가속**한다(튀는 점 없음) —
-// 잡음이 아니라 ACR 하이라이트 롤오프(어깨)를 되돌리는 데 필요한 실제 이득이다.
-// 어깨가 넓은 실노광 범위를 좁은 코드값에 욱여넣으므로, 그걸 펴는 역함수는
-// v→1에서 가팔라지는 게 맞다.
-const ACR_LO = ACR_STANDARD_CTRL[0][0];
-const ACR_LO_G = ACR_STANDARD_CTRL[0][1];
+const ACR_FIT = {
+  lo: 0.016, // 실제 표본이 있던 최저 v — 그 아래는 ln v 축 직선 외삽
+  shoulder: 0.05,
+  coef: [-2.468745, 0.446547, -0.191557, -0.005655, 0.877738], // ln v의 0~3차, 마지막은 −ln(1+ε−v)
+};
+// 위 명령의 출력을 그대로 옮긴 것이다. 제어점으로 바꿔 pchip으로 잇지 **않는다** —
+// 그러면 기울기에 작은 출렁임(극값 5개)이 다시 생긴다. 식을 그대로 계산한다.
+
+/** 피팅식 ln(선형) — 앵커 전. */
+function acrFitLn(v) {
+  const c = ACR_FIT.coef, x = Math.log(v);
+  return c[0] + x * (c[1] + x * (c[2] + x * c[3])) - c[4] * Math.log(1 + ACR_FIT.shoulder - v);
+}
+// d(ln 선형)/d(ln v) at lo — 아래 외삽의 기울기(= 유효감마)
+const ACR_LO_SLOPE = (() => {
+  const c = ACR_FIT.coef, x = Math.log(ACR_FIT.lo), v = ACR_FIT.lo;
+  return c[1] + 2 * c[2] * x + 3 * c[3] * x * x + c[4] * v / (1 + ACR_FIT.shoulder - v);
+})();
 
 /**
- * 표본 아래(v < 0.0196) 외삽 기울기. 유효감마 0.681이다
- * (순수 ProPhoto는 1.8 — ACR이 암부를 그만큼 들어올린다는 뜻).
+ * 표본 아래(v < 0.016)는 **ln v 축 직선**으로 잇는다(N4, 2026-08-14).
  *
- * ── 왜 여기만 로그축인가 (N4, 2026-08-14 도입, 2026-08-16 표본 확장) ─────
- *
- * 처음엔 `tabulate`를 표본 범위로만 떠서, 그 밖이 **양끝 값으로 평평하게
- * 고정**됐다. 없는 데이터를 추정해 잇지 않는다는 원칙이었는데, 평평은
- * 추정을 안 하는 게 아니라 **"거기는 전부 같은 밝기다"라는 틀린 추정**이었다.
- *
- * 위쪽은 이제 외삽이 아니다 — 2026-08-16 재유도로 표본이 v=1까지 닿았다(위 참조).
- *
- * **아래쪽은 선형 외삽이면 안 된다.** v축에서 직선으로 이으면 `g(0)`이 유한해져
- * 검정이 밝게 뜬다. 인코딩은 원래 거듭제곱꼴이라 `v→0`에서 `g→−∞`여야 하고,
- * 그건 **ln v 축에서** 직선일 때 성립한다.
- *
- * ⚠️ **여전히 외삽이다** — v<0.0196 구간(8bit 기준 0~5)은 실측 밖이다. 카메라
- * 다이내믹레인지의 물리적 하한이라 브래킷을 더 넓혀도 완전히는 못 없앤다.
+ * 평평하게 고정하면 "거기는 전부 같은 밝기"라는 틀린 추정이 되고, v축 직선이면
+ * `g(0)`이 유한해져 검정이 뜬다. 인코딩은 거듭제곱꼴이라 `v→0`에서 `g→−∞`여야 하고,
+ * 그건 ln v 축 직선일 때 성립한다. ⚠️ 여전히 외삽이다(8bit 0~4) — 카메라
+ * 다이내믹레인지의 물리적 하한이라 브래킷을 넓혀도 완전히는 못 없앤다.
+ * 위쪽(v 0.984~1)은 어깨 항이 있는 매끈한 식 자체가 잇는다.
  */
-const ACR_LO_SLOPE =
-  (ACR_STANDARD_CTRL[1][1] - ACR_LO_G) /
-  (Math.log(ACR_STANDARD_CTRL[1][0]) - Math.log(ACR_LO));
-
-// 표본 하단부터 v=1까지 — 양끝 다 이제 실측 범위 안이다(위 주석 참조).
-const acrStandardG = curve.tabulate(curve.pchip(ACR_STANDARD_CTRL), ACR_LO, 1, 512);
+function acrRawLn(v) {
+  if (v >= ACR_FIT.lo) return acrFitLn(v);
+  return acrFitLn(ACR_FIT.lo) + ACR_LO_SLOPE * (Math.log(v) - Math.log(ACR_FIT.lo));
+}
+// 조건 (a) 관례 — 인코딩 0.3857(ProPhoto 18% 그레이 자리)을 0.18로. 실측 앵커가 아니다
+const ACR_ANCHOR_LN = acrRawLn(0.3857);
 
 function acrStandardDecode(v) {
   if (v <= 0) return 0;
-  if (v >= ACR_LO) return ANCHOR * Math.exp(acrStandardG(v));
-  return ANCHOR * Math.exp(ACR_LO_G + ACR_LO_SLOPE * (Math.log(v) - Math.log(ACR_LO)));
+  return ANCHOR * Math.exp(acrRawLn(v) - ACR_ANCHOR_LN);
 }
 // `decode(v) = 0.18`을 만족하는 v — 이분법. 정박점 자체가 실측 앵커는 아니다(위 주석).
 function acrStandardMidGray() {
-  let lo = ACR_LO, hi = 1;
+  let lo = ACR_FIT.lo, hi = 1;
   for (let i = 0; i < 40; i++) {
     const mid = (lo + hi) / 2;
     if (acrStandardDecode(mid) < ANCHOR) lo = mid;
     else hi = mid;
   }
   return (lo + hi) / 2;
+}
+
+/**
+ * **색상 보존 톤 커브의 역** — ACR은 톤 커브를 채널마다 따로 걸지 않는다.
+ *
+ * DNG SDK `RefBaselineRGBTone`: 선형 ProPhoto에서 **최대·최소 채널에만** 커브를 걸고,
+ * 중간 채널은 둘 사이를 원래 비율 그대로 보간한다(색상 보존). 그러니 역도 같은 꼴이어야
+ * 한다 — 채널별로 `decode`하면 중간 채널이 엉뚱한 자리로 가서 **색상각이 돈다**
+ * (N6 실측, 2026-10-06: 잎 +17° · 초록 −17° · 황록 +12°. 색상 보존 역으로 ±2° 안쪽.
+ * `tools/measure-chart.py`).
+ *
+ * ⚠️ **프로필 테이블(HueSatMap·LookTable)은 되돌리지 않는다.** HueSatMap은 ForwardMatrix와
+ * 짝을 이루는 색 보정이고, LookTable은 효과가 작다(ACR에서 LookTable만 항등으로 바꾼
+ * 프로필로 현상해 대조: 유채색 ΔE 중앙 2.2) — 되돌리려던 시도는 오히려 나빠져 걷어냈다
+ * (2026-10-07, `docs/RESOLVED.md`).
+ *
+ * 엔진은 채널별 `decode`를 축마다 미리 계산하는 구조라(`core/color/film.js`) 여기서는
+ * 선형값이 아니라 **등가 코드**를 돌려준다: 채널별 `decode`에 넣으면 색상 보존 역과
+ * 같은 선형값이 나오는 v. 최대·최소 채널은 원래 v 그대로이고 중간 채널만 바뀐다.
+ *
+ * @returns {(r:number, g:number, b:number, out:Float64Array) => boolean}
+ *          등가 코드 3개를 out에 쓴다. 무채색이라 바뀔 게 없으면 false(out은 그대로 입력)
+ */
+function remapCodes(inp) {
+  const N = 4096;
+  const tab = new Float64Array(N + 1);
+  for (let i = 0; i <= N; i++) tab[i] = inp.decode(i / N);
+  const inv = (L) => {
+    if (L >= tab[N]) return 1;
+    let lo = 0, hi = N;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (tab[mid] <= L) lo = mid; else hi = mid;
+    }
+    const span = tab[hi] - tab[lo];
+    return (lo + (span > 0 ? (L - tab[lo]) / span : 0)) / N;
+  };
+  return function remap(r, g, b, out) {
+    out[0] = r; out[1] = g; out[2] = b;
+    let mx = 0, mn = 0;
+    for (let c = 1; c < 3; c++) {
+      if (out[c] > out[mx]) mx = c;
+      if (out[c] < out[mn]) mn = c;
+    }
+    if (out[mx] === out[mn]) return false;
+    // 색상 보존 역 — 보간은 ACR 작업 공간(선형) 값에서, 인코딩을 푼 y = v^γ
+    const md = 3 - mx - mn;
+    const y = (c) => Math.pow(out[c], WORKING_GAMMA);
+    const t = (y(md) - y(mn)) / (y(mx) - y(mn));
+    const lmn = inp.decode(out[mn]);
+    out[md] = inv(lmn + t * (inp.decode(out[mx]) - lmn));
+    return true;
+  };
 }
 
 const INPUTS = [
@@ -252,11 +245,11 @@ const INPUTS = [
       "Camera Raw로 \"Adobe Standard\" 프로필 + 슬라이더 전부 0으로 그냥 현상한 파일용. " +
       "숨은 톤 커브를 역산해 되돌린다 — decode-raw.py 없이 raw를 곧장 현상해도 된다. " +
       "⚠️ Sony ILCE-7RM5 + ACR 18.3.2 한 세트에서 유도, 다른 카메라는 근사치. " +
-      "표본 범위(0.0196~1.0) 밖(=v<0.0196, 8bit 0~5)만 외삽이다 — ln v 축. " +
-      "⚠️⚠️ 무채색 벽 브래킷에서 유도한 **톤 커브만 되돌린다** — 카메라 프로필의 " +
-      "색상별 색 변환(HueSatMap)은 그대로 남아 있다. 채도 있는 피사체(피부·원색)에서 " +
-      "색이 틀어지고 계조가 깨질 수 있다(TODO N6). 그런 사진에는 decode-raw.py를 쓸 것.",
+      "표본 범위(0.016~1.0) 밖(=v<0.016, 8bit 0~4)만 외삽이다 — ln v 축. " +
+      "톤 커브는 ACR과 같은 색상 보존 방식으로 되돌린다(24색 차트에서 ACR 무(無)룩 렌더 대비 " +
+      "유채색 ΔE 중앙 2.2). 프로필의 색 보정(HueSatMap)은 그대로 둔다 — 되돌릴 룩이 아니다.",
     decode: acrStandardDecode,
+    remap: true, // → remapCodes. 엔진이 유채색 격자점마다 중간 채널 코드를 옮긴다
     hWhite: Math.log10(acrStandardDecode(1) / ANCHOR),
     midGrayEncoded: acrStandardMidGray(),
   },
@@ -323,6 +316,7 @@ module.exports = {
   byId,
   applyable,
   combinationWarning,
+  remapCodes,
   HEADROOMS,
   DEFAULT_HEADROOM,
   ANCHOR,

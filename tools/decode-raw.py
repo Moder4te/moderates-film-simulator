@@ -59,23 +59,69 @@ def encode_prophoto(lin):
     return np.clip(out, 0.0, 1.0)
 
 
+# ROMM(ProPhoto) 원색 — D50 PCS 기준 열이 곧 rXYZ·gXYZ·bXYZ다
+PROPHOTO_TO_XYZ_D50 = [
+    [0.7976749, 0.1351917, 0.0313534],
+    [0.2880402, 0.7118741, 0.0000857],
+    [0.0, 0.0, 0.8252100],
+]
+D50 = (0.9642, 1.0, 0.8249)
+
+
+def prophoto_icc():
+    """
+    ProPhoto RGB ICC v2 디스플레이 프로파일 바이트(행렬 + 감마 1.8).
+
+    ── 왜 박나 (2026-10-07) ─────────────────────────────────────────────────
+    예전엔 안 박고 "Photoshop에서 프로파일 지정 → ProPhoto RGB"를 안내했다. 그걸
+    빼먹으면 Photoshop이 작업 색공간(sRGB 등)으로 읽어, ProPhoto 값이 sRGB로
+    해석된 채 내보내져 **채도가 크게 빠져 보였다** — 실사용에서 실제로 밟아 "리니어
+    경로가 채도가 낮다"는 오판으로 이어졌다(N6 확인 중). 박으면 이 함정이 사라진다.
+
+    TRC는 Adobe `ProPhoto RGB` 프로파일과 같은 `curv` 감마 하나(u8Fixed8 0x01CD =
+    1.8008)다 — 사용자가 손으로 하던 "프로파일 지정"과 똑같아지는 것이 목적이다.
+    ⚠️ 인코딩(`encode_prophoto`)의 발끝 직선부(선형 < 1/512)는 표현하지 않는다 —
+    8bit 0~1 구간이라 차이가 안 보이고, Adobe 프로파일도 그렇다.
+    """
+    import struct
+
+    s15 = lambda x: struct.pack(">i", int(round(x * 65536)))
+    xyz = lambda v: b"XYZ " + b"\0" * 4 + b"".join(s15(c) for c in v)
+    curv = b"curv" + b"\0" * 4 + struct.pack(">IH", 1, 0x01CD) + b"\0\0"
+    name = b"ProPhoto RGB (FilmSim decode-raw)"
+    desc = (b"desc" + b"\0" * 4 + struct.pack(">I", len(name) + 1) + name + b"\0"
+            + struct.pack(">II", 0, 0) + struct.pack(">HB", 0, 0) + b"\0" * 67)
+    cprt = b"text" + b"\0" * 4 + b"No copyright, use freely\0"
+    cols = [[row[i] for row in PROPHOTO_TO_XYZ_D50] for i in range(3)]
+    tags = [(b"desc", desc), (b"cprt", cprt), (b"wtpt", xyz(D50)),
+            (b"rXYZ", xyz(cols[0])), (b"gXYZ", xyz(cols[1])), (b"bXYZ", xyz(cols[2])),
+            (b"rTRC", curv), (b"gTRC", curv), (b"bTRC", curv)]
+    off = 128 + 4 + 12 * len(tags)
+    table, data = b"", b""
+    for sig, body in tags:
+        body += b"\0" * (-len(body) % 4)  # 태그는 4바이트 경계
+        table += sig + struct.pack(">II", off + len(data), len(body))
+        data += body
+    size = off + len(data)
+    header = (struct.pack(">I", size) + b"\0" * 4 + struct.pack(">I", 0x02100000)
+              + b"mntrRGB XYZ " + b"\0" * 12 + b"acsp" + b"\0" * 24
+              + struct.pack(">I", 0) + b"".join(s15(c) for c in D50) + b"\0" * 48)
+    assert len(header) == 128
+    return header + struct.pack(">I", len(tags)) + table + data
+
+
 def write_tiff(path, arr16):
     """
-    16bit RGB TIFF로 쓴다. `tifffile`에 맡긴다.
+    16bit RGB TIFF로 쓴다. `tifffile`에 맡긴다. ProPhoto ICC를 박는다(`prophoto_icc`).
 
     ⚠️ **직접 쓰지 않는다.** 한 번 손으로 IFD를 조립해 봤는데, PIL이 열기는 하면서
     픽셀은 8비트로 잘라 읽었다 — 파일이 틀렸는지 리더가 부족한지 **구분할 방법이
     없었다.** 그 상태로 넘기면 Photoshop에서야 드러난다. 포맷은 검증된 라이브러리에
     맡기고, 이 도구는 **값이 맞는지**에만 책임진다.
-
-    ⚠️ **ICC 프로파일은 안 박는다.** libraw가 ProPhoto 원색으로 냈다는 것은 우리가
-    아는 사실이지만 파일에는 안 적힌다 — Photoshop에서 **프로파일 지정(Assign
-    Profile) → ProPhoto RGB**를 해야 한다. 프로파일 바이너리를 실어 넣는 것은 이
-    도구가 감당할 범위가 아니고, 조용히 틀릴 여지만 늘린다.
     """
     import tifffile
 
-    tifffile.imwrite(path, arr16, photometric="rgb")
+    tifffile.imwrite(path, arr16, photometric="rgb", iccprofile=prophoto_icc())
 
 
 def probe_patch(lin, spec):
@@ -167,7 +213,7 @@ def decode(raw_path, out_path, headroom, exposure, midgray, probe):
         f"{out_path}: {w}x{h} 16bit 선형 ProPhoto\n"
         + "".join(f"  {n}\n" for n in notes)
         + f"  잘린 화소 {clipped:.3f}%\n"
-        f"  → Photoshop에서 **프로파일 지정 → ProPhoto RGB**\n"
+        f"  → ProPhoto RGB ICC 포함 — Photoshop에서 프로파일 지정 불필요\n"
         f"  → 엔진 패널의 입력 소스를 **「리니어 +{headroom}스톱」**\n"
         f"     (그 설정의 기준 그레이 = 인코딩 {mid_enc:.4f} / 8bit {round(mid_enc * 255)})\n"
     )
@@ -200,6 +246,48 @@ def selftest():
         ok = ok and good
         print(f"  {'OK  ' if good else '❌  '}헤드룸 +{n}스톱 왕복  "
               f"기준 그레이 인코딩 {code:.4f} → 엔진이 읽는 선형 {back:.9f}")
+
+    # ICC — 파일에 실제로 실리는가, 그리고 색 관리 엔진(littlecms)이 ProPhoto로 읽는가.
+    # 원색 정의가 틀리면 Photoshop에서야 드러나므로 여기서 sRGB 변환을 독립 계산과 대조한다.
+    import io
+    import os
+    import tempfile
+
+    import tifffile
+
+    icc = prophoto_icc()
+    path = os.path.join(tempfile.mkdtemp(), "icc.tif")
+    write_tiff(path, np.zeros((2, 2, 3), np.uint16))
+    with tifffile.TiffFile(path) as t:
+        back = bytes(t.pages[0].tags["InterColorProfile"].value)
+    good = back == icc
+    ok = ok and good
+    print(f"  {'OK  ' if good else '❌  '}TIFF에 ProPhoto ICC가 실린다  {len(icc)}바이트")
+    try:
+        from PIL import Image, ImageCms
+    except ImportError:
+        print("      (ICC 색 변환 검사 건너뜀 — Pillow 없음)")
+    else:
+        xf = ImageCms.buildTransform(ImageCms.ImageCmsProfile(io.BytesIO(icc)),
+                                     ImageCms.createProfile("sRGB"), "RGB", "RGB")
+        probe = [(200, 80, 60), (60, 160, 90), (70, 90, 200), (128, 128, 128)]
+        src = Image.new("RGB", (len(probe), 1))
+        src.putdata(probe)
+        got = np.array(ImageCms.applyTransform(src, xf), float)[0]
+        # 독립 계산: γ1.8 → ROMM → XYZ(D50) → Bradford D65 → sRGB
+        brad = np.linalg.inv(np.array([[1.0478112, 0.0228866, -0.0501270],
+                                       [0.0295424, 0.9904844, -0.0170491],
+                                       [-0.0092345, 0.0150436, 0.7521316]]))
+        to_s = np.linalg.inv(np.array([[0.4124564, 0.3575761, 0.1804375],
+                                       [0.2126729, 0.7151522, 0.0721750],
+                                       [0.0193339, 0.1191920, 0.9503041]]))
+        m = to_s @ brad @ np.array(PROPHOTO_TO_XYZ_D50)
+        lin = np.clip((np.array(probe, float) / 255) ** 1.8 @ m.T, 0, 1)
+        want = np.where(lin <= 0.0031308, 12.92 * lin, 1.055 * lin ** (1 / 2.4) - 0.055) * 255
+        worst = float(np.abs(got - want).max())
+        good = worst <= 3
+        ok = ok and good
+        print(f"  {'OK  ' if good else '❌  '}littlecms가 ICC를 ProPhoto로 읽는다  sRGB 변환 최대차 {worst:.1f}/255")
 
     print("\n✅ 전 항목 통과" if ok else "\n❌ 실패 항목 있음")
     return 0 if ok else 1

@@ -349,8 +349,14 @@ function buildLut(film, opts) {
   const db = o.dodgeBurn;
   const dodgeBurnOn = !!(db && db.limit > 0 && info.sign > 0 && pp);
 
+  // 색상 보존 역(acr-standard). 유채색 격자점마다 코드를 축 밖으로 옮긴다 —
+  // 무채색 축과 다른 입력은 비트 단위로 그대로다(→ inputs.remapCodes).
+  const remap = inp.remap ? inputs.remapCodes(inp) : null;
+  const rc = new Float64Array(3);
+
   let axis = null;
   let dbState = null;
+  let respond = null;
   if (dodgeBurnOn) {
     const curves = {
       r: negativeDensity(cur.r, exposure, cast.r, inp),
@@ -369,7 +375,7 @@ function buildLut(film, opts) {
       contrast: db.contrast || 0,
     };
   } else {
-    const respond = [
+    respond = [
       channelResponse(cur.r, pg, exposure, info.sign, cast.r, makePrint("r"), inp),
       channelResponse(cur.g, pg, exposure, info.sign, cast.g, makePrint("g"), inp),
       channelResponse(cur.b, pg, exposure, info.sign, cast.b, makePrint("b"), inp),
@@ -468,6 +474,7 @@ function buildLut(film, opts) {
   // 닷지·번 모드는 `axis`를 안 쓰고 격자점마다 인화하므로, 여기서 만든 소프트
   // 클립을 **안쪽 루프에서** 건다(아래 `softClip`). 계산식은 같다.
   let softClip = null;
+  const axisGain = [1, 1, 1]; // axis에 곱한 이득 — 축 밖 값(remap)에도 똑같이 건다
   if (wp !== "clip" && info.sign > 0) {
     const rowSum = [
       (m[0][0] + m[0][1] + m[0][2]) / 100,
@@ -487,12 +494,16 @@ function buildLut(film, opts) {
         const peak = Math.max(...peaks);
         if (peak > 1) {
           const gain = 1 / peak;
-          for (let c = 0; c < 3; c++) for (let i = 0; i < size; i++) axis[c][i] *= gain;
+          for (let c = 0; c < 3; c++) {
+            axisGain[c] = gain;
+            for (let i = 0; i < size; i++) axis[c][i] *= gain;
+          }
         }
       } else {
         for (let c = 0; c < 3; c++) {
           if (peaks[c] > 0) {
             const gain = 1 / peaks[c];
+            axisGain[c] = gain;
             for (let i = 0; i < size; i++) axis[c][i] *= gain;
           }
         }
@@ -532,14 +543,26 @@ function buildLut(film, opts) {
   // 여기서만(격자점마다) 채널 독립이 깨진다 — 크로스토크도 원래 여기서 채널을
   // 섞으므로 새로운 비용은 아니다.
   const dbLimit = dodgeBurnOn ? dbState.limit : 0;
+
   const dbContrast = dodgeBurnOn ? dbState.contrast : 0;
+
+  // 축 하나의 값을 축 밖 코드 v에서 — `axis`를 만든 것과 같은 단계(응답 → 이득 → 롤오프)
+  const axisAt = (c, v) => {
+    const x = respond[c](v) * axisGain[c];
+    return softClip ? softClip(x) : x;
+  };
 
   for (let bi = 0; bi < size; bi++) {
     for (let gi = 0; gi < size; gi++) {
       for (let ri = 0; ri < size; ri++) {
         let pr, pgv, pb;
         if (dodgeBurnOn) {
-          const Dr = densityAxis[0][ri], Dg = densityAxis[1][gi], Db = densityAxis[2][bi];
+          let Dr = densityAxis[0][ri], Dg = densityAxis[1][gi], Db = densityAxis[2][bi];
+          if (remap && remap(ri / d, gi / d, bi / d, rc)) {
+            Dr = dbState.density[0](rc[0]);
+            Dg = dbState.density[1](rc[1]);
+            Db = dbState.density[2](rc[2]);
+          }
           const d0 = dbState.d0;
           const dr = Dr - d0[0], dg = Dg - d0[1], db_ = Db - d0[2];
           const lumaDelta = (dr + dg + db_) / 3;
@@ -556,6 +579,11 @@ function buildLut(film, opts) {
           pr = axis[0][ri];
           pgv = axis[1][gi];
           pb = axis[2][bi];
+          if (remap && remap(ri / d, gi / d, bi / d, rc)) {
+            pr = axisAt(0, rc[0]);
+            pgv = axisAt(1, rc[1]);
+            pb = axisAt(2, rc[2]);
+          }
         }
 
         let R = pr;

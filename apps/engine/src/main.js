@@ -764,9 +764,7 @@ const cubeOpts = {
 /**
  * Lightroom 프로파일(.xmp) 내보내기 설정. cubeOpts와 같은 이유로 params 밖에 둔다.
  *
- * 기본은 `prophoto`(하이브리드, 2026-08-17부터) — `acr-standard`는 톤은 정확하지만
- * 색을 안 돌려 채도 있는 피사체에서 색이 틀어진다(TODO N6). core/io/xmp.js의
- * XMP_INPUTS 주석 참조.
+ * 기본은 `acr-standard`(XMP_INPUTS 첫 항목) — core/io/xmp.js의 XMP_INPUTS 주석 참조.
  */
 const xmpOpts = {
   input: xmpexport.XMP_INPUTS[0].id,
