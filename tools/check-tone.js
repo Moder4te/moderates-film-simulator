@@ -209,18 +209,64 @@ check("디더가 평균값을 밀지 않음", Math.abs(s1 / NF - s2 / NF) < 0.6,
       return v;
     };
     const out = new Float64Array(3);
+    // **손으로 고른 몇 색으로는 모자란다.** 처음엔 5색이었는데, N6의 증상이 "밝기에
+    // 따라 채도가 출렁인다"였다 — 그건 색을 **훑어야** 드러나는 종류다. 결정적
+    // 난수로 기준 그레이 ±4스톱 × 전 색상각을 덮는다(시드 고정이라 재현된다).
+    const rnd = (() => { let s = 20261007; return () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff); })();
+    const scene = [];
+    for (let i = 0; scene.length < 3000 && i < 20000; i++) {
+      const x = [0, 0, 0];
+      for (let c = 0; c < 3; c++) x[c] = 0.18 * Math.pow(2, rnd() * 8 - 4);
+      // 세 채널이 같으면 무채색이라 역이 손댈 것이 없다 — 아래에서 따로 본다.
+      if (Math.max(...x) === Math.min(...x)) continue;
+      // 코드가 양끝에 붙으면 순방향이 클리핑돼 왕복이 성립하지 않는다.
+      const v = toneFwd(x);
+      if (Math.max(...v) >= 0.999 || Math.min(...v) <= 0.001) continue;
+      scene.push(x);
+    }
     const roundTrip = (remap, fwd) => {
-      let worst = 0;
-      for (const x of [[0.30, 0.12, 0.05], [0.02, 0.4, 0.1], [0.9, 1.2, 0.05], [0.004, 0.003, 0.03], [0.18, 0.5, 0.6]]) {
+      let worst = 0, worstHue = 0;
+      const hueOf = (r, g, b) => {
+        const mx = Math.max(r, g, b), mn = Math.min(r, g, b), dd = mx - mn;
+        if (dd <= 0) return null;
+        let h = mx === r ? ((g - b) / dd) % 6 : mx === g ? (b - r) / dd + 2 : (r - g) / dd + 4;
+        h *= 60; return h < 0 ? h + 360 : h;
+      };
+      for (const x of scene) {
         remap(...fwd(x), out);
-        for (let c = 0; c < 3; c++) worst = Math.max(worst, Math.abs(acr.decode(out[c]) / x[c] - 1));
+        const back = [0, 1, 2].map((c) => acr.decode(out[c]));
+        for (let c = 0; c < 3; c++) worst = Math.max(worst, Math.abs(back[c] / x[c] - 1));
+        const h0 = hueOf(...x), h1 = hueOf(...back);
+        if (h0 !== null && h1 !== null) {
+          let dh = Math.abs(h0 - h1); if (dh > 180) dh = 360 - dh;
+          worstHue = Math.max(worstHue, dh);
+        }
       }
-      return worst;
+      return { worst, worstHue };
     };
     const toneOnly = inputs.remapCodes(acr);
-    const w1 = roundTrip(toneOnly, toneFwd);
-    check("acr-standard — 색상 보존 역이 ACR 순방향을 되돌린다", w1 < 1e-3, `상대오차 최대 ${w1.toExponential(1)}`);
-    check("acr-standard — 무채색은 역이 손대지 않는다", toneOnly(0.4, 0.4, 0.4, out) === false);
+    const { worst: w1, worstHue: wh } = roundTrip(toneOnly, toneFwd);
+    check("acr-standard — 색상 보존 역이 ACR 순방향을 되돌린다", w1 < 1e-3,
+      `${scene.length}색 스윕, 상대오차 최대 ${w1.toExponential(1)}`);
+    // **색상각을 따로 본다.** N6의 원인 ①이 정확히 이것이었다 — 채널값 오차는
+    // 작은데 색상각만 도는 상태가 가능하다(채널별 decode: 실측 최대 11.6°).
+    check("acr-standard — 역이 색상각을 돌리지 않는다", wh < 0.01,
+      `최대 ${wh.toExponential(1)}° (채널별 decode였다면 11.6°)`);
+    check("acr-standard — 무채색은 역이 손대지 않는다", toneOnly(0.4, 0.4, 0.4, out) === -1);
+    // 반환값 계약 — 바뀐 채널 번호를 돌려줘야 호출자가 그 하나만 다시 계산한다
+    // (`core/color/film.js`. 불리언이던 때는 세 채널을 다 다시 구해 33³이 87ms였다).
+    {
+      let wrong = 0;
+      for (const x of scene.slice(0, 500)) {
+        const v = toneFwd(x);
+        const before = v.slice();
+        const md = toneOnly(v[0], v[1], v[2], out);
+        if (md < 0 || md > 2) { wrong++; continue; }
+        for (let c = 0; c < 3; c++) if ((out[c] !== before[c]) !== (c === md)) wrong++;
+      }
+      check("acr-standard — 역이 바꾼 채널 번호를 정확히 알려준다", wrong === 0,
+        wrong ? `어긋남 ${wrong}건` : "500색에서 out의 변화가 반환된 채널과 정확히 일치");
+    }
 
   }
 

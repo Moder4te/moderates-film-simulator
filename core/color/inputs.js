@@ -129,6 +129,19 @@ const ACR_FIT = {
 };
 // 위 명령의 출력을 그대로 옮긴 것이다. 제어점으로 바꿔 pchip으로 잇지 **않는다** —
 // 그러면 기울기에 작은 출렁임(극값 5개)이 다시 생긴다. 식을 그대로 계산한다.
+//
+// ⚠️ **원 측정값은 저장소에 넣지 않는다 — 재배포 문제다.** 피팅에 쓴 (코드값, 선형)
+// 쌍은 로컬 Lightroom에 설치된 **Adobe DCP 카메라 프로필을 일부 사용해** 뽑았다.
+// 그 산출물을 커밋하면 Adobe 자산의 파생물을 재배포하는 셈이 된다. 저장소가 제조사
+// TDS PDF를 두지 않고 추출 수치만 두는 것과 같은 방침이고(→ `README.md` 라이선스),
+// 여기서는 그보다 더 보수적으로 **계수만** 둔다.
+//
+// **대가 — 이 다섯 수는 저장소 안에서 재유도되지 않는다.** `tools/measure-chart.py`가
+// 도구로 남아 있지만 입력 데이터가 없어 검사가 재피팅으로 대조할 수 없다. 그래서
+// 검사는 계수가 아니라 **곡선이 지켜야 할 성질**을 본다(단조성 · 기울기 극값 ≤ 2 ·
+// 색상 보존 역 왕복 — `tools/check-tone.js`). 계수를 갱신할 사람은 원본 브래킷을
+// 다시 갖춰야 한다. ⚠️ **"측정값을 커밋해 재현 가능하게 하자"는 제안이 반복해서
+// 나온다 — 위 이유로 기각된 것이다.** 다시 꺼내려면 라이선스부터 확인할 것.
 
 /** 피팅식 ln(선형) — 앵커 전. */
 function acrFitLn(v) {
@@ -173,6 +186,13 @@ function acrStandardMidGray() {
 }
 
 /**
+ * 입력별 `remap` 캐시. 4097항 역조회표를 만드는 데 6ms가 들고, 엔진은 파라미터가
+ * 한 번 바뀔 때마다 LUT을 세 벌(미리보기 1 + 팔레트·컬러휠 2) 굽는다 — 매번 새로
+ * 만들면 그것만 18ms다. 전달함수 객체는 모듈 상수라 키로 그대로 쓸 수 있다.
+ */
+const REMAP_CACHE = new Map();
+
+/**
  * **색상 보존 톤 커브의 역** — ACR은 톤 커브를 채널마다 따로 걸지 않는다.
  *
  * DNG SDK `RefBaselineRGBTone`: 선형 ProPhoto에서 **최대·최소 채널에만** 커브를 걸고,
@@ -190,10 +210,19 @@ function acrStandardMidGray() {
  * 선형값이 아니라 **등가 코드**를 돌려준다: 채널별 `decode`에 넣으면 색상 보존 역과
  * 같은 선형값이 나오는 v. 최대·최소 채널은 원래 v 그대로이고 중간 채널만 바뀐다.
  *
- * @returns {(r:number, g:number, b:number, out:Float64Array) => boolean}
- *          등가 코드 3개를 out에 쓴다. 무채색이라 바뀔 게 없으면 false(out은 그대로 입력)
+ * **그래서 바뀐 채널 번호를 돌려준다.** 호출자가 세 채널을 다 다시 계산하지 않게
+ * 하려는 것이다 — `film.js`가 그러고 있었고, 격자점마다 축 밖 응답을 3번 구해
+ * 33³ LUT 생성이 prophoto 11ms 대비 87ms였다(그중 57ms가 이 중복). 중간 채널
+ * 하나만 구하면 같은 값이 나온다. 불리언을 돌려주던 때는 그 사실이 주석에만
+ * 있어서 지켜지지 않았다 — **계약을 반환값에 실어 지킬 수 있게 한다.**
+ *
+ * @returns {(r:number, g:number, b:number, out:Float64Array) => number}
+ *          `out`에 등가 코드 3개를 쓰고 **바뀐 채널 번호**(0=R·1=G·2=B)를 돌려준다.
+ *          무채색이라 바뀔 게 없으면 `-1`(out은 그대로 입력).
  */
 function remapCodes(inp) {
+  const cached = REMAP_CACHE.get(inp);
+  if (cached) return cached;
   const N = 4096;
   const tab = new Float64Array(N + 1);
   for (let i = 0; i <= N; i++) tab[i] = inp.decode(i / N);
@@ -207,22 +236,24 @@ function remapCodes(inp) {
     const span = tab[hi] - tab[lo];
     return (lo + (span > 0 ? (L - tab[lo]) / span : 0)) / N;
   };
-  return function remap(r, g, b, out) {
+  const remap = function remap(r, g, b, out) {
     out[0] = r; out[1] = g; out[2] = b;
     let mx = 0, mn = 0;
     for (let c = 1; c < 3; c++) {
       if (out[c] > out[mx]) mx = c;
       if (out[c] < out[mn]) mn = c;
     }
-    if (out[mx] === out[mn]) return false;
+    if (out[mx] === out[mn]) return -1;
     // 색상 보존 역 — 보간은 ACR 작업 공간(선형) 값에서, 인코딩을 푼 y = v^γ
     const md = 3 - mx - mn;
     const y = (c) => Math.pow(out[c], WORKING_GAMMA);
     const t = (y(md) - y(mn)) / (y(mx) - y(mn));
     const lmn = inp.decode(out[mn]);
     out[md] = inv(lmn + t * (inp.decode(out[mx]) - lmn));
-    return true;
+    return md;
   };
+  REMAP_CACHE.set(inp, remap);
+  return remap;
 }
 
 const INPUTS = [

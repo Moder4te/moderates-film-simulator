@@ -558,11 +558,12 @@ function buildLut(film, opts) {
         let pr, pgv, pb;
         if (dodgeBurnOn) {
           let Dr = densityAxis[0][ri], Dg = densityAxis[1][gi], Db = densityAxis[2][bi];
-          if (remap && remap(ri / d, gi / d, bi / d, rc)) {
-            Dr = dbState.density[0](rc[0]);
-            Dg = dbState.density[1](rc[1]);
-            Db = dbState.density[2](rc[2]);
-          }
+          // 색상 보존 역은 **중간 채널 하나만** 옮긴다(→ inputs.remapCodes). 세 채널을
+          // 다 다시 구하면 같은 값을 두 번 더 계산하는 것뿐이다.
+          const md = remap ? remap(ri / d, gi / d, bi / d, rc) : -1;
+          if (md === 0) Dr = dbState.density[0](rc[0]);
+          else if (md === 1) Dg = dbState.density[1](rc[1]);
+          else if (md === 2) Db = dbState.density[2](rc[2]);
           const d0 = dbState.d0;
           const dr = Dr - d0[0], dg = Dg - d0[1], db_ = Db - d0[2];
           const lumaDelta = (dr + dg + db_) / 3;
@@ -579,11 +580,11 @@ function buildLut(film, opts) {
           pr = axis[0][ri];
           pgv = axis[1][gi];
           pb = axis[2][bi];
-          if (remap && remap(ri / d, gi / d, bi / d, rc)) {
-            pr = axisAt(0, rc[0]);
-            pgv = axisAt(1, rc[1]);
-            pb = axisAt(2, rc[2]);
-          }
+          // 중간 채널만 축 밖으로 옮겨진다 — 최대·최소 채널은 `axis`의 값 그대로다.
+          const md = remap ? remap(ri / d, gi / d, bi / d, rc) : -1;
+          if (md === 0) pr = axisAt(0, rc[0]);
+          else if (md === 1) pgv = axisAt(1, rc[1]);
+          else if (md === 2) pb = axisAt(2, rc[2]);
         }
 
         let R = pr;

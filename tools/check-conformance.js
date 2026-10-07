@@ -151,6 +151,42 @@ const ref = PROBES.map((p) => {
   ok(".xmp === 엔진", max < XMP_TOL, `최대차 ${max.toExponential(2)} (전 격자점 ${n}³)`);
 }
 
+// ── 2b. 잔차 감김 — **전수 불변식** ───────────────────────────────────
+//
+// `xmp.residual`은 값이 아니라 항등과의 차를 담는다. 복원값(잔차 + 항등항)이 0이나
+// 65536에 **정확히** 닿으면 mod 65536으로 감겨 **흰색이 검정으로** 뒤집힌다.
+//
+// ⚠️ **이 검사가 없어서 오래 출하됐다.** 처음 가드는 코너 8점만 막았는데, 코너는
+// 하필 잔차 인코딩에서도 값 그대로일 때와 같은 수를 내서 포맷 검증에 쓸모가 없던
+// 바로 그 점들이다(→ `core/io/xmp.js`의 `residual` 주석). 실제로는 **중간 격자점의
+// 출력 1.0**에서도 난다. 2026-10-07에 가드를 전 격자점으로 일반화했는데, 그때까지
+// 출하된 프로파일 36종 중 **28종**이 영향 범위였다 — `prophoto`(그 시점의 기본값)
+// 변형 10종을 포함한다. 즉 acr-standard가 만든 결함이 아니라 드러낸 결함이다.
+//
+// 조합을 훑어 "지금 그런 점이 나오나"를 보는 것으로는 부족하다 — 필름·인화지·
+// 스캐너·그레이딩을 건드리면 언제든 다시 나온다. **(v, i) 전역에서 감김이 불가능한
+// 것**이 지켜야 할 성질이고, 그건 32 × 4001점으로 전수 확인된다.
+{
+  const denom = xmp.LUT_SIZE - 1;
+  let wrapped = 0, worstLoss = 0, firstBad = null;
+  for (let i = 0; i < xmp.LUT_SIZE; i++) {
+    const base = Math.round((i / denom) * 65536);
+    for (let k = 0; k <= 4000; k++) {
+      const v = k / 4000;
+      const dec = (((xmp.residual(v, i, denom) + base) % 65536) + 65536) % 65536 / 65536;
+      if (Math.abs(dec - v) > 0.5) {
+        wrapped++;
+        if (!firstBad) firstBad = `i=${i} v=${v} → ${dec.toFixed(4)}`;
+      } else worstLoss = Math.max(worstLoss, Math.abs(dec - v));
+    }
+  }
+  ok("xmp.residual — 전 격자 × 전 출력값에서 감김이 불가능", wrapped === 0,
+    wrapped ? `감김 ${wrapped}건 (예: ${firstBad})` : `${xmp.LUT_SIZE}×4001점 전수`);
+  // 가드가 양끝을 1단계 안쪽으로 자르는 비용. XMP_TOL이 이 폭을 품어야 한다.
+  ok("xmp.residual — 가드로 인한 손실이 허용차 안", worstLoss <= XMP_TOL,
+    `최대 ${worstLoss.toExponential(2)} (허용차 ${XMP_TOL.toExponential(2)}, ${(worstLoss * 255).toFixed(4)}/255)`);
+}
+
 // ── 3. putPixels 경로 ────────────────────────────────────────────────
 //
 // applyLut은 호스트 API를 부르므로 여기서 직접 못 돌린다. 대신 그것이 쓰는
