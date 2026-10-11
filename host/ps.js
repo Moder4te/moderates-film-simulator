@@ -251,24 +251,10 @@ function gaussianBlur(radiusPx) {
 }
 
 /**
- * Maximum(최대값) 필터 — 밝은 영역을 형태학적으로 팽창시켜 **원반(disk)**을 만든다.
- * 가우시안의 종형 곡선과 달리 특정 반경까지 꽉 찬 뒤 경계에서 뚝 떨어진다.
- * roundness로 사각이 아닌 원형 팽창. **반경은 1~100px 정수 상한**(PS 제약).
- */
-function maximumFilter(radiusPx) {
-  const r = Math.max(1, Math.min(100, Math.round(radiusPx)));
-  return {
-    _obj: "maximum",
-    radius: { _unit: "pixelsUnit", _value: r },
-    select: { _enum: "maximumMinimumSelectType", _value: "roundness" },
-  };
-}
-
-/**
  * 활성 레이어를 percent%로 확대·축소한다 (중심 고정).
  *
- * 블룸 최적화용이다 — 넓게 번지는 성분은 **낮은 해상도에서 계산해도 결과가 같다.**
- * 1/4로 줄이면 픽셀은 1/16, 반경도 1/4이라 큰 반경 필터의 비용이 급감한다.
+ * 그레인 존 레이어 확대(G3)에 쓴다. (예전엔 할레이션 블룸을 축소본에서 계산하는 데도
+ * 썼다 — 할레이션은 이제 `core/optics/halation.js`가 JS로 축소 계산한다.)
  *
  * 보간은 bilinear로 둔다. 어차피 곧 크게 blur할 것이라 더 비싼 보간이 의미가 없다.
  */
@@ -425,7 +411,6 @@ module.exports = {
   fillLayer,
   addNoise,
   gaussianBlur,
-  maximumFilter,
   scaleLayer,
   selectChannel,
   stampVisible,

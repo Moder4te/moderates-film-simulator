@@ -77,4 +77,4 @@ async function apply(doc, grading, prefix) {
   }
 }
 
-module.exports = { apply };
+module.exports = { apply, gammaFor };

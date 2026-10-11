@@ -55,27 +55,16 @@ function defaultParams() {
 
     halation: {
       enabled: true,
-      // 할레이션이 발생하는 최소 휘도 0~255
-      threshold: 205,
-      // 마스터 강도 0~100 (각 스케일 불투명도에 곱해진다)
-      strength: 70,
-      // 확산 반경. 이미지 긴 변 대비 비율(%). 포맷 배율·스케일 배율이 곱해진다.
+      // 할레이션 문턱 — 적색 채널 인코딩값 0~255. 선형으로 풀어 그 위 초과분만 번진다
+      // (core/optics/halation.js). 예전(PS 필터) 기본 205보다 낮은 것은 문턱이 이제
+      // 선형광 초과분의 시작점이라서다 — 150 ≈ 선형 0.3
+      threshold: 150,
+      // 강도 0~100. 선형광 이득 = 강도 × 0.036 — 기본 50이 P0 비교에서 고른 「E 1.8」
+      strength: 50,
+      // 확산 반경 R. 이미지 긴 변 대비 %. 포맷 배율이 곱해진다. 커널은 지수 감쇠
+      // 두 개(λ = 0.6R · 2.0R) — 핫코어·미드·블리딩·원반·색조는 예전 PS 필터 체인의
+      // 손잡이라 없앴다(색은 적감층 재노광 비율이 정한다)
       radius: 1.2,
-      // 다중스케일 블룸 프로파일 0~100. core=타이트 핫코어(Color Dodge),
-      // mid=붉은 링 본체(Add), bleed=광역 블리딩(Add).
-      core: 80,
-      mid: 78,
-      bleed: 60,
-      // 원반화 0~70. 0=순수 가우시안(부드러운 종형), 70=하드 원반(Maximum 팽창 후
-      // 최소 소프트). 할레이션은 베이스 반사라 경계가 뚜렷한 원반에 가깝다.
-      // ⚠️ 상한이 70인 이유 — 그 위는 소프트 엣지가 얇아져 인공적으로 보인다(실기 확인).
-      disk: 60,
-      // 채널별 반경 배율(DoG). R을 넓게, G·B를 좁게 블러해 R만 도달하는 바깥
-      // 구간에 **순수 붉은 링**을 만든다. 차등이 클수록 링이 넓고 선명하다.
-      channelSpread: { r: 1.0, g: 0.35, b: 0.22 },
-      // 소스 틴트 색상(색조). buildRedSource가 이 색으로 소스를 칠한다.
-      tintHue: 14,
-      tintSaturation: 85,
     },
 
     grain: {
@@ -127,7 +116,16 @@ function migrate(raw) {
   const base = defaultParams();
   if (!raw || typeof raw !== "object") return base;
 
+  // 할레이션 — 예전 PS 필터 체인 스키마(core·mid·bleed·disk·tint…)면 문턱·강도의
+  // **의미가 바뀌었다**(감마 공간 문턱·레이어 불투명도 → 선형광 문턱·이득). 옛 값을
+  // 그대로 실으면 룩이 엉뚱해지므로 새 기본값으로 되돌리고 켜짐·반경만 살린다.
+  // 옛 키는 버린다 — 남기면 다시 저장할 때마다 따라다닌다.
   const h = raw.halation || {};
+  const legacy = "disk" in h || "core" in h || "channelSpread" in h;
+  const hal = { ...base.halation };
+  for (const k of legacy ? ["enabled", "radius"] : ["enabled", "threshold", "strength", "radius"]) {
+    if (k in h) hal[k] = h[k];
+  }
   return {
     ...base,
     ...raw,
@@ -135,11 +133,7 @@ function migrate(raw) {
     medium: { ...base.medium, ...(raw.medium || {}) },
     // raw.tone이 없으면(구 프리셋) 기본값 0 — 그레이딩이 조용히 걸리지 않는다.
     tone: { ...base.tone, ...(raw.tone || {}) },
-    halation: {
-      ...base.halation,
-      ...h,
-      channelSpread: { ...base.halation.channelSpread, ...(h.channelSpread || {}) },
-    },
+    halation: hal,
     grain: { ...base.grain, ...(raw.grain || {}) },
   };
 }

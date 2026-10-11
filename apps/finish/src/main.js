@@ -173,12 +173,6 @@ function syncUI() {
   setSlider("halThreshold", h.threshold);
   setSlider("halStrength", h.strength);
   setSlider("halRadius", h.radius);
-  setSlider("halCore", h.core);
-  setSlider("halMid", h.mid);
-  setSlider("halBleed", h.bleed);
-  setSlider("halDisk", h.disk);
-  setSlider("halHue", h.tintHue);
-  setSlider("halSat", h.tintSaturation);
 
   const g = params.grain;
   $("grainEnabled").checked = g.enabled;
@@ -318,12 +312,6 @@ function wire() {
   bindSlider("halThreshold", "halation.threshold");
   bindSlider("halStrength", "halation.strength");
   bindSlider("halRadius", "halation.radius");
-  bindSlider("halCore", "halation.core");
-  bindSlider("halMid", "halation.mid");
-  bindSlider("halBleed", "halation.bleed");
-  bindSlider("halDisk", "halation.disk");
-  bindSlider("halHue", "halation.tintHue");
-  bindSlider("halSat", "halation.tintSaturation");
   bindCheckbox("halationEnabled", "halation.enabled");
 
   bindSlider("grainShadow", "grain.shadow");

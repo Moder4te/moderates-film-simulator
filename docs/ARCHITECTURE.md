@@ -466,23 +466,26 @@ grain_px  = (µm / 1000) × px_per_mm
   빈도 <0.1%"로 잡는다.
 - 프리셋 키는 `tone`이다. `grading`은 **엔진 스키마**라 migrate가 통과시킨다(충돌 금지).
 
-### 할레이션 — `apps/finish/src/halation.js`
+### 할레이션 — `core/optics/halation.js` (계산) · `apps/finish/src/halation.js` (PS 왕복)
 
 ```
-buildRedSource: R 채널 smoothstep(임계, knee) × hsvTint(색조,채도) → putPixels
-  ↓ 스케일마다 복제
-Core   ×0.3  Color Dodge   colorize로 화이트닝
-Mid    ×1.1  Linear Dodge  붉은 링 본체
-Bleed  ×4.0  Linear Dodge  광역 헤일로
-  ↓ 각 스케일에 채널 차등(DoG) 곱: r 1.0 / g 0.35 / b 0.22
-원반(disk): Maximum 필터로 팽창 후 잔여 가우시안. Maximum은 1~100px 정수 상한.
+합성본 getPixels → 선형(v^γ, γ = ProPhoto 1.8 / 그 외 2.2)
+  소스 = 적색 선형값의 문턱 초과분 (threshold 인코딩값 → 선형 knee)
+  ↓ 축소본에 면적 평균으로 모은다 (가장 작은 σ가 2px 이상 남게)
+커널 = 0.6·Exp(λ=0.6R) + 0.4·Exp(λ=2.0R) ≈ 가우시안 4개 합(σ 0.3/0.75/1.7/4.0 R)
+  각 가우시안 = 박스블러 3회 (누적합, 반경 무관)
+  ↓ 쌍선형 확대
+선형에서 + 이득 × 헤일로 × 적감층 비율(R 1 : G 0.07 : B 0.01) → 재인코딩 (8bit TPDF 디더)
+→ 새 레이어 한 장에 putPixels (Normal)
 ```
 
-- **추출은 적색 채널 구동**이다. 휘도로 뽑으면 포화 적색 네온(휘도 ~76)이 임계에
-  안 걸려 붉은 오염이 아예 안 난다.
-- **소스를 애초에 오렌지-레드로 칠한다.** 회색으로 뽑고 뒤에서 `colorize`하면 명도만
-  보고 단색으로 덮어 채널 차등이 만든 링이 뭉개진다. 그래서 Mid·Bleed는 colorize 없음.
-- 불투명도 = `strength × 스케일 가중`.
+- **에너지 보존 컨볼루션**이다. 작은 반짝임은 희미하게, 큰 광원은 진하게 번진다.
+  예전 Maximum 팽창(원반)은 둘을 같은 크기·밝기로 만들었다(→ RESOLVED.md).
+- **선형광에서 더한다.** PS 블렌드(Add·Screen)는 감마 공간이라 쓰지 않는다 — 그래서
+  산출물이 "헤일로만 든 레이어"가 아니라 "헤일로를 더한 합성본"이다. 레이어 토글·
+  불투명도는 그대로 된다.
+- **색은 적감층 재노광 비율**에서 나온다. 틴트·채널별 반경 차는 없다.
+- 노드에서 돈다 — `tools/check-halation.js`(에너지 보존 · 작은 점 ≪ 큰 광원 · 해상도 불변).
 
 ### LUT
 

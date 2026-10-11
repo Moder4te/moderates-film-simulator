@@ -102,15 +102,9 @@ async function seedIfEmpty() {
   const night = defaultParams();
   night.name = "Night Halation";
   night.category = "Starter";
-  night.halation.threshold = 200;
-  night.halation.strength = 80;
+  night.halation.threshold = 135;
+  night.halation.strength = 70;
   night.halation.radius = 1.6;
-  night.halation.core = 80;
-  night.halation.mid = 55;
-  night.halation.bleed = 8;
-  night.halation.disk = 60;
-  night.halation.tintHue = 24;
-  night.halation.tintSaturation = 70;
   night.grain.midtone = 55;
 
   // 중형 — 같은 입자여도 확대율이 낮아 곱게 나온다. 포맷 차이를 보여주는 예시
@@ -119,11 +113,10 @@ async function seedIfEmpty() {
   medium.category = "Starter";
   medium.medium.format = "67";
   medium.grain.midtone = 35;
-  medium.halation.strength = 30;
+  medium.halation.strength = 25;
 
-  // CineStill 800T — 강한 붉은 할레이션이 시그니처. 웹 작례 5장 실측으로 튜닝했다:
-  // 하이라이트 주변 붉은 링이 코어 바로 밖 3~7px(이미지폭 ~1.5%)에서 피크(R/G
-  // 1.5~1.9, R-B +0.4~0.5)를 이루고 ~5.5%까지 뻗는다. 색조 ~14°, 채도 ~65%.
+  // CineStill 800T — 강한 붉은 할레이션이 시그니처(안티할레이션 층이 없다). 웹 작례
+  // 5장에서 붉은 빛이 이미지폭 ~5.5%까지 뻗었다 — 긴 꼬리(λ=2.0R)가 그 거리에 닿도록 R을 잡았다.
   // ⚠️ 이 필름의 청록 섀도·전체 색감은 **색이라 엔진 소관**이다. 여기 프리셋은
   // 할레이션·그레인만 담는다(마감 스키마에 색이 없다). 색까지 원하면 엔진에서
   // 800T 프로파일을 함께 쓴다.
@@ -131,16 +124,12 @@ async function seedIfEmpty() {
   cine.name = "CineStill 800T";
   cine.category = "Film";
   cine.grain.iso = 800; // ISO 800
-  cine.halation.threshold = 155; // 붉은 네온 R 중앙값(~177)까지 걸리게 낮춤(실측)
+  cine.halation.threshold = 120; // 붉은 네온(R 중앙 ~177)도 충분히 번지게
   cine.halation.strength = 80;
-  cine.halation.radius = 1.4; // bleed ×4 → ~5.6% 확산, 실측 범위와 일치
-  cine.halation.core = 70;
-  cine.halation.mid = 86; // 붉은 링 본체
-  cine.halation.bleed = 85; // 넓은 붉은 헤일로가 강한 것이 특징
-  cine.halation.disk = 70; // 경계 뚜렷한 원반형 번짐 (상한)
-  cine.halation.tintHue = 14;
-  cine.halation.tintSaturation = 90;
+  cine.halation.radius = 1.4;
 
+  // ⚠️ 할레이션 값은 2026-10-07 JS 재구현(선형광 지수 커널) 직후 어림으로 옮겼다 —
+  // 실기 재튜닝은 TODO R1.
   await save(classic);
   await save(night);
   await save(medium);
