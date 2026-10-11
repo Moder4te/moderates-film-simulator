@@ -12,6 +12,7 @@ const presets = require("./src/presets");
 const batch = require("./src/batch");
 const cslider = require("./lib/shared/ui/cslider");
 const format = require("./lib/core/optics/format");
+const ps = require("./lib/host/ps");
 const { entrypoints } = require("uxp");
 
 let params = defaultParams();
@@ -252,8 +253,22 @@ async function onApply() {
   setBusy(true);
   setStatus("적용 중…");
   try {
+    // W1: 기준 장변이 문서와 다르면 그레인 크기가 조용히 틀린다. 막지는 않는다 —
+    // 출력 크기를 직접 지정하는 것은 정상 사용이다.
+    let warning = "";
+    try {
+      const doc = ps.activeDocument();
+      const m = params.medium || {};
+      const docEdge = Math.max(doc.width, doc.height);
+      const refEdge = format.longEdgeFor(doc, m.reference, m.customLongEdge);
+      if (Math.round(refEdge) !== Math.round(docEdge)) {
+        warning = ` (입자 크기 기준 ${Math.round(refEdge)}px ≠ 문서 장변 ${Math.round(docEdge)}px — 그레인이 기준 크기로 계산됨)`;
+      }
+    } catch (e) {
+      console.error("해상도 검사 실패", e); // 문서 없음은 아래 파이프라인이 보고한다
+    }
     await pipeline.applyToActiveDocument(params);
-    setStatus("적용 완료");
+    setStatus("적용 완료" + warning);
   } catch (e) {
     setStatus(e.message || String(e), true);
   } finally {
