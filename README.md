@@ -48,14 +48,42 @@
 `android/`는 **엔진(색)만** 담은 안드로이드 앱이다. `core/color`를 그대로 WebView에 실어
 휴대폰에서 사진 한 장에 필름 LUT을 건다 — 필름 · 노광 · 인화지 · 스캐너 · 닷지·번.
 마감(할레이션·그레인)은 들어 있지 않다. 결과는 `Pictures/FilmSim`에 **새 파일로** 저장하고
-원본은 건드리지 않는다. 갤러리에서 "공유"로 넘겨 열 수도 있다. Android 10 이상.
+원본은 건드리지 않는다. 갤러리·파일 앱에서 "공유"로 넘겨 열 수도 있다. Android 10 이상.
+
+### RAW — 정식 경로
+
+갤럭시(폴드 등, 기본 카메라 프로 모드·Expert RAW의 DNG)와 카메라 RAW(ARW · CR3 · CR2 ·
+NEF · RAF · ORF · RW2 …)를 **앱 안에서 LibRaw로 직접 현상한다.** 인자는
+`tools/decode-raw.py`와 같다 — 카메라 화이트밸런스, 자동 밝기 없음, 감마 1(선형),
+ProPhoto 16bit. 즉 「중립 현상」 조건 (b)가 **구성상** 성립하고, 엔진은 그것을
+「리니어 +N스톱」(기본 +5)으로 읽는다. `tools/check-raw-native.py`가 같은 RAW를 폰 코드와
+rawpy로 각각 풀어 화소 단위로 대조한다(CI에서 매번 — 현재 16bit 최대차 0).
+
+- RAW를 열면 인화지가 곡선 없는 것이면 **Kodak Endura Premier**로 바꾼다 — 리니어 입력은
+  어깨 있는 인화지가 필요하다(`inputs.js` `combinationWarning`).
+- DNG의 BaselineExposure(폰 RAW는 일부러 어둡게 기록하고 이 값으로 "올려 보라"고 적어 둔다)는
+  **노광 슬라이더 시작값**으로 옮긴다. 현상 값 자체는 decode-raw.py와 같게 둔다.
+- 기준 그레이를 재지 않으므로(`--midgray` 없음) 노출은 노광 슬라이더로 눈으로 맞춘다 —
+  조건 (a)는 노광과 대수적으로 같아 완전히 상쇄된다.
+- 미리보기는 줄인 것으로 계산하고, 저장할 때 원본 해상도에 네이티브로 같은 LUT을 건다.
+  메모리가 모자라면 "RAW 반해상도로 현상"을 켠다.
+- ⚠️ **JPEG XL로 압축한 DNG는 못 연다** — LibRaw가 Adobe DNG SDK 없이는 풀지 못한다.
+  카메라 앱에 RAW 압축(JPEG XL) 설정이 있으면 끄고 찍는다.
+- LibRaw(LGPL 2.1 / CDDL 1.0)는 빌드 때 받아 정적으로 링크한다(CDDL 조건). 소스는
+  <https://github.com/LibRaw/LibRaw> 0.22.2.
+
+### JPEG · HEIC
+
+sRGB를 ProPhoto로 옮겨 엔진에 넣는다. ⚠️ 휴대폰 JPEG은 「중립 현상」이 아니다 — 카메라
+앱의 톤 커브가 이미 걸려 있어 조건 (b)를 못 맞춘다. 노광으로 맞춰 보는 **근사**다.
+
+### 빌드
 
 - APK는 GitHub Actions(`android` 워크플로)가 빌드한다 → 실행 페이지의 Artifacts
   `film-sim-engine-apk`. `v*` 태그면 릴리스에도 붙는다.
-- 직접 빌드: Android SDK + JDK 17 + Node가 있으면 `cd android && ./gradlew assembleRelease`
-  (Gradle이 `tools/build-android-web.js`로 엔진 번들을 먼저 만든다).
-- ⚠️ 휴대폰 JPEG(sRGB)은 「중립 현상」이 아니다 — 카메라 앱의 톤 커브가 이미 걸려 있다.
-  sRGB → ProPhoto로 옮겨 엔진에 넣지만 조건 (b)는 못 맞춘다. 노광으로 맞춰 보는 **근사**다.
+- 직접 빌드: Android SDK(NDK·CMake 포함) + JDK 17 + Node + git이 있으면
+  `cd android && ./gradlew assembleRelease`. Gradle이 `tools/build-android-web.js`로 엔진
+  번들을 먼저 만들고, CMake가 LibRaw를 받아 빌드한다.
 
 ## 설치
 

@@ -24,6 +24,25 @@ android {
         targetSdk 35
         versionCode vMajor * 10000 + vMinor * 100 + vPatch
         versionName engineVersion
+
+        ndk {
+            // 요즘 폰(갤럭시 폴드 포함)은 전부 arm64다. 에뮬레이터용 x86_64도 같이 싣는다.
+            abiFilters "arm64-v8a", "x86_64"
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags "-fexceptions -frtti"
+                arguments "-DANDROID_STL=c++_static"
+            }
+        }
+    }
+
+    // RAW 현상(LibRaw) + LUT 적용. LibRaw 소스는 CMake가 빌드 때 받는다.
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
     }
 
     signingConfigs {

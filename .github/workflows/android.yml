@@ -20,6 +20,8 @@ on:
       - "apps/engine/src/params.js"
       - "apps/engine/manifest.json"
       - "tools/build-android-web.js"
+      - "tools/check-raw-native.py"
+      - "tools/decode-raw.py"
       - ".github/workflows/android.yml"
     tags: ["v*"]
   pull_request:
@@ -28,6 +30,8 @@ on:
       - "core/color/**"
       - "apps/engine/src/params.js"
       - "tools/build-android-web.js"
+      - "tools/check-raw-native.py"
+      - "tools/decode-raw.py"
       - ".github/workflows/android.yml"
   workflow_dispatch:
 
@@ -35,6 +39,29 @@ permissions:
   contents: write
 
 jobs:
+  # 폰의 네이티브 RAW 현상이 tools/decode-raw.py(rawpy)와 화소 단위로 같은가,
+  # 그리고 네이티브 LUT 적용이 엔진(core/color/lut.js)과 같은가.
+  raw-native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install rawpy numpy
+      - name: 호스트용 현상 도구 빌드
+        run: |
+          cmake -S android/app/src/main/cpp -B build/raw-native
+          cmake --build build/raw-native -j
+      - name: 표본 RAW (rawpy 저장소의 시험 파일)
+        run: |
+          mkdir -p build/raw-samples
+          curl -sSfL -o build/raw-samples/sample.NEF https://raw.githubusercontent.com/letmaik/rawpy/main/test/iss030e122639.NEF
+      - run: python tools/check-raw-native.py build/raw-native/filmsim-raw-cli build/raw-samples/sample.NEF
+
   apk:
     runs-on: ubuntu-latest
     steps:

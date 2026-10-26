@@ -66,6 +66,7 @@ main {
 
 #stage {
   position: relative;
+  flex-shrink: 0; /* main이 스크롤 컨테이너라 줄어들면 사진이 아래 컨트롤 위로 넘친다 */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -184,4 +185,13 @@ button:disabled {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
+}
+
+.warn {
+  color: var(--accent);
+}
+
+/* .field·.check의 display:flex가 hidden 속성을 이기지 않게 */
+[hidden] {
+  display: none !important;
 }

@@ -41,6 +41,11 @@
           <select id="scanner"></select>
         </label>
 
+        <label class="field" id="headroomRow" hidden>
+          <span>RAW 헤드룸 — 기준 그레이 위로 담는 스톱</span>
+          <select id="headroom"></select>
+        </label>
+
         <label class="check">
           <input id="dodgeBurn" type="checkbox" />
           <span>닷지·번 (실험적 — 명암 넓은 장면)</span>
@@ -51,6 +56,12 @@
           <span>저장 시 정밀 LUT (65³)</span>
         </label>
 
+        <label class="check" id="rawHalfRow" hidden>
+          <input id="rawHalf" type="checkbox" />
+          <span>RAW 반해상도로 현상 (빠름 · 메모리 절약, 다음에 여는 RAW부터)</span>
+        </label>
+
+        <p id="warning" class="note warn" hidden></p>
         <p id="note" class="note"></p>
       </section>
     </main>

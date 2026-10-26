@@ -5,10 +5,16 @@
  * 레이어·문서가 없으니 원본은 늘 메모리에 그대로 있고, 결과는 새 파일로만 저장한다.
  * **원본 파일을 덮어쓰는 길이 없다.**
  *
- * 색 계산은 전부 worker.js(엔진)에서 한다. 여기는 입출력과 화면뿐이다.
+ * 소스는 두 종류다.
+ *   srgb8  JPEG·PNG·HEIC 등 — WebView가 풀고, 저장도 여기서 한다
+ *   raw16  RAW(DNG·ARW·CR3·NEF …) — 안드로이드 쪽이 LibRaw로 톤 커브 없이 현상해
+ *          들고 있다. 여기는 줄인 미리보기만 받고, 원본 해상도 적용·저장은 엔진이
+ *          구운 LUT을 넘겨 네이티브가 한다(큰 버퍼가 WebView를 거치지 않게).
+ *
+ * 색 계산(LUT 굽기)은 전부 worker.js(엔진)에서 한다. 여기는 입출력과 화면뿐이다.
  *
  * 안드로이드 쪽 다리(`window.FilmSimAndroid`)가 없으면 일반 브라우저로 보고
- * 저장을 다운로드로 대신한다 — 데스크톱에서 화면을 시험할 수 있게.
+ * 저장을 다운로드로 대신한다 — 데스크톱에서 화면을 시험할 수 있게(RAW는 안 된다).
  */
 
 (function () {
@@ -18,7 +24,7 @@
   const PREVIEW_EDGE = 1600;
   /**
    * 저장 해상도 상한(화소 수). WebView 캔버스는 기기마다 한계가 달라 그보다 큰
-   * 사진은 비율을 지켜 줄인다. 줄였으면 상태줄에 알린다.
+   * 사진은 비율을 지켜 줄인다. 줄였으면 상태줄에 알린다. RAW에는 해당 없다(네이티브).
    */
   const MAX_PIXELS = 40e6;
   const LUT_PREVIEW = 33;
@@ -37,8 +43,13 @@
     exposureOut: $("exposureOut"),
     paper: $("paper"),
     scanner: $("scanner"),
+    headroomRow: $("headroomRow"),
+    headroom: $("headroom"),
     dodgeBurn: $("dodgeBurn"),
     precise: $("precise"),
+    rawHalfRow: $("rawHalfRow"),
+    rawHalf: $("rawHalf"),
+    warning: $("warning"),
     note: $("note"),
     status: $("status"),
     save: $("save"),
@@ -68,7 +79,11 @@
   // ── 상태 ────────────────────────────────────────────────────────────────
 
   let catalog = null;
-  let source = null; // { name, full: ImageData, preview: ImageData, scaled: bool }
+  /**
+   * srgb8: { kind, name, full: ImageData, preview: ImageData, scaled }
+   * raw16: { kind, name, info, preview16: Uint16Array, width, height, original: {key, image} }
+   */
+  let source = null;
   let result = null; // 미리보기 결과 ImageData
   let showingOriginal = false;
   let rendering = false;
@@ -79,6 +94,8 @@
     ui.status.textContent = text;
   }
 
+  const isRaw = () => !!source && source.kind === "raw16";
+
   function currentParams() {
     const p = JSON.parse(JSON.stringify(catalog.defaults));
     p.name = "Android";
@@ -87,6 +104,9 @@
     p.film.paper = ui.paper.value;
     p.film.scanner = ui.scanner.value;
     p.film.dodgeBurn.enabled = ui.dodgeBurn.checked;
+    // RAW는 앱이 톤 커브 없이 현상한 것이라 「리니어 +N스톱」으로 읽는다. 그 밖은 sRGB를
+    // ProPhoto로 옮겨 넣으므로 기본 입력 그대로다(worker.js 머리말).
+    p.film.input = isRaw() ? `linear-h${ui.headroom.value}` : "prophoto";
     return p;
   }
 
@@ -101,9 +121,13 @@
     sel.value = value;
   }
 
-  function syncExposureRange() {
+  function exposureRange() {
     const f = catalog.films.find((x) => x.id === ui.film.value);
-    const [lo, hi] = (f && f.exposureRange) || [-2, 2];
+    return (f && f.exposureRange) || [-2, 2];
+  }
+
+  function syncExposureRange() {
+    const [lo, hi] = exposureRange();
     ui.exposure.min = lo;
     ui.exposure.max = hi;
     const v = Math.min(hi, Math.max(lo, Number(ui.exposure.value)));
@@ -117,10 +141,28 @@
     ui.note.textContent = [pp && pp.note, sc && sc.id !== "none" && sc.note].filter(Boolean).join(" · ");
   }
 
+  /** 입력 × 인화지 조합 경고(core/color/inputs.js combinationWarning). RAW에서만 뜬다. */
+  async function updateWarning() {
+    const r = await call({ type: "warning", params: currentParams() });
+    ui.warning.textContent = r.warning ? "⚠️ " + r.warning.replace(/\*\*/g, "") : "";
+    ui.warning.hidden = !r.warning;
+  }
+
+  function describeSource() {
+    if (!source) return "";
+    if (isRaw()) {
+      const i = source.info;
+      const cam = [i.make, i.model].filter(Boolean).join(" ");
+      return `${source.name} · RAW ${i.width}×${i.height}${cam ? " · " + cam : ""}`;
+    }
+    return `${source.name} · ${source.full.width}×${source.full.height}`;
+  }
+
   // ── 그리기 ──────────────────────────────────────────────────────────────
 
   function draw() {
-    const img = showingOriginal || !result ? source && source.preview : result;
+    let img = result;
+    if (showingOriginal || !result) img = isRaw() ? source.original.image : source && source.preview;
     if (!img) return;
     const ctx = ui.view.getContext("2d");
     if (ui.view.width !== img.width || ui.view.height !== img.height) {
@@ -128,6 +170,7 @@
       ui.view.height = img.height;
     }
     ctx.putImageData(img, 0, 0);
+    ui.badge.textContent = isRaw() ? "원본 (선형, 톤 커브 없음)" : "원본";
     ui.badge.hidden = !showingOriginal;
   }
 
@@ -139,10 +182,27 @@
   async function renderImage(img, size) {
     const copy = new Uint8ClampedArray(img.data);
     const r = await call(
-      { type: "render", params: currentParams(), size, buffer: copy.buffer },
+      { type: "render", source: "srgb8", params: currentParams(), size, buffer: copy.buffer },
       [copy.buffer]
     );
     return { image: new ImageData(new Uint8ClampedArray(r.buffer), img.width, img.height), ms: r.ms };
+  }
+
+  async function renderRawPreview(original) {
+    const copy = new Uint16Array(source.preview16);
+    const r = await call(
+      { type: "render", source: "raw16", original, params: currentParams(), size: LUT_PREVIEW, buffer: copy.buffer },
+      [copy.buffer]
+    );
+    return { image: new ImageData(new Uint8ClampedArray(r.buffer), source.width, source.height), ms: r.ms };
+  }
+
+  /** RAW 원본 보기 — 헤드룸이 바뀌면 다시 만든다(그레이를 놓는 자리가 바뀌므로). */
+  async function ensureRawOriginal() {
+    const key = ui.headroom.value;
+    if (source.original.key === key) return;
+    const r = await renderRawPreview(true);
+    source.original = { key, image: r.image };
   }
 
   /** 미리보기 갱신. 계산 중에 또 바뀌면 끝난 뒤 한 번만 더 돈다(코얼레싱). */
@@ -156,10 +216,12 @@
     try {
       do {
         dirty = false;
-        const r = await renderImage(source.preview, LUT_PREVIEW);
+        const r = isRaw() ? await renderRawPreview(false) : await renderImage(source.preview, LUT_PREVIEW);
         result = r.image;
+        if (isRaw()) await ensureRawOriginal();
         draw();
-        setStatus(`${source.name} · ${source.full.width}×${source.full.height} · ${r.ms}ms`);
+        await updateWarning();
+        setStatus(`${describeSource()} · ${r.ms}ms`);
       } while (dirty);
     } catch (err) {
       setStatus("오류: " + err.message);
@@ -185,6 +247,15 @@
     return ctx.getImageData(0, 0, w, h);
   }
 
+  function showSource() {
+    result = null;
+    showingOriginal = false;
+    ui.view.hidden = false;
+    ui.empty.hidden = true;
+    ui.save.disabled = false;
+    ui.headroomRow.hidden = !isRaw();
+  }
+
   async function openBlob(blob, name) {
     setStatus("여는 중…");
     // EXIF 방향은 createImageBitmap이 반영한다(imageOrientation 기본값 from-image).
@@ -203,31 +274,91 @@
     const preview = pk < 1 ? readPixels(bmp, Math.round(w * pk), Math.round(h * pk)) : copyImageData(full);
     bmp.close && bmp.close();
 
-    source = { name: name || "photo", full, preview, scaled };
-    result = null;
-    ui.view.hidden = false;
-    ui.empty.hidden = true;
-    ui.save.disabled = false;
+    source = { kind: "srgb8", name: name || "photo", full, preview, scaled };
+    showSource();
     draw();
     await refresh();
     if (scaled) setStatus(`${ui.status.textContent} · 큰 사진이라 ${w}×${h}로 줄여 처리`);
   }
 
-  ui.open.addEventListener("click", () => ui.file.click());
+  /**
+   * 네이티브가 현상해 둔 RAW를 받는다.
+   *
+   * 리니어 입력에는 **실측 곡선 인화지**가 필요하다 — 어깨 없는 인화지는 +4~6스톱을
+   * 못 눌러 채널마다 다른 자리가 잘린다(inputs.js combinationWarning). 그래서 지금
+   * 인화지가 곡선이 없으면 곡선 있는 것으로 바꾸고 알린다.
+   *
+   * DNG의 BaselineExposure(폰 RAW에 흔하다 — 일부러 어둡게 기록하고 "이만큼 올려
+   * 보라"고 적어 둔다)는 노광 슬라이더의 시작값으로 옮긴다. 현상 값 자체는
+   * decode-raw.py와 같게 두고, 올리는 것은 엔진 노광으로 한다(조건 (a)는 노광과
+   * 대수적으로 같다 — docs/ARCHITECTURE.md).
+   */
+  async function openRaw(name) {
+    const info = JSON.parse(bridge.rawInfo());
+    const res = await fetch("/raw/preview?t=" + Date.now());
+    if (!res.ok) throw new Error("RAW 미리보기를 못 받았다 (" + res.status + ")");
+    const preview16 = new Uint16Array(await res.arrayBuffer());
+    if (preview16.length !== info.previewWidth * info.previewHeight * 3) throw new Error("RAW 미리보기 크기가 맞지 않는다");
+
+    source = {
+      kind: "raw16",
+      name: name || "raw",
+      info,
+      preview16,
+      width: info.previewWidth,
+      height: info.previewHeight,
+      original: { key: null, image: null },
+    };
+    showSource();
+
+    const notes = [];
+    const cur = catalog.papers.find((x) => x.id === ui.paper.value);
+    if (!cur || !cur.hasCurves) {
+      const curved = catalog.papers.find((x) => x.hasCurves);
+      if (curved) {
+        ui.paper.value = curved.id;
+        updateNote();
+        notes.push(`인화지를 ${curved.name}(실측 곡선)으로 바꿈`);
+      }
+    }
+    const [lo, hi] = exposureRange();
+    const be = Math.round((info.baselineExposure || 0) * 10) / 10;
+    ui.exposure.value = Math.min(hi, Math.max(lo, be));
+    syncExposureRange();
+    if (be) notes.push(`DNG 기준 노출 ${be > 0 ? "+" : ""}${be.toFixed(1)}스톱을 노광 시작값으로`);
+
+    await refresh();
+    const extra = [];
+    if (info.clippedPercent > 0.5) extra.push(`센서 포화 ${info.clippedPercent.toFixed(1)}%`);
+    if (notes.length || extra.length) setStatus(`${ui.status.textContent} · ${notes.concat(extra).join(" · ")}`);
+  }
+
+  ui.open.addEventListener("click", () => {
+    // 안드로이드에서는 네이티브 선택기로 고른다 — RAW는 WebView가 못 풀어서
+    // 파일을 안드로이드 쪽이 받아야 한다. 고른 뒤 filmSimOpenShared가 불린다.
+    if (bridge) bridge.pickPhoto();
+    else ui.file.click();
+  });
   ui.file.addEventListener("change", () => {
     const f = ui.file.files && ui.file.files[0];
     ui.file.value = "";
     if (f) openBlob(f, f.name).catch((err) => setStatus("열기 실패: " + err.message));
   });
 
-  /** 다른 앱에서 "공유"로 넘겨받은 사진. 안드로이드 쪽이 /shared/image로 내준다. */
+  /** 안드로이드 쪽이 고르거나 "공유"로 넘겨받은 사진을 연다. */
   async function openShared() {
-    if (!bridge || !bridge.hasSharedImage()) return;
+    if (!bridge || !catalog) return;
+    const kind = bridge.sourceKind();
+    const name = bridge.sharedImageName() || "photo";
+    if (kind === "raw") return openRaw(name);
+    if (kind !== "image") return;
     const res = await fetch("/shared/image?t=" + Date.now());
-    if (!res.ok) throw new Error("공유 사진을 못 읽었다 (" + res.status + ")");
-    await openBlob(await res.blob(), bridge.sharedImageName() || "shared");
+    if (!res.ok) throw new Error("사진을 못 읽었다 (" + res.status + ")");
+    await openBlob(await res.blob(), name);
   }
   window.filmSimOpenShared = () => openShared().catch((err) => setStatus("열기 실패: " + err.message));
+  /** RAW 현상은 수 초 걸린다. 안드로이드 쪽이 진행 상황을 여기로 알린다. */
+  window.filmSimStatus = (text) => setStatus(text);
 
   // ── 원본 비교 (누르고 있는 동안) ────────────────────────────────────────
 
@@ -255,32 +386,60 @@
     });
   }
 
+  function bytesToBase64(u8) {
+    let s = "";
+    for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+
+  /** 네이티브 저장은 비동기다 — 끝나면 filmSimSaveDone으로 결과가 돌아온다. */
+  let saveDone = null;
+  window.filmSimSaveDone = (answer) => {
+    if (saveDone) saveDone(answer);
+    saveDone = null;
+  };
+
+  async function saveRaw(size, name) {
+    setStatus("원본 해상도에 LUT 적용 중…");
+    const r = await call({ type: "lut", source: "raw16", params: currentParams(), size });
+    const b64 = bytesToBase64(new Uint8Array(r.table));
+    const answer = await new Promise((resolve) => {
+      saveDone = resolve;
+      bridge.saveRaw(b64, size, name);
+    });
+    if (!answer.startsWith("ok:")) throw new Error(answer.replace(/^error:/, ""));
+    return answer.slice(3);
+  }
+
+  async function saveSrgb(size, name) {
+    setStatus("원본 해상도로 계산 중…");
+    const r = await renderImage(source.full, size);
+    const c = canvasOf(r.image.width, r.image.height);
+    c.getContext("2d").putImageData(r.image, 0, 0);
+    const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", JPEG_QUALITY));
+    if (!blob) throw new Error("JPEG 인코딩 실패");
+    if (bridge) {
+      const answer = bridge.saveJpeg(await blobToBase64(blob), name);
+      if (!answer.startsWith("ok:")) throw new Error(answer.replace(/^error:/, ""));
+      return answer.slice(3);
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    return name + " (다운로드)";
+  }
+
   ui.save.addEventListener("click", async () => {
     if (!source || saving) return;
     saving = true;
     ui.save.disabled = true;
     try {
-      setStatus("원본 해상도로 계산 중…");
       const size = ui.precise.checked ? LUT_PRECISE : LUT_PREVIEW;
-      const r = await renderImage(source.full, size);
-      const c = canvasOf(r.image.width, r.image.height);
-      c.getContext("2d").putImageData(r.image, 0, 0);
-      const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", JPEG_QUALITY));
-      if (!blob) throw new Error("JPEG 인코딩 실패");
-
       const name = `${baseName(source.name)}_${ui.film.value}.jpg`;
-      if (bridge) {
-        const answer = bridge.saveJpeg(await blobToBase64(blob), name);
-        if (!answer.startsWith("ok:")) throw new Error(answer.replace(/^error:/, ""));
-        setStatus("저장됨: " + answer.slice(3));
-      } else {
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = name;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-        setStatus("다운로드: " + name);
-      }
+      const where = isRaw() ? await saveRaw(size, name) : await saveSrgb(size, name);
+      setStatus("저장됨: " + where);
     } catch (err) {
       setStatus("저장 실패: " + err.message);
     } finally {
@@ -298,6 +457,12 @@
       fillSelect(ui.film, catalog.films, (f) => `${f.name} (ISO ${f.iso})`, d.id);
       fillSelect(ui.paper, catalog.papers, (x) => x.name, d.paper);
       fillSelect(ui.scanner, catalog.scanners, (x) => x.name, d.scanner);
+      fillSelect(
+        ui.headroom,
+        catalog.headrooms.map((h) => ({ id: String(h) })),
+        (x) => `+${x.id}스톱${Number(x.id) === catalog.defaultHeadroom ? " (기본 — decode-raw.py와 같음)" : ""}`,
+        String(catalog.defaultHeadroom)
+      );
       ui.exposure.value = d.exposure;
       ui.dodgeBurn.checked = !!(d.dodgeBurn && d.dodgeBurn.enabled);
       syncExposureRange();
@@ -317,7 +482,14 @@
           refresh();
         });
       }
+      ui.headroom.addEventListener("change", refresh);
       ui.dodgeBurn.addEventListener("change", refresh);
+
+      if (bridge) {
+        ui.rawHalfRow.hidden = false;
+        ui.rawHalf.checked = bridge.rawHalfSize();
+        ui.rawHalf.addEventListener("change", () => bridge.setRawHalfSize(ui.rawHalf.checked));
+      }
 
       setStatus("준비");
       window.filmSimOpenShared();
