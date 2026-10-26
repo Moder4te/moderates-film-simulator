@@ -12,6 +12,8 @@ name: android
 
 on:
   push:
+    # tags만 두면 브랜치 푸시에서는 돌지 않는다 — branches를 같이 적어야 한다.
+    branches: ["**"]
     paths:
       - "android/**"
       - "core/color/**"
