@@ -43,6 +43,20 @@
 손보다 색이 망가질 수 있는데, 그 실수는 결과를 보기 전까지 드러나지 않는다. 나눠 두면
 마감 플러그인에 색 코드가 **아예 들어 있지 않아** 물리적으로 불가능해진다.
 
+## 안드로이드 앱 (엔진만)
+
+`android/`는 **엔진(색)만** 담은 안드로이드 앱이다. `core/color`를 그대로 WebView에 실어
+휴대폰에서 사진 한 장에 필름 LUT을 건다 — 필름 · 노광 · 인화지 · 스캐너 · 닷지·번.
+마감(할레이션·그레인)은 들어 있지 않다. 결과는 `Pictures/FilmSim`에 **새 파일로** 저장하고
+원본은 건드리지 않는다. 갤러리에서 "공유"로 넘겨 열 수도 있다. Android 10 이상.
+
+- APK는 GitHub Actions(`android` 워크플로)가 빌드한다 → 실행 페이지의 Artifacts
+  `film-sim-engine-apk`. `v*` 태그면 릴리스에도 붙는다.
+- 직접 빌드: Android SDK + JDK 17 + Node가 있으면 `cd android && ./gradlew assembleRelease`
+  (Gradle이 `tools/build-android-web.js`로 엔진 번들을 먼저 만든다).
+- ⚠️ 휴대폰 JPEG(sRGB)은 「중립 현상」이 아니다 — 카메라 앱의 톤 커브가 이미 걸려 있다.
+  sRGB → ProPhoto로 옮겨 엔진에 넣지만 조건 (b)는 못 맞춘다. 노광으로 맞춰 보는 **근사**다.
+
 ## 설치
 
 1. Photoshop 2023 (v24) 이상.

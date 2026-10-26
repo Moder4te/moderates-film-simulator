@@ -1,0 +1,14 @@
+# Gradle·Android Studio 산출물
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+captures/
+
+# tools/build-android-web.js가 android/web + core/color로 만든다 — 원본은 저 둘이다
+app/src/main/assets/www/
+
+# 서명 키는 저장소에 두지 않는다
+*.jks
+*.keystore

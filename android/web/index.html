@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Film Sim 엔진</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Film Sim <span>엔진</span></h1>
+      <button id="open" class="primary">사진 열기</button>
+      <input id="file" type="file" accept="image/*" hidden />
+    </header>
+
+    <main>
+      <section id="stage">
+        <canvas id="view" hidden></canvas>
+        <p id="empty">사진을 열면 여기에 필름 결과가 나온다.<br />누르고 있으면 원본을 보여준다.</p>
+        <span id="badge" hidden>원본</span>
+      </section>
+
+      <section id="controls">
+        <label class="field">
+          <span>필름</span>
+          <select id="film"></select>
+        </label>
+
+        <label class="field">
+          <span>노광 <output id="exposureOut">0.0</output> 스톱</span>
+          <input id="exposure" type="range" min="-2" max="2" step="0.1" value="0" />
+        </label>
+
+        <label class="field">
+          <span>인화지</span>
+          <select id="paper"></select>
+        </label>
+
+        <label class="field">
+          <span>스캐너</span>
+          <select id="scanner"></select>
+        </label>
+
+        <label class="check">
+          <input id="dodgeBurn" type="checkbox" />
+          <span>닷지·번 (실험적 — 명암 넓은 장면)</span>
+        </label>
+
+        <label class="check">
+          <input id="precise" type="checkbox" checked />
+          <span>저장 시 정밀 LUT (65³)</span>
+        </label>
+
+        <p id="note" class="note"></p>
+      </section>
+    </main>
+
+    <footer>
+      <span id="status">준비</span>
+      <button id="save" class="primary" disabled>저장</button>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
