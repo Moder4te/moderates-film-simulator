@@ -64,6 +64,77 @@
         <p id="warning" class="note warn" hidden></p>
         <p id="note" class="note"></p>
       </section>
+
+      <!-- 카메라 FTP 받기 — 안드로이드에서만 보인다 -->
+      <section id="ftp" hidden>
+        <details id="ftpBox">
+          <summary>카메라에서 바로 받기 (FTP) <span id="ftpBadge" class="badge"></span></summary>
+
+          <button id="ftpToggle" class="primary wide">FTP 받기 시작</button>
+          <p id="ftpError" class="note warn" hidden></p>
+
+          <dl id="ftpInfo">
+            <dt>서버 주소</dt>
+            <dd id="ftpHosts">—</dd>
+            <dt>포트</dt>
+            <dd id="ftpPort">—</dd>
+            <dt>사용자 이름</dt>
+            <dd id="ftpUser">—</dd>
+            <dt>비밀번호</dt>
+            <dd><span id="ftpPassword">—</span> <button id="ftpNewPassword" class="small">새로 만들기</button></dd>
+            <dt>저장 위치</dt>
+            <dd id="ftpFolder">—</dd>
+          </dl>
+
+          <label class="field">
+            <span>받으면 자동으로 열기</span>
+            <select id="ftpAuto">
+              <option value="raw">RAW만 (RAW+JPEG로 보낼 때 권장)</option>
+              <option value="all">모든 사진</option>
+              <option value="off">안 함</option>
+            </select>
+          </label>
+
+          <h3>받은 사진 <span class="note">— 눌러서 열기</span></h3>
+          <ul id="ftpList"></ul>
+
+          <details class="guide">
+            <summary>Sony α7R V 설정 방법</summary>
+            <ol>
+              <li>
+                폰에서 <b>모바일 핫스팟</b>을 켠다(밖에서). 집·스튜디오에선 카메라와 폰을 같은 Wi-Fi에
+                붙여도 된다.
+              </li>
+              <li>
+                카메라 <b>MENU → 네트워크 → Wi-Fi → 액세스 포인트 설정</b>에서 폰 핫스팟(또는 그 Wi-Fi)에
+                연결한다.
+              </li>
+              <li>
+                <b>MENU → 네트워크 → 전송/원격 → FTP 전송 기능 → 서버 설정</b>에서 서버 하나를 고르고:
+                <ul>
+                  <li>호스트 이름 = 위 <b>서버 주소</b> (핫스팟이면 「핫스팟」 줄)</li>
+                  <li>보안 프로토콜 = <b>끔</b> (이 앱은 평문 FTP만 받는다)</li>
+                  <li>포트 = 위 <b>포트</b></li>
+                  <li>사용자 정보 = 위 사용자 이름·비밀번호</li>
+                  <li>패시브 모드 항목이 있으면 = <b>켬</b></li>
+                  <li>디렉터리 = 아무거나 (폰에는 한 폴더로 모인다)</li>
+                </ul>
+              </li>
+              <li>
+                <b>FTP 기능</b>을 켜고, 찍는 대로 보내려면 <b>자동 FTP 전송</b>을 켠다. 보낼 파일 종류는
+                <b>RAW+JPEG</b>을 권한다 — RAW만 보내면 장당 수십~백MB라 느리다.
+              </li>
+              <li>이 화면에서 <b>FTP 받기 시작</b>을 누른 뒤 카메라에서 연결한다.</li>
+            </ol>
+            <p class="note">메뉴 이름은 카메라 펌웨어·언어 설정에 따라 조금 다를 수 있다.</p>
+          </details>
+
+          <details class="guide">
+            <summary>기록</summary>
+            <pre id="ftpLog"></pre>
+          </details>
+        </details>
+      </section>
     </main>
 
     <footer>

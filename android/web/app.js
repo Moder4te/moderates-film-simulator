@@ -448,6 +448,89 @@
     }
   });
 
+  // ── 카메라 FTP 받기 ─────────────────────────────────────────────────────
+  //
+  // 서버는 안드로이드 포그라운드 서비스(FtpService)가 돌린다 — 화면이 꺼져도 받는다.
+  // 여기는 상태를 그리고 시작·정지만 누른다. 상태가 바뀌면 filmSimFtpUpdate가 불린다.
+
+  const ftp = {
+    section: $("ftp"),
+    box: $("ftpBox"),
+    badge: $("ftpBadge"),
+    toggle: $("ftpToggle"),
+    error: $("ftpError"),
+    hosts: $("ftpHosts"),
+    port: $("ftpPort"),
+    user: $("ftpUser"),
+    password: $("ftpPassword"),
+    newPassword: $("ftpNewPassword"),
+    folder: $("ftpFolder"),
+    auto: $("ftpAuto"),
+    list: $("ftpList"),
+    log: $("ftpLog"),
+  };
+  let ftpRunning = false;
+
+  function formatSize(bytes) {
+    return bytes >= 1048576 ? (bytes / 1048576).toFixed(1) + "MB" : Math.max(1, Math.round(bytes / 1024)) + "KB";
+  }
+
+  function renderFtp(st) {
+    ftpRunning = !!st.running;
+    ftp.badge.textContent = ftpRunning ? "받는 중" : "";
+    ftp.badge.className = "badge" + (ftpRunning ? " on" : "");
+    ftp.toggle.textContent = ftpRunning ? "FTP 받기 정지" : "FTP 받기 시작";
+    ftp.error.textContent = st.error || "";
+    ftp.error.hidden = !st.error;
+
+    const addrs = st.addresses || [];
+    ftp.hosts.textContent = addrs.length
+      ? addrs.map((a) => `${a.ip}  (${a.label})`).join("\n")
+      : "네트워크 없음 — 핫스팟이나 Wi-Fi를 켜세요";
+    ftp.hosts.style.whiteSpace = "pre-line";
+    ftp.port.textContent = st.port;
+    ftp.user.textContent = st.user;
+    ftp.password.textContent = st.password;
+    // 서버가 도는 중에 바꾸면 이미 접속한 카메라와 어긋난다 — 멈춘 뒤에만
+    ftp.newPassword.disabled = ftpRunning;
+    ftp.folder.textContent = st.folder;
+    ftp.auto.value = st.autoOpen;
+
+    ftp.list.innerHTML = "";
+    for (const f of st.received || []) {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      name.textContent = f.name;
+      const meta = document.createElement("span");
+      meta.className = "meta";
+      meta.textContent = `${formatSize(f.size)} · ${new Date(f.time).toLocaleTimeString()}`;
+      li.append(name, meta);
+      li.addEventListener("click", () => bridge.ftpOpen(f.uri));
+      ftp.list.appendChild(li);
+    }
+    if (!(st.received || []).length) {
+      const li = document.createElement("li");
+      li.className = "note";
+      li.textContent = "아직 없음";
+      ftp.list.appendChild(li);
+    }
+    ftp.log.textContent = (st.log || []).join("\n");
+  }
+
+  function initFtp() {
+    ftp.section.hidden = false;
+    ftp.toggle.addEventListener("click", () => {
+      if (ftpRunning) bridge.ftpStop();
+      else bridge.ftpStart();
+    });
+    ftp.newPassword.addEventListener("click", () => bridge.ftpNewPassword());
+    ftp.auto.addEventListener("change", () => bridge.setFtpAutoOpen(ftp.auto.value));
+    window.filmSimFtpUpdate = (json) => renderFtp(JSON.parse(json));
+    const st = JSON.parse(bridge.ftpState());
+    renderFtp(st);
+    if (st.running) ftp.box.open = true;
+  }
+
   // ── 시작 ────────────────────────────────────────────────────────────────
 
   call({ type: "catalog" })
@@ -489,6 +572,7 @@
         ui.rawHalfRow.hidden = false;
         ui.rawHalf.checked = bridge.rawHalfSize();
         ui.rawHalf.addEventListener("change", () => bridge.setRawHalfSize(ui.rawHalf.checked));
+        initFtp();
       }
 
       setStatus("준비");

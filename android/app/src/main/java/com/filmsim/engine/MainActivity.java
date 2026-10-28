@@ -6,7 +6,11 @@ import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.ImageDecoder;
+import android.os.Build;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -26,6 +30,7 @@ import androidx.webkit.WebViewAssetLoader;
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -75,6 +80,30 @@ public class MainActivity extends Activity {
     private volatile String sourceName;
     private volatile RawDecoder raw; // worker 스레드에서만 바꾼다
 
+    /**
+     * FTP로 받아 자동으로 열 마지막 파일. 연사로 여러 장이 몰려오면 현상 대기열에
+     * 쌓이는데, 차례가 왔을 때 이것보다 오래된 것은 건너뛴다 — 최신 한 장만 현상한다.
+     */
+    private volatile Uri latestAuto;
+
+    private final FtpService.Observer ftpObserver = new FtpService.Observer() {
+        @Override
+        public void onFtpChanged() {
+            js("filmSimFtpUpdate", FtpService.stateJson(MainActivity.this));
+        }
+
+        @Override
+        public void onFtpReceived(String name, long size, String uri) {
+            onFtpChanged();
+            String mode = prefs().getString("ftpAutoOpen", "raw");
+            boolean rawFile = isRaw(name, null);
+            boolean image = rawFile || GalleryStorage.mimeFor(name).startsWith("image/");
+            if (mode.equals("all") && image || mode.equals("raw") && rawFile) {
+                runOnUiThread(() -> openSource(Uri.parse(uri), true));
+            }
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -113,6 +142,7 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new Bridge(), "FilmSimAndroid");
         setContentView(web);
 
+        FtpService.setObserver(ftpObserver);
         handleIntent(getIntent());
         web.loadUrl(START);
     }
@@ -128,11 +158,12 @@ public class MainActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQ_PICK || resultCode != RESULT_OK || data == null || data.getData() == null) return;
-        openSource(data.getData());
+        openSource(data.getData(), false);
     }
 
     @Override
     protected void onDestroy() {
+        FtpService.setObserver(null); // 서비스는 계속 돈다 — 화면이 없을 뿐
         worker.execute(() -> {
             if (raw != null) raw.close();
             raw = null;
@@ -154,17 +185,24 @@ public class MainActivity extends Activity {
         } else if (Intent.ACTION_VIEW.equals(intent.getAction())) {
             uri = intent.getData();
         }
-        if (uri != null) openSource(uri);
+        if (uri != null) openSource(uri, false);
     }
 
-    /** RAW면 현상(수 초)을 백그라운드로 돌리고, 아니면 WebView가 /shared/image로 직접 받는다. */
-    private void openSource(Uri uri) {
+    /**
+     * RAW면 현상(수 초)을 백그라운드로 돌리고, 아니면 WebView가 /shared/image로 직접 받는다.
+     * auto = FTP로 받아 자동으로 여는 것. 더 새 것이 오면 대기 중인 것은 건너뛴다.
+     */
+    private void openSource(Uri uri, boolean auto) {
         String name = displayName(uri);
         String mime = getContentResolver().getType(uri);
+        latestAuto = auto ? uri : null;
         if (isRaw(name, mime)) {
             js("filmSimStatus", "RAW 현상 중… " + name);
             final boolean half = prefs().getBoolean("rawHalf", false);
-            worker.execute(() -> decodeRaw(uri, name, half));
+            worker.execute(() -> {
+                if (auto && !uri.equals(latestAuto)) return; // 더 새 사진이 왔다
+                decodeRaw(uri, name, half);
+            });
         } else {
             imageUri = uri;
             sourceName = name;
@@ -237,6 +275,16 @@ public class MainActivity extends Activity {
         try {
             ContentResolver cr = getContentResolver();
             String mime = cr.getType(uri);
+            if (mime != null && (mime.contains("heif") || mime.contains("heic"))) {
+                // WebView(크롬)는 HEIF를 못 푼다 — 안드로이드 디코더로 풀어 JPEG(최고 품질)로 내준다.
+                // ⚠️ 10bit HEIF는 여기서 8bit가 된다. 계조가 중요하면 RAW를 쓴다.
+                Bitmap bmp = ImageDecoder.decodeBitmap(ImageDecoder.createSource(cr, uri),
+                        (decoder, info, src) -> decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE));
+                ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
+                bmp.compress(Bitmap.CompressFormat.JPEG, 100, jpeg);
+                bmp.recycle();
+                return new WebResourceResponse("image/jpeg", null, new ByteArrayInputStream(jpeg.toByteArray()));
+            }
             InputStream in = cr.openInputStream(uri);
             return new WebResourceResponse(mime != null ? mime : "image/jpeg", null, in);
         } catch (Exception e) {
@@ -345,6 +393,47 @@ public class MainActivity extends Activity {
                     toast("파일 선택기를 열 수 없다");
                 }
             });
+        }
+
+        // ── 카메라 FTP 받기 ──
+
+        @JavascriptInterface
+        public String ftpState() {
+            return FtpService.stateJson(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public void ftpStart() {
+            runOnUiThread(() -> {
+                // 알림이 없으면 서비스가 돌고 있는지 알 길이 없다(Android 13+는 권한이 필요)
+                if (Build.VERSION.SDK_INT >= 33
+                        && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[] {Manifest.permission.POST_NOTIFICATIONS}, 2);
+                }
+                startForegroundService(new Intent(MainActivity.this, FtpService.class)
+                        .setAction(FtpService.ACTION_START));
+            });
+        }
+
+        @JavascriptInterface
+        public void ftpStop() {
+            startService(new Intent(MainActivity.this, FtpService.class).setAction(FtpService.ACTION_STOP));
+        }
+
+        @JavascriptInterface
+        public void ftpNewPassword() {
+            FtpService.regeneratePassword(MainActivity.this);
+            ftpObserver.onFtpChanged();
+        }
+
+        @JavascriptInterface
+        public void setFtpAutoOpen(String mode) {
+            prefs().edit().putString("ftpAutoOpen", mode).apply();
+        }
+
+        @JavascriptInterface
+        public void ftpOpen(String uri) {
+            runOnUiThread(() -> openSource(Uri.parse(uri), false));
         }
 
         @JavascriptInterface

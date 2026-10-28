@@ -21,6 +21,7 @@ on:
       - "apps/engine/manifest.json"
       - "tools/build-android-web.js"
       - "tools/check-raw-native.py"
+      - "tools/check-ftp.py"
       - "tools/decode-raw.py"
       - ".github/workflows/android.yml"
     tags: ["v*"]
@@ -31,6 +32,7 @@ on:
       - "apps/engine/src/params.js"
       - "tools/build-android-web.js"
       - "tools/check-raw-native.py"
+      - "tools/check-ftp.py"
       - "tools/decode-raw.py"
       - ".github/workflows/android.yml"
   workflow_dispatch:
@@ -40,7 +42,7 @@ permissions:
 
 jobs:
   # 폰의 네이티브 RAW 현상이 tools/decode-raw.py(rawpy)와 화소 단위로 같은가,
-  # 그리고 네이티브 LUT 적용이 엔진(core/color/lut.js)과 같은가.
+  # 네이티브 LUT 적용이 엔진(core/color/lut.js)과 같은가, FTP 받기 서버가 규약대로 도는가.
   raw-native:
     runs-on: ubuntu-latest
     steps:
@@ -61,6 +63,8 @@ jobs:
           mkdir -p build/raw-samples
           curl -sSfL -o build/raw-samples/sample.NEF https://raw.githubusercontent.com/letmaik/rawpy/main/test/iss030e122639.NEF
       - run: python tools/check-raw-native.py build/raw-native/filmsim-raw-cli build/raw-samples/sample.NEF
+      # 카메라 FTP 받기 서버를 실제 FTP 클라이언트(ftplib)로 — 러너의 JDK로 돈다
+      - run: python tools/check-ftp.py
 
   apk:
     runs-on: ubuntu-latest
