@@ -241,6 +241,10 @@ UUID·RGBTable은 생성된 `.xmp`에서 **직접 뽑는다** — 따로 계산�
 되짚을 필요가 있을 때만 본다. 상세는 [`RESOLVED.md`](./RESOLVED.md).
 
 ```
+core   film.js 단계 구조화  모델의 단계(유제 → 인화 → 화이트포인트)를 한 번만 정의하고
+               buildLut은 평가만 한다(분리형/결합형). 출력은 비트 단위로 같다(3,691개
+               LUT 해시 대조). MID_GRAY_OFFSET 부호 잠재 결함 수정, 베이스 상수를
+               inputs.js로 일원화, 정합성 검사 5e 신설
 finish 2.19.1  W1 — 입자 크기 기준 장변 ≠ 문서 장변이면 적용 완료 문구에 경고(막지 않음)
 finish 2.19.0  할레이션 JS 재구현(core/optics/halation.js) — 선형광에서 에너지 보존
                컨볼루션(지수 감쇠 λ 0.6R·2.0R), 색은 적감층 재노광 비율. Maximum

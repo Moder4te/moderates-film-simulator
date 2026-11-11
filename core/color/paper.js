@@ -45,8 +45,7 @@
  */
 
 const { pchip, monotonic } = require("./curve");
-
-const ANCHOR = 0.18; // 18% 그레이
+const { ANCHOR } = require("./inputs"); // 18% 그레이 — 베이스 정의는 inputs.js에
 // 기준 그레이가 인화물에서 가져야 할 반사농도. −log10(0.18).
 // 곡선형 인화지의 인화 노광 k를 이 값에서 역산한다.
 const D_REF = -Math.log10(ANCHOR);

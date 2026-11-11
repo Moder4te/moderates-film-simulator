@@ -40,7 +40,8 @@ function scurve(v, a) {
  * 올릴수록 중간톤이 눌려 사진이 어두워진다 — 실측에서 중앙값이 88.5 → 37.8로
  * 반토막 났다. 피벗을 기준 그레이로 옮겨야 대비가 중간톤을 중심으로 벌어진다.
  */
-const PIVOT = Math.pow(0.18, 1 / 1.8);
+// 베이스 정의(inputs.js)에서 가져온다 — 0.18^(1/1.8)을 여기 다시 적지 않는다.
+const PIVOT = require("./inputs").byId("prophoto").midGrayEncoded;
 const PIVOT_IN = Math.log(0.5) / Math.log(PIVOT);
 const PIVOT_OUT = 1 / PIVOT_IN;
 

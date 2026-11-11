@@ -27,9 +27,13 @@
 
 const colorspace = require("./colorspace");
 
-const ANCHOR = 0.18;
-const WORKING_GAMMA = 1.8;
-const LOG2 = Math.log10(2);
+// ── 베이스 정의 — **이 수들의 집은 여기다** ──────────────────────────────
+//
+// 「중립 현상」을 정하는 두 수다. `film.js` · `paper.js` · `scanner.js`가 여기서
+// 가져다 쓴다. 다른 파일에 다시 적지 않는다(`DOCS.md` 갱신 규칙 1과 같은 이유).
+const ANCHOR = 0.18; // 18% 그레이 — 로그노광 H=0의 자리
+const WORKING_GAMMA = 1.8; // ProPhoto RGB
+const LOG2 = Math.log10(2); // 1스톱 (log10 단위)
 
 /**
  * 리니어 현상본의 **헤드룸** — 기준 그레이 위로 몇 스톱을 담는가.
@@ -321,4 +325,5 @@ module.exports = {
   DEFAULT_HEADROOM,
   ANCHOR,
   WORKING_GAMMA,
+  LOG2,
 };

@@ -7,8 +7,14 @@
  *   2. 로그 노광   H = log10(L / 0.18) + 스톱     18% 그레이를 H=0에 앵커
  *   3. 특성곡선    D = curve(H)                   층별 네거티브 농도
  *   4. 반전/인화   P = 10^(−paper(k − D))          인화지 응답. k는 확대기 필터
- *   5. 크로스토크  P' = M · P                     선형 공간에서 3×3
- *   6. 인코드      v' = P'^(1/γ)
+ *   5. 화이트포인트 P = finish(P)                층별 마무리. 곡선 인화지·리버설은 통과
+ *   6. 크로스토크  P' = M · P                     선형 공간에서 3×3
+ *   7. 인코드      v' = P'^(1/γ)
+ *
+ * 스캐너와 사용자 색 조정은 이 LUT **위에** 굽는다(`buildForParams`).
+ *
+ * 단계는 **한 번만 정의한다** — `emulsion`(1~3) · `layerStages`(4) ·
+ * `whitePointStage`(5). `buildLut`은 그것을 평가할 뿐이다(분리형/결합형, 아래).
  *
  * **4단계가 이 모델의 핵심이다.** 각 층의 농도를 그 층이 기준 노광에서 갖는 농도
  * D₀로 정규화한 뒤 인화 감마 pg로 되돌린다. 이렇게 두면 두 가지가 자동으로 성립한다.
@@ -36,9 +42,9 @@ const paper = require("./paper");
 const inputs = require("./inputs");
 const lut = require("./lut");
 
-const WORKING_GAMMA = 1.8; // ProPhoto RGB
-const ANCHOR = 0.18; // 18% 그레이
-const LOG2 = Math.log10(2);
+// 베이스 정의(18% 그레이 · ProPhoto γ1.8)는 `inputs.js`가 소유한다. 여기서 다시
+// 적지 않는다 — 같은 수를 두 파일이 각자 들면 한쪽만 바뀌는 날이 온다.
+const { ANCHOR, WORKING_GAMMA, LOG2 } = inputs;
 
 /**
  * 중간 그레이 앵커 보정 (로그10 단위). H=0을 TDS의 Log H Ref에서 이만큼 옮긴다.
@@ -100,107 +106,125 @@ function typeOf(film) {
 }
 
 /**
- * 네거티브 한 채널의 **농도(D) 계산만** 분리해 둔 것. `channelResponse`가
- * 표준 경로에서 쓰고, `buildLut`의 닷지·번 경로도 같은 걸 쓴다 — 필름의
- * 노광→농도 응답 자체는 두 경로에서 **완전히 같아야** 한다(안 그러면 "인화
- * 단계에서만 조정한다"는 전제가 깨진다). 인화(`print`)는 여기 안 들어있다.
+ * ── 단계 정의 — 모델의 각 단계는 **여기 한 벌만** 있다 ─────────────────────
+ *
+ *   emulsion      1~3단계  코드값 → 농도          (층 하나)
+ *   layerStages   4단계    농도 → 선형 포지티브    (인화. 리버설은 투과율)
+ *   whitePoint    화이트포인트 정규화             (층별 마무리)
+ *
+ * `buildLut`은 이 단계들을 **두 가지 방식으로 평가**할 뿐이다 — 채널 독립이면
+ * 축마다 미리 계산하고(분리형), 채널이 엮이면(닷지·번) 격자점마다 계산한다(결합형).
+ * 어느 쪽이든 같은 단계 객체를 부르므로 한 경로에만 단계가 빠질 길이 없다.
+ *
+ * 예전에는 단계 순서가 경로마다 손으로 복제돼 있었고, 그 틈에서 결함이 반복됐다 —
+ * 닷지·번 경로에 화이트포인트가 통째로 빠져 33³의 23.2%가 부분 클리핑됐고,
+ * 축 밖 값(remap)용으로 "응답 → 이득 → 롤오프"를 세 번째로 옮겨 적어야 했다.
  */
-function negativeDensity(points, exposureStops, wbShift, input) {
-  const inp = input || PROPHOTO_INPUT;
-  const fn = tabulate(pchip(monotonic(points)), TAB_MIN, TAB_MAX, TAB_STEPS);
-  const shift = exposureStops * LOG2 - MID_GRAY_OFFSET + (wbShift || 0);
-  const d0 = fn(MID_GRAY_OFFSET);
-  function density(v) {
-    const L = inp.decode(v);
-    const H = Math.log10(Math.max(L, L_FLOOR) / ANCHOR) + shift;
-    return fn(H);
-  }
-  return { density, d0 };
-}
 
 /**
- * 한 층의 응답 함수를 만든다. 입력 0~1(인코딩된 값) → 출력 선형 포지티브.
+ * 1~3단계 — 유제층 하나의 **코드값 → 농도**. 인화는 여기 없다.
  *
- * 네거티브: P = 0.18 · 10^(+pg · (D − D₀))
- *   노광이 늘면 농도가 오르고, 인화 감마 pg가 그것을 되돌려 밝기로 바꾼다.
- *   기준 노광에서 P = 0.18이 되도록 D₀로 정규화한다.
+ * 필름의 노광→농도 응답은 TDS 실측이고 어느 경로에서든 **완전히 같아야** 한다
+ * (안 그러면 "닷지·번은 인화 단계에서만 조정한다"는 전제가 깨진다).
  *
- * 리버설: P = 10^(−pg · (D − Dmin))
- *   **부호가 반대다.** 노광이 늘면 농도가 내려가고, 슬라이드는 그 자체가 볼 수 있는
- *   포지티브다 — 눈에 보이는 밝기가 곧 투과율 10^(−D)이다. 그래서 인화 단계가
- *   따로 없고 pg의 기본값이 1.0이다(슬라이드의 가파른 대비가 곧 그 필름의 룩이다).
+ * 축이 둘이다. **씬 축**은 18% 그레이가 H=0이고, **곡선 축**은 TDS의 Log H Ref가
+ * H=0이다. 둘 사이가 `MID_GRAY_OFFSET`이고 **변환은 이 함수 안에서만 한다** —
+ * 밖에서는 전부 씬 축으로 말한다(기준 그레이 = `at(0)`, 흰색 = `at(inp.hWhite)`).
  *
- *   정규화 기준도 다르다. 네거티브는 기준 그레이(D₀)에 맞추지만, 리버설은
- *   **최소 농도(Dmin)를 흰색 1.0에 맞춘다.** 슬라이드 스캐너가 하는 일이 그것이고,
- *   기준 그레이에 맞추면 대비가 2를 넘는 슬라이드에서 출력이 5를 넘어가 버린다.
+ * @param {number} sign  +1 네거티브 / −1 리버설(노광↑ → 농도↓)
+ * @param {number} [offset=MID_GRAY_OFFSET]  **검사 전용.** 0이 아닌 값에서도 기준점이
+ *   따라 움직이는지 `tools/check-conformance.js`가 본다. 상수가 0인 동안에는 부호가
+ *   뒤집혀 있어도 아무 결과도 안 달라져서, 실제로 그렇게 뒤집힌 채 있었다
+ *   (곡선은 `H − offset`에서 읽고 기준 농도는 `+offset`에서 잡았다 — 0.25를 넣으면
+ *   기준 그레이가 0.18이 아니라 0.05대로 인화되고 중성도 깨졌다).
+ * @returns {{density:(v:number)=>number, at:(H:number)=>number, exactAt:(H:number)=>number}}
+ *   density  코드값 → 농도. 노광 보정·텅스텐 캐스트 포함
+ *   at       씬 로그노광 → 농도. **보정 없이** — 정규화 기준점용이다. 기준을 현재
+ *            노광에서 잡으면 노광 보정이 스스로를 상쇄하고, 캐스트를 더하면 채널
+ *            정규화가 텅스텐 색을 중화해 버린다
+ *   exactAt  `at`과 같되 표를 거치지 않는다(`whitePoint`의 기준 봉우리용, 아래 참조)
  */
-function channelResponse(points, printGamma, exposureStops, sign, wbShift, makePrint, input) {
-  const inp = input || PROPHOTO_INPUT;
-
-  if (sign > 0) {
-    // 네거티브 — 기준 그레이에서 P = 0.18이 되도록 맞춘다.
-    //
-    // 인화 변환은 `paper.js`가 만든다. 인화지 곡선이 직선이면 예전 수식
-    // `0.18·10^(pg·(D−d0))`과 **대수적으로 같다**(paper.js 헤더 참조). 그래서
-    // `makePrint`가 없는 경로(모노·구 호출)는 그 수식을 그대로 쓴다.
-    const { density, d0 } = negativeDensity(points, exposureStops, wbShift, input);
-    const print = makePrint
-      ? makePrint(d0)
-      : (D) => ANCHOR * Math.pow(10, printGamma * (D - d0));
-    return function respond(v) {
-      return print(density(v));
-    };
-  }
-
-  // 리버설 곡선은 노광이 늘수록 농도가 **내려간다**. 단조 보정은 "증가"를
-  // 강제하므로 그대로 쓰면 곡선을 뭉갠다. 부호를 뒤집어 보정한 뒤 되돌린다.
-  const src = monotonic(points.map(([h, d]) => [h, -d])).map(([h, d]) => [h, -d]);
-  const fn = tabulate(pchip(src), TAB_MIN, TAB_MAX, TAB_STEPS);
-  const shift = exposureStops * LOG2 - MID_GRAY_OFFSET + (wbShift || 0);
-
-  // 리버설 — **가장 밝은 입력(v=1)이 만드는 농도**를 흰색 1.0에 맞춘다.
-  //
-  // 처음엔 곡선 전체의 최소 농도(Dmin)를 기준으로 잡았는데, 그러면 입력이 실제로
-  // 도달하지 못하는 노광 구간의 농도까지 기준이 되어 결과가 새까맣게 나온다
-  // (합성 곡선에서 최대 출력이 0.0099까지 떨어졌다). 스캐너가 하는 일은 "필름이
-  // 낼 수 있는 최저 농도"가 아니라 "장면의 가장 밝은 곳"을 흰색에 놓는 것이다.
-  //
-  // 기준은 **노광 보정 0에서** 잡는다. 현재 노광에서 다시 잡으면 노광 보정이
-  // 스스로를 상쇄한다(네거티브 화이트포인트와 같은 함정). 그래서 +노광은 흰색을
-  // 넘어 잘리는데, 슬라이드가 실제로 그렇게 날아간다.
-  const dWhite = fn(inp.hWhite + MID_GRAY_OFFSET);
-  return function respond(v) {
-    const L = inp.decode(v);
-    const H = Math.log10(Math.max(L, L_FLOOR) / ANCHOR) + shift;
-    return Math.pow(10, -printGamma * (fn(H) - dWhite));
+function emulsion(points, sign, exposureStops, wbShift, inp, offset) {
+  const off = offset === undefined ? MID_GRAY_OFFSET : offset;
+  // 단조 보정은 "증가"를 강제한다. 리버설 곡선은 노광이 늘수록 농도가 **내려가므로**
+  // 그대로 쓰면 곡선을 뭉갠다 — 부호를 뒤집어 보정한 뒤 되돌린다.
+  const pts =
+    sign > 0
+      ? monotonic(points)
+      : monotonic(points.map(([h, d]) => [h, -d])).map(([h, d]) => [h, -d]);
+  const exact = pchip(pts);
+  const fn = tabulate(exact, TAB_MIN, TAB_MAX, TAB_STEPS);
+  const shift = exposureStops * LOG2 - off + (wbShift || 0);
+  return {
+    density(v) {
+      const L = inp.decode(v);
+      return fn(Math.log10(Math.max(L, L_FLOOR) / ANCHOR) + shift);
+    },
+    at: (H) => fn(H - off),
+    exactAt: (H) => exact(H - off),
   };
 }
 
-// 입력 전달함수는 `core/color/inputs.js`가 소유한다 — 엔진과 내보내기가 같은 정의를
-// 써야 하기 때문이다. 기본(ProPhoto γ1.8)이 곧 「중립 현상」의 정의다.
-const PROPHOTO_INPUT = inputs.byId("prophoto");
-
 /**
- * 노광 보정 0에서 v=1이 만드는 선형 포지티브 값.
- * 화이트포인트 이득을 노광과 무관하게 고정하기 위한 기준.
+ * 4단계까지 — 층 하나의 단계 묶음. `density`(코드값 → 농도)와 `print`(농도 → 선형
+ * 포지티브)를 **따로** 내놓는다. 닷지·번이 그 사이에 끼기 때문이다.
  *
- * **`channelResponse`와 곡선을 만드는 방식이 다르다.** 여기는 `pchip`을 직접 쓰고,
- * 저쪽은 그것을 `tabulate`한다(안쪽 루프에서 픽셀마다 부르므로 표가 필요하다).
- * 전 필름 × 3층에서 두 값의 상대 차이는 **최대 1.3e-6** — 8bit 한 단계의 0.03%,
- * 격자 간격 2.2e-3 logH에서 pchip이 그만큼 매끄럽다는 뜻이다.
+ * 네거티브: P = 10^(−paper(k − D))
+ *   인화 변환은 `paper.js`가 만든다. 기준 그레이 농도 `d0`에서 P = 0.18이 되도록
+ *   맞춰지고, 직선 인화지면 예전 수식 `0.18·10^(pg·(D−d0))`과 대수적으로 같다.
  *
- * 맞추지 않고 둔다. 화이트포인트 기준으로는 표를 거치지 않은 쪽이 오히려 정확하고,
- * 맞추면 전 필름의 LUT 값이 그 크기만큼 움직여 얻는 것 없이 기준선만 흔들린다.
- * (예전 주석은 "channelResponse와 같은 곡선을 써야 한다"였는데 코드가 그렇지 않았다.)
+ * 리버설: P = 10^(−pg · (D − D_white))
+ *   **부호가 반대다.** 슬라이드는 그 자체가 볼 수 있는 포지티브라 눈에 보이는 밝기가
+ *   곧 투과율이다. 인화 단계가 따로 없고 pg의 기본값이 1.0이다(슬라이드의 가파른
+ *   대비가 곧 그 필름의 룩이다).
+ *
+ *   정규화 기준도 다르다 — 기준 그레이가 아니라 **가장 밝은 입력(v=1)이 만드는
+ *   농도**를 흰색 1.0에 맞춘다. 기준 그레이에 맞추면 대비가 2를 넘는 슬라이드에서
+ *   출력이 5를 넘어가 버린다. 곡선 전체의 최소 농도(Dmin)를 쓰면 입력이 도달하지
+ *   못하는 구간까지 기준이 되어 새까맣게 나온다(합성 곡선에서 최대 출력 0.0099).
+ *   스캐너가 하는 일은 "필름이 낼 수 있는 최저 농도"가 아니라 "장면의 가장 밝은
+ *   곳"을 흰색에 놓는 것이다. 기준이 노광 보정 0에서 잡히므로(`emulsion.at`)
+ *   +노광은 흰색을 넘어 잘리는데, 슬라이드가 실제로 그렇게 날아간다.
+ *
+ * @param {object|null} pp  인화지 프로파일. 리버설은 null
+ * @returns {{density:Function, print:Function, referencePeak:()=>number}}
  */
-function referencePeak(points, printGamma, makePrint, input) {
-  const inp = input || PROPHOTO_INPUT;
-  const f = pchip(monotonic(points));
-  const d0 = f(MID_GRAY_OFFSET);
-  const print = makePrint
-    ? makePrint(d0)
-    : (D) => ANCHOR * Math.pow(10, printGamma * (D - d0));
-  return print(f(inp.hWhite + MID_GRAY_OFFSET));
+function layerStages(film, ch, points, sign, exposureStops, wbShift, inp, pp) {
+  const em = emulsion(points, sign, exposureStops, wbShift, inp);
+
+  if (sign < 0) {
+    const pg = film.printGamma;
+    const dWhite = em.at(inp.hWhite);
+    return {
+      density: em.density,
+      print: (D) => Math.pow(10, -pg * (D - dWhite)),
+      referencePeak: () => 1, // 정의상 흰색 = 1.0. 화이트포인트 단계를 타지 않는다
+    };
+  }
+
+  const d0 = em.at(0); // 기준 그레이가 이 층에 만드는 농도 — 확대기 필터가 여기 맞춰진다
+  return {
+    density: em.density,
+    d0,
+    print: paper.transferFor(pp, film, ch, d0),
+
+    /**
+     * 노광 보정 0에서 v=1이 만드는 선형 포지티브 값 — 화이트포인트 이득의 기준.
+     *
+     * **`print`와 곡선을 읽는 방식이 다르다.** 여기는 `pchip`을 직접 쓰고
+     * (`exactAt`), 저쪽은 그것을 `tabulate`한 표를 쓴다(안쪽 루프에서 픽셀마다
+     * 부르므로 표가 필요하다). 전 필름 × 3층에서 두 값의 상대 차이는 **최대
+     * 1.3e-6** — 8bit 한 단계의 0.03%다.
+     *
+     * 맞추지 않고 둔다. 화이트포인트 기준으로는 표를 거치지 않은 쪽이 오히려
+     * 정확하고, 맞추면 전 필름의 LUT 값이 그 크기만큼 움직여 얻는 것 없이
+     * 기준선만 흔들린다.
+     */
+    referencePeak() {
+      const print = paper.transferFor(pp, film, ch, em.exactAt(0));
+      return print(em.exactAt(inp.hWhite));
+    },
+  };
 }
 
 /**
@@ -267,8 +291,135 @@ function dbCompress(m, limit, contrast) {
  */
 const DB_GAIN_FLOOR = 0.5;
 
+const PASS = (P) => P;
+
+/**
+ * 화이트포인트 정규화 방식을 정한다 — 단계를 탈지 말지의 **판단은 여기 하나**다.
+ *
+ *   리버설            "clip"  흰색 정규화가 `layerStages` 안에서 이미 끝났다. 여기서
+ *                             또 누르면 슬라이드 특유의 대비가 뭉개진다
+ *   실측 곡선 인화지  "clip"  인화지 발끝이 어깨를 물리적으로 만든다(아래 참조)
+ *   그 외             필름 정의의 `whitePoint`, 없으면 "rolloff"
+ */
+function whitePointMode(film, info, pp) {
+  if (info.sign < 0 || (pp && pp.curves)) return "clip";
+  return film.whitePoint || "rolloff";
+}
+
+/**
+ * 화이트포인트 정규화 — 층별 **마무리 함수** `finish[c](P)` 셋을 만든다.
+ *
+ * 실효대비(기울기 × printGamma)가 1을 넘는 층은 v=1에서 출력이 1.0을 넘는다.
+ * 예를 들어 Portra의 청감층은 실효대비 1.085라 0.18 × 5.56^1.085 = 1.16이 된다.
+ * 그대로 두면 층마다 다른 지점에서 잘려 **하이라이트의 색이 틀어진다**.
+ *
+ * 실제 스캐너는 필름의 농도 범위를 출력 범위에 맞춰 노출을 잡는다. 여기서도
+ * 같은 일을 한다 — 세 층 공통의 스칼라 이득이므로 **채널 비율(=색상)은 그대로**이고
+ * 전체 밝기만 내려간다. 대비가 센 필름에서 중간톤이 조금 어두워지는 것은
+ * 실제 스캔에서도 나타나는 정상적인 거동이다.
+ *
+ * 크로스토크 행의 합이 1.0을 넘을 수 있으므로 그 배수까지 함께 고려한다
+ * (출력_i ≤ 행합_i × max(P)).
+ *
+ * ⚠️ 이득은 **노광 보정 0을 기준으로** 계산한다. 현재 노광에서 다시 계산하면
+ * 노광을 올릴수록 하이라이트가 밝아져 이득이 더 세게 걸리고, 결과적으로
+ * 노광 보정이 스스로를 상쇄한다(실제로 +1스톱이 0스톱보다 어두워졌다) —
+ * 그래서 기준은 `layerStages`의 `referencePeak`에서 온다.
+ * 스캐너도 화이트포인트를 필름 기준으로 한 번 정하지 매 컷 다시 잡지 않는다.
+ *
+ * 리버설은 이 단계를 건너뛴다. Dmin을 흰색에 맞추는 정규화가 채널 응답 안에서
+ * 이미 끝나 있고, 여기서 또 누르면 슬라이드 특유의 대비가 뭉개진다.
+ *
+ * 기본은 **채널별 소프트 롤오프**(rolloff)다. 상한 근처만 부드럽게 눌러
+ * 1.0으로 수렴시키고, 무릎(knee) 아래는 손대지 않는다.
+ *
+ * 여기까지 두 번 틀렸다.
+ *
+ * 1차 — 세 층 공통 스칼라 이득. 이득이 가장 가파른 층(청감)에 맞춰지니 대비가
+ *   낮은 적감층이 더 눌려서 (a) 전체가 어두워지고 (b) 하이라이트가 청색으로
+ *   기울었다. 실측: 원본 대비 평균 R이 최대 −28, R−B가 +19.6 → −1.1로 20포인트
+ *   이동. 채도 높기로 이름난 Agfa Ultra 50이 피부를 시안으로 만들었다.
+ *
+ * 2차 — 채널별 이득. 흰색은 완벽히 중성이 됐지만(편차 0) **중간톤이 대신
+ *   틀어졌다**(Ultra 50 편차 0.091 = 8비트 23계단). 중성점이 중간톤에서
+ *   흰색으로 옮겨간 것뿐, 문제가 사라진 게 아니다. 채널 실효대비가 다르면
+ *   무채색 축이 전 구간 중성일 수 없다 — 어디를 고정할지의 문제다.
+ *
+ * 진짜 원인은 **TDS 곡선에 어깨(shoulder)가 없다**는 것이다. 대부분의 플롯이
+ * 직선부에서 잘려 있어(판독 기록 참조) 상한 부근을 압축할 근거가 데이터에 없다.
+ * 전역 이득은 그 빠진 어깨를 흉내내는 조잡한 대용품이었다. 롤오프는 어깨를
+ * 명시적으로 만들어 준다 — 무릎 아래(중간톤 포함)는 건드리지 않으므로 기준
+ * 그레이 중성이 유지되고, 상한 근처에서만 채널이 함께 수렴해 하이라이트
+ * 캐스트도 줄어든다.
+ *
+ * 필름 정의의 `whitePoint`로 "scalar" / "perChannel" / "clip"을 고를 수 있다.
+ *
+ * **실측 곡선 인화지는 합성 롤오프를 끈다**(`whitePointMode`). 합성 롤오프는 "TDS 곡선에 어깨가
+ * 없다"를 메우려던 편법인데, 인화지 **발끝**이 바로 그 역할을 물리적으로 한다.
+ * 둘 다 걸면 이중 압축이다 — Endura + Portra 400에서 흰색이 0.83(인화지 Dmin이
+ * 낸 최대 반사율)에서 0.74로 한 번 더 눌렸다. 게다가 곡선 인화지는 출력이 구조적으로
+ * 1을 넘을 수 없어(P = 10^(−Dp) ≤ 10^(−Dmin)) 원래 목적인 클리핑 방지도 필요 없다.
+ *
+ * ⚠️ **어느 평가 경로든 반드시 건다.** 예전엔 닷지·번 경로가 이 단계를 통째로
+ * 건너뛰었고, 기본 인화지(`normalized`) + 닷지·번 조합에서 33³의 **23.2%가 일부
+ * 채널만 1.0에 붙었다** — 색상이 틀어진다(그레이축 채널폭 v=0.90에서 15.7 → 29.6,
+ * 청색이 255에 고정). 지금은 `buildLut`의 두 경로가 같은 `finish`를 부른다.
+ *
+ * @param {number[][]} m  크로스토크 행렬(%). 행의 합이 1을 넘으면 출력이 그 배수까지
+ *                        커질 수 있어 기준 봉우리에 함께 곱한다
+ * @returns {Array<(P:number)=>number>}
+ */
+function whitePointStage(film, mode, layers, m) {
+  if (mode === "clip") return [PASS, PASS, PASS];
+
+  if (mode === "scalar" || mode === "perChannel") {
+    const peaks = layers.map(
+      (l, i) => l.referencePeak() * Math.max((m[i][0] + m[i][1] + m[i][2]) / 100, 1)
+    );
+    if (mode === "scalar") {
+      const peak = Math.max(...peaks);
+      if (!(peak > 1)) return [PASS, PASS, PASS];
+      const gain = 1 / peak;
+      const scale = (P) => P * gain;
+      return [scale, scale, scale];
+    }
+    return peaks.map((peak) => {
+      if (!(peak > 0)) return PASS;
+      const gain = 1 / peak;
+      return (P) => P * gain;
+    });
+  }
+
+  // 무릎은 기준 그레이(0.18)보다 충분히 위에 둔다 — 중간톤을 건드리지 않기 위해.
+  //
+  // 롤오프 뒤에 이득을 붙여 상한을 1.0에 맞추는 것도 해봤는데 채택하지 않았다.
+  // 흰색은 순백이 되지만 **필름마다 기준 그레이 밝기가 달라진다**(+0.08~+0.24스톱).
+  // 필름 비교가 목적이므로 밝기 일관성이 순백보다 중요하다. 이득 없이 두면
+  // 기준 그레이가 전 필름 0.00스톱으로 일치하고, 대신 흰색이 0.88~0.94에
+  // 머문다 — 인화지도 하이라이트에서 종이 흰색에 닿지 않으므로 부자연스럽지 않다.
+  const knee = film.rolloffKnee || 0.5;
+  const span = 1 - knee;
+  const soft = (P) => (P <= knee ? P : knee + span * (1 - Math.exp(-(P - knee) / span)));
+  return [soft, soft, soft];
+}
+
+// 입력 전달함수는 `core/color/inputs.js`가 소유한다 — 엔진과 내보내기가 같은 정의를
+// 써야 하기 때문이다. 기본(ProPhoto γ1.8)이 곧 「중립 현상」의 정의다.
+const PROPHOTO_INPUT = inputs.byId("prophoto");
+
 /**
  * 필름 정의에서 3D LUT을 굽는다.
+ *
+ * 단계는 위에서 정의하고(`layerStages` · `whitePointStage`), 여기서는 **평가만** 한다.
+ *
+ *   분리형  1~4단계와 화이트포인트는 채널끼리 독립이고, 격자의 각 축은 같은 size개
+ *           값만 갖는다. 축마다 한 번씩만 계산해 두면 size³ 루프에는 크로스토크와
+ *           인코딩만 남는다.
+ *   결합형  닷지·번은 세 채널의 농도를 함께 봐야 해서 격자점마다 인화한다. 농도
+ *           (1~3단계)는 여전히 축마다 한 번이다.
+ *
+ * 축 밖 코드(`inputs.remapCodes` — 색상 보존 역이 중간 채널을 옮긴 격자점)는 어느
+ * 방식에서든 같은 단계를 그 자리에서 다시 부른다.
  *
  * @param {object} film       films.js의 필름 정의
  * @param {object} [opts]
@@ -277,6 +428,7 @@ const DB_GAIN_FLOOR = 0.5;
  * @param {string} [opts.paper]        인화지 id (core/color/paper.js)
  * @param {string|object} [opts.input] 입력 전달함수 id 또는 객체(core/color/inputs.js).
  *                                     없으면 ProPhoto γ1.8
+ * @param {{limit:number, contrast?:number}} [opts.dodgeBurn]  아래 참조
  * @returns {Float32Array} size³ × 3, .cube 순서(R 인덱스가 가장 빨리 변함)
  */
 function buildLut(film, opts) {
@@ -292,7 +444,6 @@ function buildLut(film, opts) {
   }
 
   const info = typeOf(film);
-  const pg = film.printGamma;
   const cur = film.characteristicCurves;
 
   // 입력 전달함수. 문자열 id도 받는다(params에는 id가 실린다).
@@ -307,16 +458,31 @@ function buildLut(film, opts) {
     if (inp.id !== "prophoto") {
       throw new Error(`흑백 필름(${film.id})은 입력 전달함수 ${inp.id}를 아직 지원하지 않습니다`);
     }
-    return buildMonoLut(film, size, exposure, info);
+    return buildMonoLut(film, size, exposure);
   }
+
+  // ── 단계 조립 ────────────────────────────────────────────────────────
 
   // 인화지. 리버설은 인화 단계가 없어(슬라이드 자체가 포지티브다) 건너뛴다.
   const pp = info.sign > 0 ? paper.byId(o.paper || "normalized") : null;
-  const makePrint = (ch) =>
-    pp ? (d0) => paper.transferFor(pp, film, ch, d0) : null;
 
   // 텅스텐 캐스트(있으면). daylight 필름은 없어서 0 → 기존 동작 그대로.
   const cast = film.tungstenCast || { r: 0, g: 0, b: 0 };
+
+  const layers = ["r", "g", "b"].map((ch) =>
+    layerStages(film, ch, cur[ch], info.sign, exposure, cast[ch], inp, pp)
+  );
+
+  const m = film.crosstalk || [
+    [100, 0, 0],
+    [0, 100, 0],
+    [0, 0, 100],
+  ];
+
+  const finish = whitePointStage(film, whitePointMode(film, info, pp), layers, m);
+
+  // 한 층의 전 단계 — 코드값 → 마무리된 선형 포지티브
+  const respond = (c, v) => finish[c](layers[c].print(layers[c].density(v)));
 
   // ── 닷지·번 (실험적) ──────────────────────────────────────────────────
   //
@@ -347,187 +513,28 @@ function buildLut(film, opts) {
   //             대비를 되돌린다. 0(끔)~1 정도. 0.6 근방이 뭉개짐 없이 펀치가
   //             살아나는 지점이었다(MDR03671 실사진 기준, 2026-08-13).
   const db = o.dodgeBurn;
-  const dodgeBurnOn = !!(db && db.limit > 0 && info.sign > 0 && pp);
+  const coupled = !!(db && db.limit > 0 && info.sign > 0);
+  const dbLimit = coupled ? db.limit : 0;
+  const dbContrast = coupled ? db.contrast || 0 : 0;
+  // 기준 그레이의 층별 농도 — luma 델타를 여기서부터 잰다
+  const d0 = coupled ? layers.map((l) => l.d0) : null;
 
   // 색상 보존 역(acr-standard). 유채색 격자점마다 코드를 축 밖으로 옮긴다 —
   // 무채색 축과 다른 입력은 비트 단위로 그대로다(→ inputs.remapCodes).
   const remap = inp.remap ? inputs.remapCodes(inp) : null;
   const rc = new Float64Array(3);
 
-  let axis = null;
-  let dbState = null;
-  let respond = null;
-  if (dodgeBurnOn) {
-    const curves = {
-      r: negativeDensity(cur.r, exposure, cast.r, inp),
-      g: negativeDensity(cur.g, exposure, cast.g, inp),
-      b: negativeDensity(cur.b, exposure, cast.b, inp),
-    };
-    dbState = {
-      density: [curves.r.density, curves.g.density, curves.b.density],
-      d0: [curves.r.d0, curves.g.d0, curves.b.d0],
-      print: [
-        paper.transferFor(pp, film, "r", curves.r.d0),
-        paper.transferFor(pp, film, "g", curves.g.d0),
-        paper.transferFor(pp, film, "b", curves.b.d0),
-      ],
-      limit: db.limit,
-      contrast: db.contrast || 0,
-    };
-  } else {
-    respond = [
-      channelResponse(cur.r, pg, exposure, info.sign, cast.r, makePrint("r"), inp),
-      channelResponse(cur.g, pg, exposure, info.sign, cast.g, makePrint("g"), inp),
-      channelResponse(cur.b, pg, exposure, info.sign, cast.b, makePrint("b"), inp),
-    ];
-
-    // 1~4단계는 채널끼리 독립이고, 격자의 각 축은 같은 size개 값만 갖는다.
-    // 축마다 한 번씩만 계산해 두면 size³ 루프에서는 크로스토크와 인코딩만 남는다.
-    axis = [new Float64Array(size), new Float64Array(size), new Float64Array(size)];
-    for (let i = 0; i < size; i++) {
-      const v = i / (size - 1);
-      axis[0][i] = respond[0](v);
-      axis[1][i] = respond[1](v);
-      axis[2][i] = respond[2](v);
-    }
-  }
+  // ── 축 표 ────────────────────────────────────────────────────────────
+  //
+  // 분리형이면 마무리까지 끝난 P, 결합형이면 농도 D를 담는다.
   const d = size - 1;
-
-  // 닷지·번 모드에서도 농도 축은 채널별로 여전히 O(size)로 끝난다(필름 응답이
-  // 채널 독립이므로). luma 결합만 격자점마다(O(size³)) 필요하다 — 아래 메인
-  // 루프에서 한다.
-  const densityAxis = dodgeBurnOn
-    ? [new Float64Array(size), new Float64Array(size), new Float64Array(size)]
-    : null;
-  if (dodgeBurnOn) {
+  const axis = [new Float64Array(size), new Float64Array(size), new Float64Array(size)];
+  for (let c = 0; c < 3; c++) {
     for (let i = 0; i < size; i++) {
-      const v = i / d;
-      densityAxis[0][i] = dbState.density[0](v);
-      densityAxis[1][i] = dbState.density[1](v);
-      densityAxis[2][i] = dbState.density[2](v);
+      axis[c][i] = coupled ? layers[c].density(i / d) : respond(c, i / d);
     }
   }
 
-  const m = film.crosstalk || [
-    [100, 0, 0],
-    [0, 100, 0],
-    [0, 0, 100],
-  ];
-
-  // --- 스캐너 화이트포인트 정규화 -------------------------------------------
-  //
-  // 실효대비(기울기 × printGamma)가 1을 넘는 층은 v=1에서 출력이 1.0을 넘는다.
-  // 예를 들어 Portra의 청감층은 실효대비 1.085라 0.18 × 5.56^1.085 = 1.16이 된다.
-  // 그대로 두면 층마다 다른 지점에서 잘려 **하이라이트의 색이 틀어진다**.
-  //
-  // 실제 스캐너는 필름의 농도 범위를 출력 범위에 맞춰 노출을 잡는다. 여기서도
-  // 같은 일을 한다 — 세 층 공통의 스칼라 이득이므로 **채널 비율(=색상)은 그대로**이고
-  // 전체 밝기만 내려간다. 대비가 센 필름에서 중간톤이 조금 어두워지는 것은
-  // 실제 스캔에서도 나타나는 정상적인 거동이다.
-  //
-  // 크로스토크 행의 합이 1.0을 넘을 수 있으므로 그 배수까지 함께 고려한다
-  // (출력_i ≤ 행합_i × max(P)).
-  //
-  // ⚠️ 이득은 **노광 보정 0을 기준으로** 계산한다. 현재 노광에서 다시 계산하면
-  // 노광을 올릴수록 하이라이트가 밝아져 이득이 더 세게 걸리고, 결과적으로
-  // 노광 보정이 스스로를 상쇄한다(실제로 +1스톱이 0스톱보다 어두워졌다).
-  // 스캐너도 화이트포인트를 필름 기준으로 한 번 정하지 매 컷 다시 잡지 않는다.
-  //
-  // 리버설은 이 단계를 건너뛴다. Dmin을 흰색에 맞추는 정규화가 채널 응답 안에서
-  // 이미 끝나 있고, 여기서 또 누르면 슬라이드 특유의 대비가 뭉개진다.
-  //
-  // 기본은 **채널별 소프트 롤오프**(rolloff)다. 상한 근처만 부드럽게 눌러
-  // 1.0으로 수렴시키고, 무릎(knee) 아래는 손대지 않는다.
-  //
-  // 여기까지 두 번 틀렸다.
-  //
-  // 1차 — 세 층 공통 스칼라 이득. 이득이 가장 가파른 층(청감)에 맞춰지니 대비가
-  //   낮은 적감층이 더 눌려서 (a) 전체가 어두워지고 (b) 하이라이트가 청색으로
-  //   기울었다. 실측: 원본 대비 평균 R이 최대 −28, R−B가 +19.6 → −1.1로 20포인트
-  //   이동. 채도 높기로 이름난 Agfa Ultra 50이 피부를 시안으로 만들었다.
-  //
-  // 2차 — 채널별 이득. 흰색은 완벽히 중성이 됐지만(편차 0) **중간톤이 대신
-  //   틀어졌다**(Ultra 50 편차 0.091 = 8비트 23계단). 중성점이 중간톤에서
-  //   흰색으로 옮겨간 것뿐, 문제가 사라진 게 아니다. 채널 실효대비가 다르면
-  //   무채색 축이 전 구간 중성일 수 없다 — 어디를 고정할지의 문제다.
-  //
-  // 진짜 원인은 **TDS 곡선에 어깨(shoulder)가 없다**는 것이다. 대부분의 플롯이
-  // 직선부에서 잘려 있어(판독 기록 참조) 상한 부근을 압축할 근거가 데이터에 없다.
-  // 전역 이득은 그 빠진 어깨를 흉내내는 조잡한 대용품이었다. 롤오프는 어깨를
-  // 명시적으로 만들어 준다 — 무릎 아래(중간톤 포함)는 건드리지 않으므로 기준
-  // 그레이 중성이 유지되고, 상한 근처에서만 채널이 함께 수렴해 하이라이트
-  // 캐스트도 줄어든다.
-  //
-  // `whitePoint`로 "scalar" / "perChannel" / "clip"을 고를 수 있다.
-  // **실측 곡선 인화지는 합성 롤오프를 끈다.** 7단계 롤오프는 "TDS 곡선에 어깨가
-  // 없다"를 메우려던 편법인데, 인화지 **발끝**이 바로 그 역할을 물리적으로 한다.
-  // 둘 다 걸면 이중 압축이다 — Endura + Portra 400에서 흰색이 0.83(인화지 Dmin이
-  // 낸 최대 반사율)에서 0.74로 한 번 더 눌렸다. 게다가 곡선 인화지는 출력이 구조적으로
-  // 1을 넘을 수 없어(P = 10^(−Dp) ≤ 10^(−Dmin)) 원래 목적인 클리핑 방지도 필요 없다.
-  const wp = pp && pp.curves ? "clip" : film.whitePoint || "rolloff";
-  // ⚠️ **닷지·번일 때도 반드시 걸어야 한다.** 예전엔 `!dodgeBurnOn`으로 이 블록을
-  // 통째로 건너뛰었다("실측 곡선 인화지하고만 맞춰 뒀다"). 그런데 가드의 `pp`는
-  // **어떤 인화지든 참**이라 강제가 안 됐고, 기본 인화지(`normalized`) + 닷지·번
-  // 조합에서 33³의 **23.2%가 일부 채널만 1.0에 붙었다** — 색상이 틀어진다
-  // (그레이축 채널폭 v=0.90에서 15.7 → 29.6, 청색이 255에 고정).
-  //
-  // 닷지·번 모드는 `axis`를 안 쓰고 격자점마다 인화하므로, 여기서 만든 소프트
-  // 클립을 **안쪽 루프에서** 건다(아래 `softClip`). 계산식은 같다.
-  let softClip = null;
-  const axisGain = [1, 1, 1]; // axis에 곱한 이득 — 축 밖 값(remap)에도 똑같이 건다
-  if (wp !== "clip" && info.sign > 0) {
-    const rowSum = [
-      (m[0][0] + m[0][1] + m[0][2]) / 100,
-      (m[1][0] + m[1][1] + m[1][2]) / 100,
-      (m[2][0] + m[2][1] + m[2][2]) / 100,
-    ];
-    const peaks = ["r", "g", "b"].map((ch, i) => referencePeak(cur[ch], pg, makePrint(ch), inp) * Math.max(rowSum[i], 1));
-
-    // ⚠️ scalar·perChannel은 채널별 이득이라 닷지·번(격자점 계산)과 섞으려면
-    // 채널 인덱스가 필요하다. 지금 어느 필름도 `whitePoint`를 지정하지 않아
-    // 도달하지 않는 경로이므로, 그 조합이 생기면 **조용히 넘어가지 말고 멈춘다.**
-    if (wp === "scalar" || wp === "perChannel") {
-      if (dodgeBurnOn) {
-        throw new Error(`whitePoint "${wp}" + 닷지·번 조합은 아직 지원하지 않습니다 (${film.id})`);
-      }
-      if (wp === "scalar") {
-        const peak = Math.max(...peaks);
-        if (peak > 1) {
-          const gain = 1 / peak;
-          for (let c = 0; c < 3; c++) {
-            axisGain[c] = gain;
-            for (let i = 0; i < size; i++) axis[c][i] *= gain;
-          }
-        }
-      } else {
-        for (let c = 0; c < 3; c++) {
-          if (peaks[c] > 0) {
-            const gain = 1 / peaks[c];
-            axisGain[c] = gain;
-            for (let i = 0; i < size; i++) axis[c][i] *= gain;
-          }
-        }
-      }
-    } else {
-      // 무릎은 기준 그레이(0.18)보다 충분히 위에 둔다 — 중간톤을 건드리지 않기 위해.
-      const knee = film.rolloffKnee || 0.5;
-      const span = 1 - knee;
-      const soft = (p) => (p <= knee ? p : knee + span * (1 - Math.exp(-(p - knee) / span)));
-      softClip = soft;
-
-      if (!dodgeBurnOn) {
-        for (let c = 0; c < 3; c++) {
-          for (let i = 0; i < size; i++) axis[c][i] = soft(axis[c][i]);
-        }
-      }
-
-      // 롤오프 뒤에 이득을 붙여 상한을 1.0에 맞추는 것도 해봤는데 채택하지 않았다.
-      // 흰색은 순백이 되지만 **필름마다 기준 그레이 밝기가 달라진다**(+0.08~+0.24스톱).
-      // 필름 비교가 목적이므로 밝기 일관성이 순백보다 중요하다. 이득 없이 두면
-      // 기준 그레이가 전 필름 0.00스톱으로 일치하고, 대신 흰색이 0.88~0.94에
-      // 머문다 — 인화지도 하이라이트에서 종이 흰색에 닿지 않으므로 부자연스럽지 않다.
-    }
-  }
   const m00 = m[0][0] / 100, m01 = m[0][1] / 100, m02 = m[0][2] / 100;
   const m10 = m[1][0] / 100, m11 = m[1][1] / 100, m12 = m[1][2] / 100;
   const m20 = m[2][0] / 100, m21 = m[2][1] / 100, m22 = m[2][2] / 100;
@@ -539,51 +546,32 @@ function buildLut(film, opts) {
   const lut = new Float32Array(size * size * size * 3);
   let p = 0;
 
-  // 닷지·번: 세 채널의 농도 델타(D−d0)를 갖고 있어야 luma를 구할 수 있어서,
-  // 여기서만(격자점마다) 채널 독립이 깨진다 — 크로스토크도 원래 여기서 채널을
-  // 섞으므로 새로운 비용은 아니다.
-  const dbLimit = dodgeBurnOn ? dbState.limit : 0;
-
-  const dbContrast = dodgeBurnOn ? dbState.contrast : 0;
-
-  // 축 하나의 값을 축 밖 코드 v에서 — `axis`를 만든 것과 같은 단계(응답 → 이득 → 롤오프)
-  const axisAt = (c, v) => {
-    const x = respond[c](v) * axisGain[c];
-    return softClip ? softClip(x) : x;
-  };
-
   for (let bi = 0; bi < size; bi++) {
     for (let gi = 0; gi < size; gi++) {
       for (let ri = 0; ri < size; ri++) {
+        const offAxis = remap !== null && remap(ri / d, gi / d, bi / d, rc);
         let pr, pgv, pb;
-        if (dodgeBurnOn) {
-          let Dr = densityAxis[0][ri], Dg = densityAxis[1][gi], Db = densityAxis[2][bi];
-          if (remap && remap(ri / d, gi / d, bi / d, rc)) {
-            Dr = dbState.density[0](rc[0]);
-            Dg = dbState.density[1](rc[1]);
-            Db = dbState.density[2](rc[2]);
-          }
-          const d0 = dbState.d0;
-          const dr = Dr - d0[0], dg = Dg - d0[1], db_ = Db - d0[2];
-          const lumaDelta = (dr + dg + db_) / 3;
-          // 압축된 luma와 그 자리의 **국소 이득**. 채도(luma에서 벗어난 양)도
-          // 같은 이득으로 스케일한다 — 아래 `dbCompress` 주석의 이유.
+        if (coupled) {
+          // 세 채널의 농도 델타(D−d0)를 갖고 있어야 luma를 구할 수 있어서 여기서만
+          // 채널 독립이 깨진다.
+          const Dr = offAxis ? layers[0].density(rc[0]) : axis[0][ri];
+          const Dg = offAxis ? layers[1].density(rc[1]) : axis[1][gi];
+          const Db = offAxis ? layers[2].density(rc[2]) : axis[2][bi];
+          const lumaDelta = (Dr - d0[0] + (Dg - d0[1]) + (Db - d0[2])) / 3;
           // 압축량을 **균일한 농도 시프트**로 건다 — 채도(luma에서 벗어난 양)를
           // 농도 공간에서 그대로 남기기 위해서다. 그게 이 기능의 목적이다.
-          const s2 = dbCompress(lumaDelta, dbLimit, dbContrast) - lumaDelta;
-          pr = dbState.print[0](Dr + s2);
-          pgv = dbState.print[1](Dg + s2);
-          pb = dbState.print[2](Db + s2);
-          if (softClip) { pr = softClip(pr); pgv = softClip(pgv); pb = softClip(pb); }
+          const s = dbCompress(lumaDelta, dbLimit, dbContrast) - lumaDelta;
+          pr = finish[0](layers[0].print(Dr + s));
+          pgv = finish[1](layers[1].print(Dg + s));
+          pb = finish[2](layers[2].print(Db + s));
+        } else if (offAxis) {
+          pr = respond(0, rc[0]);
+          pgv = respond(1, rc[1]);
+          pb = respond(2, rc[2]);
         } else {
           pr = axis[0][ri];
           pgv = axis[1][gi];
           pb = axis[2][bi];
-          if (remap && remap(ri / d, gi / d, bi / d, rc)) {
-            pr = axisAt(0, rc[0]);
-            pgv = axisAt(1, rc[1]);
-            pb = axisAt(2, rc[2]);
-          }
         }
 
         let R = pr;
@@ -624,8 +612,7 @@ function buildLut(film, opts) {
  */
 const PANCHROMATIC = { r: 0.30, g: 0.59, b: 0.11 };
 
-function buildMonoLut(film, size, exposure, info) {
-  const pg = film.printGamma;
+function buildMonoLut(film, size, exposure) {
   const cur = film.characteristicCurves;
   const pts = cur.mono || cur.g;
   if (!pts) throw new Error(`${film.id}: 흑백 필름인데 mono 곡선이 없습니다`);
@@ -634,7 +621,10 @@ function buildMonoLut(film, size, exposure, info) {
   const sum = w.r + w.g + w.b;
   const wr = w.r / sum, wg = w.g / sum, wb = w.b / sum;
 
-  const respond = channelResponse(pts, pg, exposure, info.sign);
+  // 층이 하나일 뿐 단계는 컬러와 같다. 인화지는 고르지 않는다 — 필름별 감마
+  // (`normalized`)로 고정이다.
+  const layer = layerStages(film, "g", pts, +1, exposure, 0, PROPHOTO_INPUT, paper.byId("normalized"));
+  const respond = (v) => layer.print(layer.density(v));
 
   // 화이트포인트 정규화 — 컬러와 같은 이유로 필요하다. 단일 채널이라
   // 색이 틀어질 일은 없고, 상한을 넘는 것만 막는다.
@@ -880,5 +870,8 @@ module.exports = {
   lutTitle,
   WORKING_GAMMA,
   ANCHOR,
+  // 검사용 — 단계 정의를 값으로 못 박는다(tools/check-conformance.js 5e).
+  // 앱은 쓰지 않는다. 색은 언제나 `buildForParams`로 굽는다.
+  stages: { emulsion, layerStages, whitePointMode, whitePointStage },
 };
 
