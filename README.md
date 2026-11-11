@@ -1,6 +1,7 @@
-# Moderate's Film Simulator — Photoshop UXP 플러그인
+# Moderate's Film Simulator — Photoshop UXP 플러그인 · 독립 실행형
 
-디지털 사진에 아날로그 필름의 광학적·화학적 특성을 재현하는 포토샵 플러그인.
+디지털 사진에 아날로그 필름의 광학적·화학적 특성을 재현한다. 포토샵 플러그인 두 개와,
+Photoshop 없이 Windows·Android에서 도는 [독립 실행형](#독립-실행형--filmsim-studio-photoshop-없이-windows--android)이 있다.
 
 색은 눈대중이 아니라 **제조사 기술자료(TDS)의 D-logE 특성곡선에서 유도**한다.
 층별 곡선 기울기의 차이가 필름마다 다른 색감의 정체이고, 그 수치를 그대로 쓴다.
@@ -27,6 +28,38 @@
 > 확인) `tools/decode-raw.py`(+ 데스크톱 GUI)로 리니어 현상 경로와 Sony S-Log3
 > 입력을 추가했다. 고대비 장면용 **닷지·번**(실험적)도 새로 들어왔다.
 > ⚠️ 스캐너 파라미터는 아직 튜닝값이다 → [현재 한계](#현재-한계)
+
+## 독립 실행형 — FilmSim Studio (Photoshop 없이, Windows · Android)
+
+엔진(색)과 마감(할레이션·그레인)을 **브라우저에서 도는 프로그램 하나**로 묶었다.
+HTML 파일 하나가 전부이고, 사진은 그 기기 안에서만 처리된다 — 어디로도 올라가지 않는다.
+
+```bash
+node tools/build-studio.js      # → dist/studio/index.html  (의존성 없음, 노드만 있으면 된다)
+```
+
+| 어디서 | 어떻게 연다 |
+|---|---|
+| **Windows** | `dist/studio/index.html`을 더블클릭(Edge·Chrome). 설치 없음 |
+| **Android** | PC에서 `node tools/serve-studio.js` → 같은 Wi-Fi의 폰 Chrome에서 찍힌 주소로 접속 |
+| **설치형으로** | `dist/studio/` 폴더를 https로 올리면 브라우저의 「앱 설치 / 홈 화면에 추가」가 뜬다(오프라인 동작) |
+
+- **열 수 있는 파일** JPEG · PNG · WebP · TIFF(8/16비트, 무압축·LZW·ZIP). 필름 엔진은
+  톤 커브 없이 현상한 **16비트 ProPhoto TIFF**에서 가장 정확하다(아래 [사용법](#사용법)).
+  RAW는 직접 못 연다 — `tools/decode-raw.py`나 Camera Raw로 TIFF를 뽑아 넣는다
+- **내보내기** JPEG · PNG(sRGB) · TIFF 16비트(ProPhoto, ICC 포함) · `.cube` · `.xmp`.
+  여러 장 일괄 처리. 파일 이름에 `_filmsim`이 붙어 원본을 덮지 않는다
+- **보기** 「맞춤」과 「1:1」(원본 해상도 — 입자·번짐의 실제 크기). 「원본」을 누르고
+  있으면 처리 전을 보여 준다
+- **프리셋** Photoshop 엔진·마감 플러그인과 **같은 JSON**이다. 서로 열린다
+- **색은 플러그인과 같은 값이다** — 같은 `core/` 계산을 쓴다(검사로 확인). 마감은
+  기능은 같고 계산을 새로 짰다: 레이어를 쌓지 않고 한 번에 계산하므로 「색 먼저,
+  마감 나중」 순서 제약이 없다
+
+> ⚠️ **아직 없는 것** 컬러휠·벡터스코프 패널, RAW 직접 열기, 넓은 색역(Display P3)
+> 입출력. **실기(실제 Windows PC·Android 폰)에서는 아직 확인하지 못했다** — 데스크톱
+> Chromium과 폰 화면 에뮬레이션에서만 돌려 봤다(`node tools/smoke-studio.js`).
+> 폰은 메모리가 작아 수천만 화소 파일에서 멎을 수 있다 — 「긴 변」을 줄여 내보낸다.
 
 ## 두 개의 플러그인
 

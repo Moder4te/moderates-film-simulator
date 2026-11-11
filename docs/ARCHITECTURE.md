@@ -12,9 +12,12 @@ core/     순수 계산. photoshop·uxp·DOM 접근 금지 (검사로 강제)
             paper inputs vectorscope
   optics/   format grainfield displace tone
   io/       cube xmp xmpcodec        직렬화만. 파일 쓰기는 앱이 한다
+            tiff icc                 독립 실행형의 16bit 입출력(읽기·쓰기 · ProPhoto ICC)
+  render/   working pipeline         **독립 실행형의 렌더 계층** — color + optics를 함께 쓴다
 host/     UXP 경계. batchPlay 디스크립터는 여기서만
   ps.js     collectLayers(레이어 트리 재귀 탐색)도 여기 한 벌만 둔다
 shared/   ui/cslider  paths(경로 비교 — 배치 원본 보호의 뿌리)
+          params/engine · finish     프리셋 스키마. 앱 셋이 같은 것을 읽는다
 apps/
   engine/   필름 엔진 플러그인 (색)
     src/    main params pipeline apply preview colorwheel photoanalysis presets
@@ -22,8 +25,12 @@ apps/
   finish/   마감 플러그인 (광학)
     src/    main params pipeline grading halation grain batch presets
     lib/    ← core/optics · host · shared 만. 색이 없다
+  studio/   독립 실행형 (색 + 마감, 브라우저) — Photoshop·UXP를 모른다
+    src/    main controls params client worker session env
+            lib/ 없음 — `build-studio.js`가 core/를 직접 묶어 HTML 하나로 낸다
 tools/    check(.js 문법·BOM) check-boundaries check-paths check-load check-api
-          check-conformance check-tone check-docs · sync-libs build-ccx
+          check-conformance check-tone check-docs check-studio · sync-libs build-ccx
+          build-studio serve-studio smoke-studio(브라우저 실기, playwright 필요)
           extract_tds_curves.py decode-raw.py
 ```
 
@@ -347,6 +354,57 @@ clearOwnLayers → grading.apply → grain.applyDiffusion → halation.apply →
 **디퓨전이 할레이션보다 먼저**여야 한다. 디퓨전이 `stampVisible`/`getPixels`로 합성본을
 잡으므로, 할레이션이 이미 있으면 그 픽셀이 디퓨전에 구워져 나중에 할레이션을 끌 수 없다.
 
+### 독립 실행형 — `core/render/pipeline.js`
+
+```
+파일 → 작업 공간(Uint16 · ProPhoto γ1.8)          core/render/working.js
+     → 필름 LUT → 톤 → 디퓨전 → 할레이션 → 그레인   core/render/pipeline.js
+     → sRGB 8bit(디더) | ProPhoto 16bit TIFF
+```
+
+Photoshop 플러그인과 **단계는 같고 구조가 다르다.** 플러그인은 단계마다 합성본을 읽어
+레이어를 한 장씩 얹는다. 독립 실행형은 원본을 쥐고 매번 처음부터 계산한다 — 그래서
+「색 → 마감 순서 강제」「재적용 격리(불변식 6)」「디퓨전이 구운 스탬프」가 전부 없다.
+
+**색은 다섯 번째 산출 경로다.** `plan`이 `film.buildForParams`를 불러 구운 LUT을 그대로
+건다. 색을 따로 계산하는 코드가 없다(`check-studio.js`가 값과 구조 둘 다 본다).
+
+**불변식 — 어떻게 잘라 구워도 비트 단위로 같다.** 모든 단계가 "전체 이미지 좌표
+(x, y)의 값"으로 정의돼 있어서, 띠로 굽든 타일로 굽든 사각형 하나만 굽든 결과가 같다.
+큰 파일을 띠로 나눠 굽는 것(60MP를 float으로 통째로 들면 720MB), 1:1 보기가 화면만큼만
+굽는 것, 미리보기·내보내기가 같은 함수인 것이 전부 이 성질에서 나온다. 단계별 조건:
+
+| 단계 | 영역 독립이 되게 하는 것 |
+|---|---|
+| LUT · 톤 | 점 연산 — 그대로 성립 |
+| 디퓨전 | 여백(`plan.margin`)을 붙여 굽고 안쪽만 쓴다. 변위는 **셀 좌표의 해시** |
+| 할레이션 | 번짐 필드를 **전체에서 먼저** 구하고(`haloField`) 영역 렌더는 조회만 |
+| 그레인 | 필드가 좌표의 해시 — `grainfield.channelFieldRegion` |
+| 디더 | 표를 절대 좌표로 조회 |
+
+⚠️ 새 단계를 넣을 때 **이웃을 읽으면 여백이, 전역을 보면 별도 패스가 필요하다.**
+순차 난수(`rand()`를 픽셀 순서로 뽑기)는 금지다 — 띠 경계에서 무늬가 끊긴다.
+
+**작업 공간으로 옮겨서 든다.** 무엇을 열든 ProPhoto γ1.8로 옮긴다. 플러그인에 있던
+"문서가 ProPhoto가 아니면 경고"는 호스트가 색공간을 쥐고 있어 필요했던 것이고, 여기는
+그 오류가 구조적으로 없다(sRGB JPEG도 18% 그레이가 0.3857에 온다). 마감의 감마 짐작
+(ProPhoto 1.8 / 그 외 2.2)도 없다. 남는 경고는 `pipeline.advise` — 8비트에 필름을 걸었다,
+입력×인화지 조합, 입자 기준 ≠ 문서 크기.
+
+**마감에서 새로 짠 것**(기능·슬라이더·프리셋은 그대로):
+
+- **그레인** Overlay + Blend If 레이어 셋 대신 `v' = v + A(Y)·a_c·n_c·g(v)`. 톤 포락선
+  `g(v) = v(1 − v⁴)`는 암부~중간톤에서 상대 대비가 일정하고 흰색에서 0으로 닫힌다.
+  Overlay의 꺾이는 텐트와 명부 보상 상수(`HIGHLIGHT_GAIN 2.2`)가 필요 없다
+- **디퓨전** 변위의 난수가 순차에서 셀 해시로(영역 독립)
+- **할레이션** 계산은 `core/optics/halation.js`의 `spread` 그대로. 소스를 디퓨전 **전** 값에서
+  읽는다(격자가 입자보다 훨씬 성겨 평균이 같다 — 그 대신 여백 없이 띠로 돈다)
+- **미리보기** 대리본에서 물리 크기를 비율로 줄이고, 입자가 1px 밑이면 세기로 환산
+
+**환경 주입.** `apps/studio/src/session.js`는 브라우저를 모른다 — 이미지 디코드·캔버스
+인코드·zlib을 `env`로 받는다. 같은 코드가 워커에서, 워커 없는 메인 스레드에서, 노드
+검사에서 돈다.
+
 ## 데이터 계약
 
 ### 필름 정의 — `core/color/films.js`
@@ -533,6 +591,8 @@ buildForParams(params, size)
    ├─→ core/io/xmp.js                Lightroom/ACR 프로파일
    └─→ apps/engine/src/preview.js    미리보기
 ```
+
+   (독립 실행형 `core/render/pipeline.js`의 `plan`이 다섯 번째다 — `check-studio.js`)
 
 **네 경로가 전부 `buildForParams`를 통과해야 한다.** 한 경로만 고치는 실수를
 `tools/check-conformance.js`가 잡는다(최대차 실측: .cube 4.2e-7, .xmp 7.6e-6,

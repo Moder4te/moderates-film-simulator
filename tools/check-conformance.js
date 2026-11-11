@@ -26,7 +26,7 @@ const paper = C("color/paper");
 const lut = C("color/lut");
 const cube = C("io/cube");
 const xmp = C("io/xmp");
-const { defaultParams } = require(path.join(ROOT, "apps/engine/src/params"));
+const { defaultParams } = require(path.join(ROOT, "shared/params/engine"));
 
 let fails = 0;
 const ok = (name, cond, extra) => {

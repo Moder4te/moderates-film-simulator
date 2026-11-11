@@ -316,4 +316,8 @@ function apply(data, comps, count, opts, grading) {
   return out;
 }
 
-module.exports = { apply, hasEffect, coefficients, fitGamut, contrastCurve, mulberry32 };
+module.exports = {
+  apply, hasEffect, coefficients, fitGamut, contrastCurve, mulberry32,
+  // 독립 실행형(core/render)이 같은 톤 체인을 float 띠에 건다 — 정의는 여기 한 벌이다
+  buildChannelLuts, luma,
+};

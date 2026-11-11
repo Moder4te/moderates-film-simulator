@@ -1,0 +1,16 @@
+{
+  "name": "FilmSim Studio",
+  "short_name": "FilmSim",
+  "description": "필름 색과 마감(할레이션·그레인)을 기기 안에서 처리하는 독립 실행형",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#16171a",
+  "theme_color": "#16171a",
+  "lang": "ko",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

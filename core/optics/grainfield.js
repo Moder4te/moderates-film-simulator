@@ -80,25 +80,41 @@ function latticeValue(ix, iy, seed) {
  * 규약은 그대로라 `channelField`·검사 쪽은 손댈 것이 없다.
  */
 function addOctave(out, w, h, cell, weight, rand, angle) {
+  addOctaveRegion(out, { x: 0, y: 0, w, h, fullW: w, fullH: h }, cell, weight, rand, angle);
+}
+
+/**
+ * `addOctave`의 본체 — 전체 이미지 중 **일부 영역만** 계산한다.
+ *
+ * 마디값이 좌표의 해시라서 필드는 이미지 어디서든 같은 값을 갖는다. 그러니 영역을
+ * 어떻게 자르든(띠·1:1 크롭) 이어 붙이면 전체를 한 번에 계산한 것과 **비트 단위로
+ * 같다.** 독립 실행형(core/render)이 이걸로 큰 이미지를 띠로 나눠 굽고, 화면에는
+ * 보이는 부분만 굽는다. 회전 중심은 **전체 이미지** 기준이다(영역 중심이 아니다).
+ *
+ * @param {Float32Array} out  region.w × region.h
+ * @param {{x:number,y:number,w:number,h:number,fullW:number,fullH:number}} region
+ *   x·y는 전체 이미지 좌표. 이미지 밖(음수·초과)이어도 된다 — 필드는 어디서나 정의된다
+ */
+function addOctaveRegion(out, region, cell, weight, rand, angle) {
+  const w = region.w;
+  const h = region.h;
   const step = Math.max(1, cell);
   const a = angle || 0;
   const cosA = Math.cos(a);
   const sinA = Math.sin(a);
-  const cx = w / 2;
-  const cy = h / 2;
+  const cx = region.fullW / 2;
+  const cy = region.fullH / 2;
   // 회전 좌표가 음수로 가지 않도록 대각 반지름만큼 민다. 해시라 범위 상한은 무관.
-  const half = Math.sqrt(w * w + h * h) / 2;
+  const half = Math.sqrt(region.fullW * region.fullW + region.fullH * region.fullH) / 2;
   const seed = (rand() * 4294967296) >>> 0;
-
   // 이웃 픽셀은 대개 같은 셀에 떨어진다(step ≥ 1). 마디 4개를 캐시해 해시 호출을
   // 줄인다 — cell이 클수록 적중률이 높고, cell=1(최악)이어도 저장 방식과 비슷하다.
   let lx = 0x7fffffff, ly = 0x7fffffff;
   let v00 = 0, v10 = 0, v01 = 0, v11 = 0;
-
   for (let y = 0; y < h; y++) {
-    const dy0 = y - cy;
+    const dy0 = region.y + y - cy;
     for (let x = 0; x < w; x++) {
-      const dx0 = x - cx;
+      const dx0 = region.x + x - cx;
       const rx = (dx0 * cosA - dy0 * sinA + half) / step;
       const ry = (dx0 * sinA + dy0 * cosA + half) / step;
       const x0 = Math.floor(rx);
@@ -124,13 +140,18 @@ function addOctave(out, w, h, cell, weight, rand, angle) {
  * 한 채널 값 노이즈 필드(Float32, 대략 [-1,1] 정규화). 미세 + 덩어리 옥타브 합.
  */
 function channelField(w, h, cell, clumpScale, rand) {
-  const f = new Float32Array(w * h);
+  return channelFieldRegion({ x: 0, y: 0, w, h, fullW: w, fullH: h }, cell, clumpScale, rand);
+}
+
+/** `channelField`의 영역 버전 — `addOctaveRegion` 참조. */
+function channelFieldRegion(region, cell, clumpScale, rand) {
+  const f = new Float32Array(region.w * region.h);
   // 미세 옥타브(주). 덩어리 옥타브(cell×2.6, clumpScale 비중). 서로 다른 각도로
   // 회전해 격자 정렬을 피한다(G5, 파일 머리 주석 참고).
   const base = 1;
   const clump = clumpScale;
-  addOctave(f, w, h, cell, base, rand, BASE_ANGLE);
-  if (clump > 0) addOctave(f, w, h, cell * 2.6, clump, rand, CLUMP_ANGLE);
+  addOctaveRegion(f, region, cell, base, rand, BASE_ANGLE);
+  if (clump > 0) addOctaveRegion(f, region, cell * 2.6, clump, rand, CLUMP_ANGLE);
   const norm = 1 / (base + clump); // 대략 [-1,1]로
   for (let i = 0; i < f.length; i++) f[i] *= norm;
   return f;
@@ -197,4 +218,4 @@ function generate(w, h, comps, opts) {
   return out;
 }
 
-module.exports = { generate, channelField, mulberry32 };
+module.exports = { generate, channelField, channelFieldRegion, mulberry32 };

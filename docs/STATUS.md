@@ -111,6 +111,35 @@ UUID·RGBTable은 생성된 `.xmp`에서 **직접 뽑는다** — 따로 계산�
 | Inspect 덤프 | 알림창이 아니라 편집 필드. 복사해 가는 게 목적인데 macOS 알림은 긴 본문을 자른다 |
 | 파일 이름 | `xmp.fileNameFor`가 ASCII만 남기고 `\/:*?"<>|` 제거 — 양쪽 파일시스템에서 안전 |
 
+### 독립 실행형 — `apps/studio` (FilmSim Studio)
+
+Photoshop 없이 브라우저에서 돈다. `node tools/build-studio.js` → `dist/studio/index.html`.
+
+| 기능 | 상태 | 비고 |
+|---|---|---|
+| 파일 열기 | ✅ | JPEG·PNG·WebP(브라우저 디코드, sRGB 8bit) · TIFF 8/16bit(무압축·LZW·ZIP·PackBits, 스트립·타일). 전부 작업 공간(ProPhoto γ1.8)으로 옮겨 든다 |
+| 색 (엔진) | ✅ | 플러그인과 **같은 값**(격자 52³ 전 점 최대차 1e-17). 필름·노광·입력·인화지·스캐너·닷지번·색 조정 전 항목 |
+| 마감 | ✅ | 톤 · 디퓨전(변위/블러) · 할레이션 · 그레인(존·감도·포맷·기준). 계산은 새로 짰다 — 슬라이더·프리셋은 그대로 |
+| 미리보기 | ✅ | 맞춤(대리본) · **1:1**(원본 해상도, 화면만큼만) · 원본 비교. 끄는 동안은 초안 |
+| 내보내기 | ✅ | JPEG · PNG · TIFF 16bit(ProPhoto ICC) · 긴 변 지정 · 일괄 · `.cube` · `.xmp` |
+| 프리셋 | ✅ | 플러그인과 같은 JSON. 브라우저 저장소 + 파일 가져오기/내보내기 |
+| 설치형(PWA) | ⚠️ | 매니페스트·서비스 워커는 들어 있다. **https로 올려 본 적은 없다** |
+
+실측(데스크톱 Chromium, 24MP 16bit TIFF): 열기 + 첫 미리보기 1.3초 · 미리보기 0.2~0.4초 ·
+JPEG 내보내기 7.8초 · TIFF 7.0초.
+
+**확인 안 된 것**
+- **실제 Windows PC · Android 폰에서 돌려 본 적이 없다.** 데스크톱 Chromium과 폰 화면
+  에뮬레이션(Pixel 7 뷰포트·터치)까지만 봤다 — `node tools/smoke-studio.js`. 폰의 실제
+  속도·메모리 한계·파일 선택기·내려받기 동작은 모른다
+- **그레인의 눈 맞춤.** 톤 포락선을 새로 정했다(`core/render/pipeline.js` `grainEnvelope`).
+  수치로는 Photoshop판의 명부 보상 뒤 값과 비슷한 자리지만 **나란히 놓고 본 적은 없다**
+- 폰에서 HTML 파일을 직접 여는 경로(서버 없이)
+
+**없는 것** 컬러휠 · 벡터스코프 · 피부톤 스포이드(색역별 보정은 슬라이더로 된다) ·
+RAW 직접 열기 · Display P3 입출력(P3 프로파일 TIFF는 가정값으로 열고 알린다) ·
+흑백 TIFF 외의 CMYK·32bit float.
+
 ## 알려진 한계
 
 ### 설계상 남겨둔 것
@@ -241,6 +270,10 @@ UUID·RGBTable은 생성된 `.xmp`에서 **직접 뽑는다** — 따로 계산�
 되짚을 필요가 있을 때만 본다. 상세는 [`RESOLVED.md`](./RESOLVED.md).
 
 ```
+studio 0.1.0   독립 실행형 신설(apps/studio) — Photoshop 없이 브라우저에서 색 + 마감.
+               core/render(작업 공간 · 영역 단위 파이프라인), core/io/tiff·icc,
+               프리셋 스키마를 shared/params로, HTML 하나로 묶는 build-studio.js,
+               check-studio.js(42항목) · smoke-studio.js(브라우저 실기)
 core   film.js 단계 구조화  모델의 단계(유제 → 인화 → 화이트포인트)를 한 번만 정의하고
                buildLut은 평가만 한다(분리형/결합형). 출력은 비트 단위로 같다(3,691개
                LUT 해시 대조). MID_GRAY_OFFSET 부호 잠재 결함 수정, 베이스 상수를

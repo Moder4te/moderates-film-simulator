@@ -192,6 +192,24 @@ function dyeClouds(px, grain) {
   return { amps, cellScale, clumpRadius: px * 2.6, clumpScale };
 }
 
+// blob 격자 마디를 지우는 미세 블러(px). 굵은 입자일수록 smoothstep 마디가 각져
+// 보여 더 눌러야 한다. 감도에 묶는다 — 감도가 곧 입자 크기이므로.
+//
+// 사용자 실측 튜닝: ISO 3200 → 2px, 1600 → 1.5px, 800 → 1px, 400 이하 → 0.
+// 400 위로 한 스톱마다 +0.5px = `0.5 + 0.5·log2(ISO/400)`.
+function gridSmoothForIso(iso) {
+  if (iso <= 400) return 0;
+  return 0.5 + 0.5 * Math.log2(iso / 400);
+}
+
+// 위 값은 장축 9000px에서 맞춘 것이다. 마디 크기는 cell px에 비례하고 cell은
+// longEdge에 비례하므로, 저해상도면 블러도 같은 비율로 줄여야 한다. 안 줄이면
+// 작아진 입자에 고정 블러가 과해 뭉갠다(저해상도 출력 mush). 고해상도면 커진다.
+const GRID_SMOOTH_REF_EDGE = 9000;
+function gridSmoothPx(iso, longEdge) {
+  return gridSmoothForIso(iso) * ((longEdge || GRID_SMOOTH_REF_EDGE) / GRID_SMOOTH_REF_EDGE);
+}
+
 function clamp01(v) {
   return v < 0 ? 0 : v > 1 ? 1 : v;
 }
@@ -238,6 +256,8 @@ module.exports = {
   longEdgeFor,
   grainSize,
   dyeClouds,
+  gridSmoothForIso,
+  gridSmoothPx,
   relativeScale,
   printSize,
 };
