@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 필름 프레임: 108dp 캔버스, 가운데 72dp가 안전 영역 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#E8A33C"
+        android:pathData="M30,36h48v36h-48z" />
+    <path
+        android:fillColor="#202020"
+        android:pathData="M36,44h36v20h-36z" />
+    <path
+        android:fillColor="#202020"
+        android:pathData="M34,38h4v3h-4zM44,38h4v3h-4zM54,38h4v3h-4zM64,38h4v3h-4zM74,38h2v3h-2zM34,67h4v3h-4zM44,67h4v3h-4zM54,67h4v3h-4zM64,67h4v3h-4zM74,67h2v3h-2z" />
+</vector>
