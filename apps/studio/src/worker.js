@@ -9,9 +9,14 @@
 const { createSession } = require("./session");
 const { browserEnv } = require("./env");
 
-const session = createSession(browserEnv((label, fraction) => postMessage({ progress: { label, fraction } })));
+let rawWasmBase64 = null;
+const session = createSession(
+  browserEnv((label, fraction) => postMessage({ progress: { label, fraction } }), () => rawWasmBase64)
+);
 
 self.onmessage = async (e) => {
+  // 메인이 처음에 한 번 보낸다 — RAW 현상부(.wasm)의 base64
+  if (e.data.init) { rawWasmBase64 = e.data.init.rawWasm || null; return; }
   const { id, method, args } = e.data;
   try {
     const result = await session[method](...args);

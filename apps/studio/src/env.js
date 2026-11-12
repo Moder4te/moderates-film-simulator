@@ -14,9 +14,31 @@ function makeCanvas(w, h) {
   throw new Error("이 브라우저는 캔버스를 만들 수 없습니다");
 }
 
-function browserEnv(progress) {
+/** base64 → 바이트. RAW 현상부(.wasm)가 HTML 안에 base64로 들어 있다. */
+function fromBase64(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/**
+ * @param {(label:string, fraction:number)=>void} progress
+ * @param {()=>string|null} [rawWasmBase64]  RAW 현상부의 base64. 메인 스레드는 빌드가 박아 둔
+ *   전역에서, 워커는 메인이 보내 준 것에서 읽는다 — 같은 1MB를 HTML에 두 번 싣지 않는다
+ */
+function browserEnv(progress, rawWasmBase64) {
+  let wasm = null;
   return {
     progress,
+
+    rawWasm() {
+      if (wasm) return wasm;
+      const b64 = rawWasmBase64 && rawWasmBase64();
+      if (!b64) throw new Error("이 빌드에는 RAW 현상부가 들어 있지 않습니다");
+      wasm = fromBase64(b64);
+      return wasm;
+    },
 
     // TIFF의 ZIP 압축은 zlib 스트림이다 — DecompressionStream의 "deflate"가 그것
     async inflate(bytes) {
@@ -34,7 +56,7 @@ function browserEnv(progress) {
       try {
         bm = await createImageBitmap(new Blob([bytes], { type: type || "" }));
       } catch (e) {
-        throw new Error("이 파일을 열 수 없습니다 — JPEG·PNG·WebP·TIFF(8/16비트)를 지원합니다");
+        throw new Error("이 파일을 열 수 없습니다 — RAW·DNG·JPEG·PNG·WebP·TIFF(8/16비트)를 지원합니다");
       }
       const w = bm.width, h = bm.height;
       let ctx;

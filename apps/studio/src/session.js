@@ -6,6 +6,7 @@
  * 노드 검사(`tools/check-studio.js`)에서도 돈다.
  *
  *   env.inflate(bytes)              → Promise<Uint8Array>   zlib 풀기(TIFF ZIP 압축)
+ *   env.rawWasm()                   → Uint8Array            RAW 현상부(LibRaw WebAssembly)
  *   env.decodeBitmap(bytes, type)   → Promise<{width,height,rgba}>  sRGB 8bit RGBA
  *   env.canvasEncoder(width,height) → { put(rgba,y,rows), finish(type,quality) → Promise<Blob> }
  *   env.blob(parts, type)           → Blob
@@ -14,6 +15,7 @@
 
 const tiff = require("../../../core/io/tiff");
 const icc = require("../../../core/io/icc");
+const rawdecoder = require("../../../core/io/rawdecoder");
 const cube = require("../../../core/io/cube");
 const xmp = require("../../../core/io/xmp");
 const working = require("../../../core/render/working");
@@ -37,6 +39,7 @@ function createSession(env) {
   let proxy = null;
   let draft = null;
   let info = null;
+  let raw = null; // RAW 현상기 — 처음 RAW를 열 때 만든다(모듈 컴파일이 수십 ms)
   const cache = { lut: new Map(), halo: new Map() };
   const progress = (label, f) => env.progress && env.progress(label, f);
 
@@ -51,15 +54,48 @@ function createSession(env) {
   }
 
   /**
+   * RAW·DNG를 **플랫 현상**한다 — 톤 커브 없이, 화이트 레벨 기준 선형으로.
+   *
+   * `half`: true/false면 그대로. "auto"면 원본 크기로 풀되 두 경우에 절반으로 간다 —
+   * 센서 화소 수가 `halfAbove`를 넘거나(폰에서 6천만 화소 원본은 풀다가 탭이 죽는다.
+   * 한도는 화면 쪽이 기기를 보고 정해 넘긴다), 풀다가 메모리가 모자라면.
+   */
+  function developRaw(bytes, half, halfAbove) {
+    if (!env.rawWasm) throw new Error("이 빌드에는 RAW 현상부가 들어 있지 않습니다");
+    if (!raw) raw = rawdecoder.createRawDecoder(env.rawWasm());
+    if (half !== "auto") return raw.decode(bytes, { half: !!half });
+    try {
+      return raw.decode(bytes, { half: false, halfAbove: halfAbove || 0 });
+    } catch (e) {
+      if (!e.outOfMemory) throw e;
+      progress("메모리가 모자라 절반 크기로 다시 현상", 0);
+      return raw.decode(bytes, { half: true });
+    }
+  }
+
+  /**
    * 파일을 연다. 무엇이든 **작업 공간으로 옮겨서** 든다(`core/render/working.js`).
    * @returns 원본 정보 — 화면에 보여 주고 `pipeline.advise`에 넘긴다
    */
   async function open(buffer, name, type, opts) {
     const proxyEdge = Math.max(512, Math.min(PROXY_EDGE, (opts && opts.proxyEdge) || PROXY_EDGE));
     const bytes = new Uint8Array(buffer);
-    let width, height, bits, space, assumed = false, profile = null, data, kind;
+    let width, height, bits, space, assumed = false, profile = null, data, kind, rawInfo = null;
 
-    if (isTiff(bytes)) {
+    // RAW는 **이름으로** 가른다. DNG·ARW·NEF·CR2는 TIFF 구조라 내용만 보면 TIFF다 —
+    // 그대로 TIFF로 읽으면 안에 든 작은 미리보기가 열린다
+    if (rawdecoder.isRawName(name)) {
+      progress("RAW 현상 중", 0);
+      const r = developRaw(bytes, opts && opts.rawHalf != null ? opts.rawHalf : "auto", opts && opts.rawHalfAbove);
+      width = r.width; height = r.height; bits = 16; space = "prophoto"; kind = "RAW";
+      data = r.data;
+      rawInfo = {
+        make: r.make, model: r.model, dng: r.dng, half: r.half,
+        baselineExposure: r.baselineExposure, clippedPercent: r.clippedPercent,
+      };
+      const cam = [r.make, r.model].filter(Boolean).join(" ");
+      profile = `RAW 플랫 현상${r.half ? " (절반 크기)" : ""}${cam ? " · " + cam : ""}`;
+    } else if (isTiff(bytes)) {
       progress("파일 여는 중", 0);
       const t = await tiff.decode(bytes, { inflate: env.inflate });
       width = t.width; height = t.height; bits = t.bits; kind = "TIFF";
@@ -86,7 +122,7 @@ function createSession(env) {
     const ds = working.fitSize(proxy.width, proxy.height, Math.round(Math.max(proxy.width, proxy.height) * DRAFT_RATIO));
     draft = working.resize(proxy, ds.width, ds.height);
     cache.halo.clear();
-    info = { name, width, height, bits, space, assumed, profile, kind, proxy: { width: proxy.width, height: proxy.height } };
+    info = { name, width, height, bits, space, assumed, profile, kind, raw: rawInfo, proxy: { width: proxy.width, height: proxy.height } };
     return info;
   }
 
@@ -157,7 +193,9 @@ function createSession(env) {
    * 원본 해상도로 굽어 파일로 낸다.
    *
    * @param {object} params
-   * @param {{format:"jpeg"|"png"|"tiff16", quality?:number, longEdge?:number}} opts
+   * @param {{format:"jpeg"|"png"|"tiff16", quality?:number, longEdge?:number, flat?:boolean}} opts
+   *   flat: 아무 단계도 걸지 않고 낸다 — RAW를 열었으면 그게 곧 **플랫 현상본**이다
+   *   (`tools/decode-raw.py`가 내는 파일과 같은 것. Photoshop 엔진에 「리니어 +N스톱」으로 먹인다)
    * @returns {Promise<{blob:Blob, ext:string, width:number, height:number}>}
    */
   async function exportImage(params, opts) {
@@ -168,6 +206,7 @@ function createSession(env) {
     // 원본에서 굽고 줄이면 입자가 뭉개져 사라진다
     progress("크기 맞추는 중", 0);
     const src = working.resize(full, size.width, size.height);
+    if (o.flat) params = { film: { enabled: false }, grading: { enabled: false } };
     const pl = pipeline.plan(params, src, src, { lutCache });
     const halo = pl.halation ? pipeline.haloField(src, pl, (f) => progress("빛 번짐 계산", f)) : null;
     const { W, H } = pl;

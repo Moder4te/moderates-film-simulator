@@ -11,6 +11,8 @@
  *   3. 영역   **어떻게 잘라 굽든 결과가 같은가** — 이 파이프라인의 설계 전제다.
  *             깨지면 띠 경계에 줄이 가거나 1:1 보기와 내보낸 파일이 달라진다
  *   4. 색     엔진 색이 다른 네 산출 경로와 같은가(다섯 번째 경로)
+ *   5. RAW    플랫 현상이 **정말 선형인가**. 「중립 현상」 조건 (b)가 구성으로 성립하는지를
+ *             합성 DNG로 값으로 본다(진짜 카메라 파일과의 대조는 tools/check-raw.py)
  *
  * 브라우저가 필요한 것(캔버스·워커·화면)은 여기서 못 본다. 세션은 환경을 주입받게
  * 돼 있어 **가짜 환경**으로 끝까지 돌린다 — 파일 열기 → 미리보기 → 내보내기.
@@ -30,6 +32,10 @@ const film = R("core/color/film");
 const lut = R("core/color/lut");
 const params = R("apps/studio/src/params");
 const { createSession } = R("apps/studio/src/session");
+const rawdecoder = R("core/io/rawdecoder");
+const inputs = R("core/color/inputs");
+const { makeDng } = require("./fixtures");
+const RAW_WASM = require("fs").readFileSync(path.join(ROOT, "apps/studio/vendor/filmsim-raw.wasm"));
 
 let fails = 0;
 const ok = (name, cond, extra) => {
@@ -434,11 +440,63 @@ function renderWhole(src, p) {
       !/film\.buildLut\(|film\.bakeGrading\(|scanner\.bake\(|simulate\./.test(srcText), "buildForParams를 안 거치면 한 경로만 달라진다");
   }
 
+  // ── 4b. RAW 플랫 현상 ───────────────────────────────────────────────────
+  console.log("\nRAW 플랫 현상 (LibRaw WebAssembly)");
+  {
+    const dec = rawdecoder.createRawDecoder(RAW_WASM);
+    ok("현상부가 뜬다", /^0\.22/.test(dec.version()), `LibRaw ${dec.version()} · ${(RAW_WASM.length / 1024).toFixed(0)}KB`);
+
+    const mean = (r) => {
+      const m = [0, 0, 0], n = r.data.length / 3;
+      for (let i = 0; i < r.data.length; i += 3) { m[0] += r.data[i]; m[1] += r.data[i + 1]; m[2] += r.data[i + 2]; }
+      return m.map((v) => v / n / 65535);
+    };
+    // 조건 (b) — 노출을 한 스톱 올리면 값이 정확히 두 배. 톤 커브가 하나라도 끼면 깨진다
+    const levels = [0.045, 0.09, 0.18, 0.36, 0.72];
+    const lin = levels.map((x) => mean(dec.decode(makeDng(64, 48, () => [x, x, x]), { linear: true })));
+    const stepErr = Math.max(...lin.slice(1).map((m, i) => Math.abs(Math.log2(m[1] / lin[i][1]) - 1)));
+    const levelErr = Math.max(...lin.map((m, i) => Math.abs(m[1] / levels[i] - 1)));
+    ok("선형이다 — 노출 한 스톱이 정확히 한 스톱", stepErr < 0.002 && levelErr < 0.002,
+      `스톱 간격 오차 최대 ${stepErr.toFixed(5)} · 절대 수준 오차 ${(levelErr * 100).toFixed(3)}% (화이트 레벨 기준)`);
+    const cast = Math.max(...lin.map((m) => Math.max(...m) / Math.min(...m) - 1));
+    ok("카메라 화이트밸런스로 중성이 중성으로 나온다", cast < 0.002, `채널 편차 최대 ${(cast * 100).toFixed(3)}% (AsShotNeutral 0.5/1/0.7)`);
+
+    // 인코딩해서 받은 값은 작업 공간 규약(순수 γ1.8)이고, 엔진의 리니어 입력이 그것을 그대로 되읽는다
+    const enc = dec.decode(makeDng(64, 48, () => [0.18, 0.18, 0.18]));
+    const code = enc.data[1] / 65535;
+    const back = inputs.byId("linear-h5").decode(code) / (0.18 * 32);
+    ok("작업 인코딩 → 엔진 「리니어 +5스톱」 왕복", Math.abs(back / 0.18 - 1) < 0.002, `0.18 → 코드 ${code.toFixed(4)} → ${back.toFixed(5)}`);
+
+    const be = dec.decode(makeDng(64, 48, () => [0.2, 0.2, 0.2], { baselineExposure: 0.75 }));
+    ok("DNG 여부와 BaselineExposure를 읽는다", be.dng && Math.abs(be.baselineExposure - 0.75) < 1e-3 && /FilmSim/.test(be.make));
+
+    const full = dec.decode(makeDng(64, 48, () => [0.2, 0.2, 0.2]));
+    const half = dec.decode(makeDng(64, 48, () => [0.2, 0.2, 0.2]), { half: true });
+    const autoBig = dec.decode(makeDng(64, 48, () => [0.2, 0.2, 0.2]), { halfAbove: 1000 });
+    const autoSmall = dec.decode(makeDng(64, 48, () => [0.2, 0.2, 0.2]), { halfAbove: 1e6 });
+    ok("절반 크기 — 명시하거나, 화소 수가 한도를 넘을 때만",
+      full.width === 64 && !full.half && half.width === 32 && half.half && autoBig.width === 32 && autoBig.half && autoSmall.width === 64 && !autoSmall.half,
+      `${full.width}×${full.height} / 절반 ${half.width}×${half.height}`);
+    ok("  └ 절반으로 풀어도 수준이 같다", Math.abs(half.data[1] - full.data[1]) <= 2);
+
+    const sat = dec.decode(makeDng(64, 48, (x) => (x < 32 ? [0.3, 0.3, 0.3] : [1.2, 1.2, 1.2])));
+    ok("센서 포화에 닿은 화소를 센다", sat.clippedPercent > 40 && sat.clippedPercent < 60, `${sat.clippedPercent.toFixed(1)}%`);
+
+    let refused = "";
+    try { dec.decode(new Uint8Array(4096)); } catch (e) { refused = e.message; }
+    ok("RAW가 아니면 이유를 적어 거부한다", /RAW로 열 수 없습니다/.test(refused), refused);
+
+    ok("RAW는 이름으로 가른다(DNG·ARW·NEF는 내용이 TIFF와 같다)",
+      rawdecoder.isRawName("A7R5.ARW") && rawdecoder.isRawName("phone.dng") && rawdecoder.isRawName("x.CR3") &&
+        !rawdecoder.isRawName("scan.tif") && !rawdecoder.isRawName("a.jpg") && !rawdecoder.isRawName("noext"));
+  }
+
   // ── 5. 세션 — 가짜 환경으로 끝까지 ──────────────────────────────────────
   console.log("\n세션 (파일 → 미리보기 → 내보내기)");
   {
     const canvases = [];
     const env = {
+      rawWasm: () => RAW_WASM,
       inflate: async (b) => new Uint8Array(zlib.inflateSync(b)),
       decodeBitmap: async () => {
         // 브라우저가 풀어 줬다고 치는 sRGB 8bit
@@ -499,6 +557,28 @@ function renderWhole(src, p) {
     const finishOnly = fullParams((q) => { q.film.enabled = false; q.medium.reference = "document"; });
     ok("  └ 필름을 끄면(마감만) 알리지 않는다", s.preview(finishOnly, { mode: "fit" }).warnings.length === 0);
 
+    // ── RAW ──
+    const scene = (x, y) => [0.05 + 0.5 * (x / 160), 0.2, 0.05 + 0.4 * (y / 120)];
+    const dng = makeDng(160, 120, scene, { baselineExposure: 0.3 });
+    const rawInfo = await s.open(dng.buffer.slice(0), "IMG_0001.dng", "image/x-adobe-dng", { rawHalf: "auto" });
+    ok("DNG를 RAW로 연다(TIFF로 잘못 읽지 않는다)",
+      rawInfo.kind === "RAW" && rawInfo.raw && rawInfo.raw.dng && rawInfo.width === 160 && rawInfo.bits === 16 && /플랫 현상/.test(rawInfo.profile),
+      rawInfo.profile);
+    const rawP = fullParams((q) => { q.medium.reference = "document"; });
+    const w1 = s.preview(rawP, { mode: "fit" }).warnings;
+    ok("RAW인데 입력 소스가 리니어가 아니면 알린다", w1.some((m) => m.includes("리니어")), `경고 ${w1.length}건`);
+    rawP.film.input = "linear-h5";
+    const w2 = s.preview(rawP, { mode: "fit" }).warnings;
+    ok("  └ 「리니어 +5스톱」 + 곡선 인화지면 조용하다", w2.length === 0, w2.join(" / "));
+    // 플랫 현상본 = 현상기가 낸 값 그대로(필름·마감이 켜져 있어도 걸지 않는다)
+    const flat = await tiff.decode((await s.exportImage(rawP, { format: "tiff16", flat: true })).blob);
+    const direct = rawdecoder.createRawDecoder(RAW_WASM).decode(dng);
+    ok("플랫 현상본 TIFF === 현상기 출력", same(flat.data, direct.data) === 0 && icc.classify(icc.describe(flat.icc)) === "prophoto");
+    const noRaw = createSession({});
+    let missing = "";
+    try { await noRaw.open(dng.buffer.slice(0), "a.dng", ""); } catch (e) { missing = e.message; }
+    ok("현상부가 없는 빌드는 그렇다고 말한다", /RAW 현상부/.test(missing), missing);
+
     const cubeOut = s.exportLook(p, "cube", { size: 33, space: "prophoto" });
     const xmpOut = s.exportLook(p, "xmp", { space: "prophoto" });
     ok(".cube · .xmp 룩 내보내기", /LUT_3D_SIZE 33/.test(cubeOut.text) && cubeOut.name.endsWith(".cube") && xmpOut.text.includes("x:xmpmeta") && xmpOut.name.endsWith(".xmp"));
@@ -551,6 +631,17 @@ function renderWhole(src, p) {
       const direct = createSession({});
       await direct.open(bytes.buffer.slice(0), "a.tif", "image/tiff");
       const want = direct.preview(p, { mode: "fit" });
+      // RAW 현상부는 HTML에 base64로 한 번 실리고, 메인이 워커에 건넨다
+      const m = /var __FILMSIM_RAW_WASM__=("[^"]+")/.exec(html);
+      ok("RAW 현상부가 HTML에 실린다", !!m && Buffer.from(JSON.parse(m[1]), "base64").equals(RAW_WASM));
+      ctx.atob = (b) => Buffer.from(b, "base64").toString("binary");
+      ctx.TextDecoder = TextDecoder;
+      await ctx.onmessage({ data: { init: { rawWasm: m ? JSON.parse(m[1]) : null } } });
+      const dng = makeDng(96, 64, (x, y) => [x / 96, 0.3, y / 64]);
+      const rawOpen = await call(3, "open", [dng.buffer.slice(0), "b.dng", ""]);
+      ok("번들된 워커가 RAW를 현상한다", rawOpen && !rawOpen.error && rawOpen.result.kind === "RAW" && rawOpen.result.width === 96,
+        (rawOpen && rawOpen.error) || rawOpen.result.profile);
+
       ok("번들 === 소스 (파일 열기 → 미리보기)",
         opened && !opened.error && shown && !shown.error && same(shown.result.rgba, want.rgba) === 0,
         (opened && opened.error) || (shown && shown.error) || `${shown.result.width}×${shown.result.height}`);

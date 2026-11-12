@@ -72,7 +72,13 @@ function build() {
   const version = require(path.join(APP, "src/version.js"));
   const worker = bundle(path.join(APP, "src/worker.js"));
   const main = bundle(path.join(APP, "src/main.js"));
-  const script = `var __FILMSIM_WORKER__=${JSON.stringify(worker)};\n${main}`;
+  // RAW 현상부(LibRaw WebAssembly) — 저장소에 커밋된 바이너리를 base64로 싣는다.
+  // 다시 빌드하려면 tools/build-raw-wasm.sh. 한 번만 싣고 워커에는 메인이 건넨다
+  const wasmFile = path.join(APP, "vendor/filmsim-raw.wasm");
+  const wasm = fs.existsSync(wasmFile) ? fs.readFileSync(wasmFile).toString("base64") : null;
+  const script =
+    `var __FILMSIM_WORKER__=${JSON.stringify(worker)};\n` +
+    `var __FILMSIM_RAW_WASM__=${JSON.stringify(wasm)};\n${main}`;
 
   const template = fs.readFileSync(path.join(APP, "index.html"), "utf8");
   const mark = "/*__BUNDLE__*/";

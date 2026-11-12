@@ -22,12 +22,16 @@ function createClient(onProgress) {
     }
   }
 
+  const rawWasm = typeof __FILMSIM_RAW_WASM__ === "string" ? __FILMSIM_RAW_WASM__ : null;
+
   if (!worker) {
-    const session = createSession(browserEnv(onProgress));
+    const session = createSession(browserEnv(onProgress, () => rawWasm));
     const api = { threaded: false };
     for (const m of METHODS) api[m] = async (...args) => session[m](...args);
     return api;
   }
+
+  worker.postMessage({ init: { rawWasm } });
 
   let seq = 0;
   const pending = new Map();

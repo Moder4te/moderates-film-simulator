@@ -93,6 +93,8 @@ input[type=range] { width: 100%; margin: 4px 0 0; height: 26px; accent-color: va
 h3 { font-size: 12px; color: var(--dim); font-weight: 600; margin: 14px 0 8px; text-transform: none; }
 #about { color: var(--dim); font-size: 11px; padding: 10px 12px 24px; }
 body.busy #panel { pointer-events: none; opacity: .6; }
+.rawonly { display: none; }
+body.raw .rawonly { display: block; }
 
 @media (max-width: 760px) {
   body { flex-direction: column; }
@@ -107,7 +109,7 @@ body.busy #panel { pointer-events: none; opacity: .6; }
 <body>
 <main id="viewer">
   <div id="toolbar">
-    <label class="filebtn primary">열기<input id="fileOpen" type="file" accept="image/*,.tif,.tiff"></label>
+    <label class="filebtn primary">열기<input id="fileOpen" type="file" accept="image/*,.tif,.tiff,.dng,.arw,.srf,.sr2,.cr2,.cr3,.crw,.nef,.nrw,.raf,.orf,.rw2,.rwl,.pef,.srw,.x3f,.3fr,.fff,.iiq,.erf,.mef,.mos,.mrw,.kdc,.dcr,.raw"></label>
     <button id="btnFit" class="on" title="전체를 화면에 맞춰 본다">맞춤</button>
     <button id="btnCrop" title="원본 해상도 그대로 — 입자·번짐의 실제 크기. 끌어서 이동">1:1</button>
     <button id="btnCompare" title="누르고 있는 동안 원본을 보여 준다">원본</button>
@@ -118,8 +120,8 @@ body.busy #panel { pointer-events: none; opacity: .6; }
     <div id="empty">
       <h1>FilmSim Studio</h1>
       <p>필름 색(엔진)과 마감(할레이션·그레인)을 Photoshop 없이.<br>사진은 이 기기 안에서만 처리됩니다 — 어디로도 보내지 않습니다.</p>
-      <label class="filebtn primary">사진 열기<input id="fileOpen2" type="file" accept="image/*,.tif,.tiff"></label>
-      <p><small>JPEG · PNG · WebP · TIFF(8/16비트). 필름 엔진은 톤 커브 없이 현상한 16비트 ProPhoto TIFF에서 가장 정확합니다.</small></p>
+      <label class="filebtn primary">사진 열기<input id="fileOpen2" type="file" accept="image/*,.tif,.tiff,.dng,.arw,.srf,.sr2,.cr2,.cr3,.crw,.nef,.nrw,.raf,.orf,.rw2,.rwl,.pef,.srw,.x3f,.3fr,.fff,.iiq,.erf,.mef,.mos,.mrw,.kdc,.dcr,.raw"></label>
+      <p><small>RAW · DNG · JPEG · PNG · WebP · TIFF(8/16비트). RAW는 톤 커브 없이 현상(플랫 현상)해 필름 엔진에 넣습니다 — 가장 정확한 입력입니다.</small></p>
     </div>
     <canvas id="canvas"></canvas>
     <div id="warnings" hidden></div>
@@ -169,7 +171,21 @@ body.busy #panel { pointer-events: none; opacity: .6; }
         <input id="expQuality" type="range" min="60" max="100" step="1" value="92"></label>
       <small>줄여서 내보내면 입자·번짐을 그 크기 기준으로 다시 그립니다. 파일 이름에 <code>_filmsim</code>이 붙어 원본을 덮지 않습니다.</small>
       <div class="actions">
-        <label class="filebtn" title="여러 장을 지금 설정으로 한꺼번에">여러 장 일괄…<input id="fileBatch" type="file" accept="image/*,.tif,.tiff" multiple></label>
+        <label class="filebtn" title="여러 장을 지금 설정으로 한꺼번에">여러 장 일괄…<input id="fileBatch" type="file" accept="image/*,.tif,.tiff,.dng,.arw,.srf,.sr2,.cr2,.cr3,.crw,.nef,.nrw,.raf,.orf,.rw2,.rwl,.pef,.srw,.x3f,.3fr,.fff,.iiq,.erf,.mef,.mos,.mrw,.kdc,.dcr,.raw" multiple></label>
+      </div>
+
+      <div class="rawonly">
+        <h3>RAW 플랫 현상</h3>
+        <label class="row"><span class="name">현상 크기</span>
+          <select id="rawSize">
+            <option value="auto">자동 (폰에서 2600만 화소를 넘으면 절반)</option>
+            <option value="full">원본 크기</option>
+            <option value="half">절반 크기 (빠르고 메모리 1/4)</option>
+          </select></label>
+        <div class="actions">
+          <button id="btnFlat" title="아무 효과도 걸지 않은 선형 ProPhoto 16비트 TIFF">플랫 현상본 저장 (TIFF)</button>
+        </div>
+        <small>플랫 현상본은 톤 커브가 없는 선형 파일이라 눈으로 보면 어둡습니다. Photoshop 엔진 플러그인에 넣을 때는 입력 소스를 「리니어 +5스톱」으로 둡니다.</small>
       </div>
 
       <h3>룩만 내보내기 (색 — 필름·스캐너·색 조정)</h3>

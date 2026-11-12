@@ -139,3 +139,12 @@ software under these terms.
 
 **Use** means anything you do with the software requiring one
 of your licenses.
+
+---
+
+## 제3자 구성요소
+
+`apps/studio/vendor/filmsim-raw.wasm`(RAW 플랫 현상부)에는 [LibRaw](https://www.libraw.org/) 0.22.2가
+들어 있다. LibRaw는 LGPL 2.1 / CDDL 1.0 이중 라이선스이며 이 프로젝트는 CDDL 1.0 조건으로 쓴다 —
+Copyright © 2008–2025 LibRaw LLC. 위의 PolyForm 라이선스는 LibRaw에 적용되지 않는다.
+소스 위치와 빌드 방법은 [`native/raw/README.md`](./native/raw/README.md).

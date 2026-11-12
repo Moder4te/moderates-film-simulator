@@ -530,6 +530,22 @@ function advise(params, info) {
         "다른 공간으로 저장한 파일이면 색이 어긋납니다."
     );
   }
+  if (filmOn && info && info.raw) {
+    // RAW는 화이트 레벨 기준 선형으로 들어온다. 「리니어 +N스톱」이 아니면 엔진이 그 값을
+    // 이미 톤이 잡힌 사진으로 읽어 통째로 어둡고 대비가 틀어진다
+    if (!/^linear-h/.test(f.input || "")) {
+      out.push(
+        "RAW는 톤 커브 없이 현상(플랫 현상)해 들어옵니다. 필름의 입력 소스를 「리니어 +N스톱」으로 " +
+          "두어야 맞게 읽습니다 — 지금 설정으로는 어둡고 대비가 틀어집니다."
+      );
+    }
+    if (info.raw.clippedPercent > 1) {
+      out.push(
+        `화소의 ${info.raw.clippedPercent.toFixed(1)}%가 센서 포화에 닿아 있습니다. ` +
+          "그 부분은 RAW에도 정보가 없어 되살릴 수 없습니다."
+      );
+    }
+  }
   if (filmOn && info) {
     if (info.bits !== 16) {
       out.push(

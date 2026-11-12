@@ -17,6 +17,8 @@ const { createClient } = require("./client");
 const cube = require("../../../core/io/cube");
 const xmp = require("../../../core/io/xmp");
 const films = require("../../../core/color/films");
+const paper = require("../../../core/color/paper");
+const inputs = require("../../../core/color/inputs");
 const VERSION = require("./version");
 
 const $ = (id) => document.getElementById(id);
@@ -34,6 +36,7 @@ const el = (tag, attrs, ...kids) => {
 
 const STORE_PRESETS = "filmsim.studio.presets";
 const STORE_CURRENT = "filmsim.studio.current";
+const STORE_RAW = "filmsim.studio.raw"; // RAW 현상 크기 — 프리셋이 아니라 기기 설정이다
 const store = {
   get(key) { try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; } },
   set(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) { /* 저장 못 해도 동작은 한다 */ } },
@@ -133,7 +136,9 @@ function draw(res) {
   canvas.dataset.mode = res.view.mode;
   showWarnings(res.warnings);
   const what = comparing ? "원본" : res.view.mode === "crop" ? "1:1" : res.view.draft ? "초안" : "맞춤";
-  status(`${what} ${res.width}×${res.height} · ${res.ms}ms`);
+  const note = pendingNote;
+  pendingNote = "";
+  status(`${what} ${res.width}×${res.height} · ${res.ms}ms${note ? " — " + note : ""}`, note ? "done" : "");
 }
 
 /**
@@ -224,24 +229,97 @@ function proxyEdge() {
   return Math.round(Math.max(screen.width, screen.height) * dpr);
 }
 
-async function openFile(file) {
-  status(`${file.name} 여는 중…`);
-  try {
-    info = await client.open(await file.arrayBuffer(), file.name, file.type, { proxyEdge: proxyEdge() });
-  } catch (e) {
-    progress(null);
-    status(e.message, "error");
-    return false;
+/**
+ * 폰·태블릿인가. RAW를 원본 크기로 풀 수 있는 한도를 여기서 가른다 — 6천만 화소 원본은
+ * 현상 중에 1GB를 넘게 쓰고, 폰 브라우저 탭은 그 전에 죽는다.
+ */
+function smallDevice() {
+  const mem = navigator.deviceMemory || 0; // 없는 브라우저도 있다(0)
+  return /Android|iPhone|iPad/i.test(navigator.userAgent) || (mem > 0 && mem <= 4);
+}
+
+/** 세션에 넘길 열기 옵션. RAW 크기는 「자동/원본/절반」 중 고른 것을 따른다. */
+function openOptions() {
+  const pref = store.get(STORE_RAW) || "auto";
+  return {
+    proxyEdge: proxyEdge(),
+    rawHalf: pref === "half" ? true : pref === "full" ? false : "auto",
+    // 자동일 때만 쓴다. 2600만 화소까지는 폰에서도 원본으로(2400만 화소 카메라가 여기 든다)
+    rawHalfAbove: smallDevice() ? 26e6 : 0,
+  };
+}
+
+/**
+ * RAW를 열면 엔진이 그것을 맞게 읽도록 설정 셋을 맞춘다. RAW가 아닌 것을 다시 열면
+ * 되돌린다 — 「리니어 +5스톱」으로 JPEG을 읽으면 새까맣다.
+ *
+ *   입력 소스  「리니어 +N스톱」 — RAW는 화이트 레벨 기준 선형으로 들어온다
+ *   인화지     곡선이 있는 것(Endura). 직선 인화지는 어깨가 없어 리니어 폭을 못 담는다
+ *              (`inputs.combinationWarning`)
+ *   노광       DNG BaselineExposure. 폰 RAW는 일부러 어둡게 기록하고 "이만큼 올려 보라"고
+ *              적어 둔다. 현상에서 올리지 않고 엔진 노광으로 올린다(대수적으로 같다)
+ */
+let beforeRaw = null;
+function adaptToSource() {
+  const notes = [];
+  const f = params.film;
+  if (info.raw) {
+    if (!beforeRaw) beforeRaw = { input: f.input, paper: f.paper, exposure: f.exposure };
+    if (!/^linear-h/.test(f.input)) {
+      f.input = `linear-h${inputs.DEFAULT_HEADROOM}`;
+      notes.push(`입력 소스 → 리니어 +${inputs.DEFAULT_HEADROOM}스톱`);
+    }
+    if (!paper.byId(f.paper).curves) {
+      const curved = paper.all().find((x) => x.curves);
+      if (curved) { f.paper = curved.id; notes.push(`인화지 → ${curved.displayName}`); }
+    }
+    const range = (films.byId(f.id) && films.byId(f.id).exposureRange) || [-2, 2];
+    const be = Math.min(range[1], Math.max(range[0], Math.round(info.raw.baselineExposure * 10) / 10));
+    if (be !== 0 || beforeRaw.auto) {
+      f.exposure = be;
+      if (be !== 0) notes.push(`노광 → ${be > 0 ? "+" : ""}${be} (DNG 기준 노출)`);
+    }
+    beforeRaw.auto = be !== 0;
+  } else if (beforeRaw) {
+    f.input = beforeRaw.input; f.paper = beforeRaw.paper; f.exposure = beforeRaw.exposure;
+    beforeRaw = null;
+    notes.push("RAW용 설정을 되돌림");
   }
-  progress(null);
+  if (notes.length) {
+    store.set(STORE_CURRENT, params);
+    refreshAll();
+  }
+  return notes;
+}
+
+function showSource(notes) {
   dismissed = "";
   document.body.classList.add("loaded");
+  document.body.classList.toggle("raw", !!info.raw);
   const mp = ((info.width * info.height) / 1e6).toFixed(1);
   $("fileInfo").textContent =
     `${info.name} · ${info.width}×${info.height} (${mp}MP) · ${info.bits}비트 · ${info.profile || "프로파일 없음"}`;
   view = { mode: "fit" };
   $("btnFit").classList.add("on"); $("btnCrop").classList.remove("on");
   render(false);
+  pendingNote = notes && notes.length ? `${info.raw ? "RAW 플랫 현상 — " : ""}${notes.join(" · ")}` : "";
+}
+
+let lastFile = null;
+let pendingNote = ""; // 다음 렌더가 끝나면 상태 줄에 한 번 보여 줄 말
+
+async function openFile(file) {
+  status(`${file.name} 여는 중…`);
+  try {
+    info = await client.open(await file.arrayBuffer(), file.name, file.type, openOptions());
+  } catch (e) {
+    progress(null);
+    status(e.message, "error");
+    return false;
+  }
+  lastFile = file;
+  progress(null);
+  showSource(adaptToSource());
   return true;
 }
 
@@ -299,14 +377,19 @@ function exportOptions() {
   };
 }
 
-async function exportCurrent() {
+/**
+ * @param {boolean} [flat] 아무 단계도 걸지 않은 16bit TIFF — RAW의 **플랫 현상본**.
+ *   `tools/decode-raw.py`가 내는 것과 같은 파일이라 Photoshop 엔진에 그대로 먹인다
+ */
+async function exportCurrent(flat) {
   if (!info) return;
   lock(true);
   try {
     const t0 = Date.now();
-    const r = await client.exportImage(params, exportOptions());
+    const opts = flat === true ? { format: "tiff16", flat: true, longEdge: 0 } : exportOptions();
+    const r = await client.exportImage(params, opts);
     // 원본 이름에 꼬리를 붙인다 — 같은 폴더에 받아도 원본을 덮지 않는다
-    const where = await download(r.blob, `${baseName(info.name)}_filmsim.${r.ext}`);
+    const where = await download(r.blob, `${baseName(info.name)}_${flat === true ? "flat" : "filmsim"}.${r.ext}`);
     status(`저장: ${where} · ${r.width}×${r.height} · ${((Date.now() - t0) / 1000).toFixed(1)}초`, "done");
   } catch (e) {
     status(e.message, "error");
@@ -334,7 +417,8 @@ async function exportBatch(files) {
     for (const file of files) {
       status(`일괄 ${done + 1}/${files.length} — ${file.name}`);
       try {
-        info = await client.open(await file.arrayBuffer(), file.name, file.type, { proxyEdge: proxyEdge() });
+        info = await client.open(await file.arrayBuffer(), file.name, file.type, openOptions());
+        adaptToSource(); // RAW와 JPEG이 섞여 있어도 장마다 맞는 입력으로 읽는다
         const r = await client.exportImage(params, opts);
         const name = `${baseName(file.name)}_filmsim.${r.ext}`;
         if (dir) {
@@ -353,12 +437,7 @@ async function exportBatch(files) {
     progress(null);
     lock(false);
   }
-  if (info) {
-    document.body.classList.add("loaded");
-    $("fileInfo").textContent = `${info.name} · ${info.width}×${info.height} · ${info.bits}비트`;
-    view = { mode: "fit" };
-    render(false);
-  }
+  if (info) showSource();
   status(
     failed.length ? `일괄 ${done}/${files.length}장 완료. 실패 — ${failed.join(" / ")}` : `일괄 ${done}장 완료`,
     failed.length ? "error" : "done"
@@ -606,7 +685,16 @@ function bindFiles() {
   $("fileOpen").addEventListener("change", pick);
   $("fileOpen2").addEventListener("change", pick);
   $("fileBatch").addEventListener("change", (e) => { const fs = Array.from(e.target.files); e.target.value = ""; exportBatch(fs); });
-  $("btnExport").addEventListener("click", exportCurrent);
+  $("btnExport").addEventListener("click", () => exportCurrent(false));
+  $("btnFlat").addEventListener("click", () => exportCurrent(true));
+
+  // RAW 현상 크기 — 바꾸면 열려 있는 RAW를 그 크기로 다시 현상한다
+  const rawSize = $("rawSize");
+  rawSize.value = store.get(STORE_RAW) || "auto";
+  rawSize.addEventListener("change", () => {
+    store.set(STORE_RAW, rawSize.value);
+    if (info && info.raw && lastFile) openFile(lastFile);
+  });
   $("btnCube").addEventListener("click", () => exportLook("cube"));
   $("btnXmp").addEventListener("click", () => exportLook("xmp"));
 
@@ -643,7 +731,7 @@ function start() {
   refreshAll();
   $("about").textContent =
     `FilmSim Studio ${VERSION} · 필름 ${films.all().length}종 · ` + (client.threaded ? "백그라운드 처리" : "단일 스레드(이 브라우저는 워커를 못 씁니다 — 처리 중 화면이 멎습니다)");
-  status("사진을 여세요 — JPEG · PNG · WebP · TIFF(8/16비트)");
+  status("사진을 여세요 — RAW · DNG · JPEG · PNG · WebP · TIFF");
 
   // 설치형(PWA)은 https나 localhost에서만 된다. 파일로 직접 열었으면 조용히 건너뛴다
   if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {

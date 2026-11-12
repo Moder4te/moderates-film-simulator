@@ -31,6 +31,7 @@ const ROOT = path.resolve(__dirname, "..");
 const tiff = require(path.join(ROOT, "core/io/tiff"));
 const icc = require(path.join(ROOT, "core/io/icc"));
 const { build } = require("./build-studio.js");
+const { makeDng } = require("./fixtures");
 
 const shots = process.argv[2] ? path.resolve(process.argv[2]) : null;
 let fails = 0;
@@ -169,6 +170,34 @@ async function run(label, url, contextOpts, tmp) {
   ok("8bit PNG를 브라우저 디코더로 연다", /8비트/.test(await page.locator("#fileInfo").textContent()) || (await pixel(0.5, 0.5))[3] > 0);
   ok("  └ 8bit에 필름을 걸면 경고가 뜬다", /8비트/.test(await page.locator("#warnings").textContent()));
 
+  // ── RAW(DNG) — 워커 안의 WebAssembly로 플랫 현상 ──
+  await page.setInputFiles("#fileOpen", path.join(tmp, "scene.dng"));
+  s = await waitRender(/^맞춤 \d+×\d+/);
+  const rawInfo = await page.locator("#fileInfo").textContent();
+  ok("DNG를 플랫 현상해 연다", /RAW 플랫 현상/.test(rawInfo) && /900×600/.test(rawInfo), rawInfo);
+  ok("  └ 입력 소스·인화지를 RAW에 맞춘다", /리니어 \+5스톱/.test(s) && /Endura/.test(s), s);
+  // 장면의 창이 센서 포화라 "포화" 안내 하나는 뜬다. 입력 소스가 틀렸다는 경고는 없어야 한다
+  const rawWarn = await page.locator("#warnings").textContent();
+  ok("  └ 맞춘 뒤에는 입력 경고가 없고, 포화만 알린다", !/리니어/.test(rawWarn) && /포화/.test(rawWarn), rawWarn.slice(0, 60));
+  const rawPx = await pixel(0.4, 0.3);
+  ok("  └ 새까맣지 않다(리니어로 읽었다)", rawPx[1] > 40, `G ${rawPx[1]}`);
+  if (shots) await page.screenshot({ path: path.join(shots, `${label.replace(/\W+/g, "_")}_4_raw.png`) });
+  {
+    const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 120000 }), page.locator("#btnFlat").click()]);
+    const file = path.join(tmp, `${label.replace(/\W+/g, "_")}_${dl.suggestedFilename()}`);
+    await dl.saveAs(file);
+    const flat = await tiff.decode(fs.readFileSync(file));
+    // 장면의 18% 면 — 플랫 현상본에서는 코드 0.3857(= 0.18^(1/1.8)) 근처여야 한다
+    const o = (Math.floor(600 * 0.8) * 900 + Math.floor(900 * 0.5)) * 3;
+    const code = flat.data[o + 1] / 65535;
+    ok("플랫 현상본 저장 — 16bit, 선형 그대로", dl.suggestedFilename() === "scene_flat.tif" && flat.bits === 16 && Math.abs(code - Math.pow(0.18, 1 / 1.8)) < 0.01,
+      `${dl.suggestedFilename()} · 18% 면 코드 ${code.toFixed(4)} (기대 0.3857)`);
+  }
+  // RAW가 아닌 것을 다시 열면 RAW용 설정을 되돌린다
+  await page.setInputFiles("#fileOpen", path.join(tmp, "scene8.png"));
+  s = await waitRender(/^맞춤 \d+×\d+/);
+  ok("RAW가 아닌 파일을 열면 설정을 되돌린다", /되돌림/.test(s) && (await page.locator("#sec-film select").nth(1).inputValue()) === "prophoto", s);
+
   // 룩 내보내기
   const [cubeDl] = await Promise.all([page.waitForEvent("download"), page.locator("#btnCube").click()]);
   ok(".cube 저장", cubeDl.suggestedFilename().endsWith(".cube"), cubeDl.suggestedFilename());
@@ -255,6 +284,14 @@ async function hostBridge(label, url, tmp) {
   const w = 900, h = 600, img = scene(w, h);
   fs.writeFileSync(path.join(tmp, "scene16.tif"), tiff.encode({ width: w, height: h, bits: 16, icc: icc.prophoto() }, img));
   fs.writeFileSync(path.join(tmp, "scene8.png"), pngOf(w, h, img));
+  // 같은 장면의 RAW — 아래 절반은 18% 중성 면(플랫 현상의 수준을 잴 자리)
+  fs.writeFileSync(path.join(tmp, "scene.dng"), makeDng(w, h, (x, y) => {
+    if (y > h * 0.6) return [0.18, 0.18, 0.18];
+    const u = x / w, v = y / h;
+    const dx = u - 0.72, dy = v - 0.3;
+    if (dx * dx * (w / h) ** 2 + dy * dy < 0.012) return [1.5, 1.5, 1.5]; // 창 — 센서 포화
+    return [0.06 + 0.2 * u, 0.08 + 0.15 * v, 0.14 - 0.08 * v];
+  }));
 
   const dist = path.join(ROOT, "dist/studio");
   const server = http.createServer((req, res) => {
