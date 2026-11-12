@@ -12,9 +12,13 @@ core/     순수 계산. photoshop·uxp·DOM 접근 금지 (검사로 강제)
             paper inputs vectorscope
   optics/   format grainfield displace tone
   io/       cube xmp xmpcodec        직렬화만. 파일 쓰기는 앱이 한다
+            tiff icc                 독립 실행형의 16bit 입출력(읽기·쓰기 · ProPhoto ICC)
+            rawdecoder               RAW 플랫 현상 — LibRaw(WebAssembly)를 띄운다
+  render/   working pipeline         **독립 실행형의 렌더 계층** — color + optics를 함께 쓴다
 host/     UXP 경계. batchPlay 디스크립터는 여기서만
   ps.js     collectLayers(레이어 트리 재귀 탐색)도 여기 한 벌만 둔다
 shared/   ui/cslider  paths(경로 비교 — 배치 원본 보호의 뿌리)
+          params/engine · finish     프리셋 스키마. 앱 셋이 같은 것을 읽는다
 apps/
   engine/   필름 엔진 플러그인 (색)
     src/    main params pipeline apply preview colorwheel photoanalysis presets
@@ -22,8 +26,17 @@ apps/
   finish/   마감 플러그인 (광학)
     src/    main params pipeline grading halation grain batch presets
     lib/    ← core/optics · host · shared 만. 색이 없다
+  studio/   독립 실행형 (색 + 마감, 브라우저) — Photoshop·UXP를 모른다
+    src/    main controls params client worker session env
+            lib/ 없음 — `build-studio.js`가 core/를 직접 묶어 HTML 하나로 낸다
+    vendor/ filmsim-raw.wasm — RAW 현상부. 커밋한다(다시 빌드: build-raw-wasm.sh)
+  android/  위 HTML을 WebView에 띄우는 껍데기 + 카메라 FTP 받기. 색 계산이 없다
+native/   raw/filmsim_raw.cpp — LibRaw를 감싼 플랫 현상. WebAssembly로만 빌드한다
 tools/    check(.js 문법·BOM) check-boundaries check-paths check-load check-api
-          check-conformance check-tone check-docs · sync-libs build-ccx
+          check-conformance check-tone check-docs check-studio · sync-libs build-ccx
+          build-studio serve-studio smoke-studio(브라우저 실기, playwright 필요)
+          build-apk(Android SDK 필요 — check.js에는 없다)
+          build-raw-wasm.sh(emscripten 필요) · check-raw.py(rawpy 대조) · check-ftp.py
           extract_tds_curves.py decode-raw.py
 ```
 
@@ -347,6 +360,78 @@ clearOwnLayers → grading.apply → grain.applyDiffusion → halation.apply →
 **디퓨전이 할레이션보다 먼저**여야 한다. 디퓨전이 `stampVisible`/`getPixels`로 합성본을
 잡으므로, 할레이션이 이미 있으면 그 픽셀이 디퓨전에 구워져 나중에 할레이션을 끌 수 없다.
 
+### 독립 실행형 — `core/render/pipeline.js`
+
+```
+파일 → 작업 공간(Uint16 · ProPhoto γ1.8)          core/render/working.js
+     → 필름 LUT → 톤 → 디퓨전 → 할레이션 → 그레인   core/render/pipeline.js
+     → sRGB 8bit(디더) | ProPhoto 16bit TIFF
+```
+
+Photoshop 플러그인과 **단계는 같고 구조가 다르다.** 플러그인은 단계마다 합성본을 읽어
+레이어를 한 장씩 얹는다. 독립 실행형은 원본을 쥐고 매번 처음부터 계산한다 — 그래서
+「색 → 마감 순서 강제」「재적용 격리(불변식 6)」「디퓨전이 구운 스탬프」가 전부 없다.
+
+**색은 다섯 번째 산출 경로다.** `plan`이 `film.buildForParams`를 불러 구운 LUT을 그대로
+건다. 색을 따로 계산하는 코드가 없다(`check-studio.js`가 값과 구조 둘 다 본다).
+
+**불변식 — 어떻게 잘라 구워도 비트 단위로 같다.** 모든 단계가 "전체 이미지 좌표
+(x, y)의 값"으로 정의돼 있어서, 띠로 굽든 타일로 굽든 사각형 하나만 굽든 결과가 같다.
+큰 파일을 띠로 나눠 굽는 것(60MP를 float으로 통째로 들면 720MB), 1:1 보기가 화면만큼만
+굽는 것, 미리보기·내보내기가 같은 함수인 것이 전부 이 성질에서 나온다. 단계별 조건:
+
+| 단계 | 영역 독립이 되게 하는 것 |
+|---|---|
+| LUT · 톤 | 점 연산 — 그대로 성립 |
+| 디퓨전 | 여백(`plan.margin`)을 붙여 굽고 안쪽만 쓴다. 변위는 **셀 좌표의 해시** |
+| 할레이션 | 번짐 필드를 **전체에서 먼저** 구하고(`haloField`) 영역 렌더는 조회만 |
+| 그레인 | 필드가 좌표의 해시 — `grainfield.channelFieldRegion` |
+| 디더 | 표를 절대 좌표로 조회 |
+
+⚠️ 새 단계를 넣을 때 **이웃을 읽으면 여백이, 전역을 보면 별도 패스가 필요하다.**
+순차 난수(`rand()`를 픽셀 순서로 뽑기)는 금지다 — 띠 경계에서 무늬가 끊긴다.
+
+**작업 공간으로 옮겨서 든다.** 무엇을 열든 ProPhoto γ1.8로 옮긴다. 플러그인에 있던
+"문서가 ProPhoto가 아니면 경고"는 호스트가 색공간을 쥐고 있어 필요했던 것이고, 여기는
+그 오류가 구조적으로 없다(sRGB JPEG도 18% 그레이가 0.3857에 온다). 마감의 감마 짐작
+(ProPhoto 1.8 / 그 외 2.2)도 없다. 남는 경고는 `pipeline.advise` — 8비트에 필름을 걸었다,
+입력×인화지 조합, 입자 기준 ≠ 문서 크기.
+
+**마감에서 새로 짠 것**(기능·슬라이더·프리셋은 그대로):
+
+- **그레인** Overlay + Blend If 레이어 셋 대신 `v' = v + A(Y)·a_c·n_c·g(v)`. 톤 포락선
+  `g(v) = v(1 − v⁴)`는 암부~중간톤에서 상대 대비가 일정하고 흰색에서 0으로 닫힌다.
+  Overlay의 꺾이는 텐트와 명부 보상 상수(`HIGHLIGHT_GAIN 2.2`)가 필요 없다
+- **디퓨전** 변위의 난수가 순차에서 셀 해시로(영역 독립)
+- **할레이션** 계산은 `core/optics/halation.js`의 `spread` 그대로. 소스를 디퓨전 **전** 값에서
+  읽는다(격자가 입자보다 훨씬 성겨 평균이 같다 — 그 대신 여백 없이 띠로 돈다)
+- **미리보기** 대리본에서 물리 크기를 비율로 줄이고, 입자가 1px 밑이면 세기로 환산
+
+**RAW는 플랫 현상해서 연다.** `core/io/rawdecoder.js`가 `filmsim-raw.wasm`(LibRaw 0.22.2)을
+띄워 톤 커브 없이 푼다 — 인자는 `tools/decode-raw.py`와 같고(`native/raw/filmsim_raw.cpp`),
+선형값은 rawpy와 화소 단위로 같다(`tools/check-raw.py`). 결과는 **화이트 레벨 기준 선형**을
+작업 인코딩한 것이라, 엔진의 입력 소스 「리니어 +N스톱」이 그대로 읽는다. 화면은 RAW를 열 때
+입력 소스·인화지·노광(DNG BaselineExposure)을 맞추고, 다른 파일을 열면 되돌린다
+(`main.js` `adaptToSource`). RAW는 **이름으로** 가른다 — DNG·ARW·NEF는 내용이 TIFF와 같아서
+내용으로 가르면 안에 든 미리보기가 열린다.
+
+`.wasm`은 emscripten의 JS 없이(`-sSTANDALONE_WASM`) 직접 띄운다 — 수입 함수가 WASI 여덟 개뿐이라
+노드 검사·워커·WebView에서 같은 코드다. 인스턴스는 현상마다 새로 만든다(WebAssembly 메모리는
+줄지 않는다 — 6천만 화소를 한 번 풀면 1GB가 남는다).
+
+**Android 앱은 같은 HTML이다.** `apps/android`의 액티비티는 `assets/index.html`을 WebView에
+띄우고 안드로이드만 할 수 있는 일을 이어 준다 — 파일 고르기, 넘겨받기(공유·FTP로 받은 파일을
+`/shared/<번호>`로 흘려 준다), 저장(`FilmSimHost` 다리 → MediaStore), 카메라 FTP 받기
+(`FtpService`). 페이지 쪽 분기는 두 곳이다: `main.js`의 `download`(다리로 저장)와
+`android.js`(넘겨받기·FTP 패널). **껍데기에 색 계산을 넣지 않는다** — 예전 안드로이드 앱은
+RAW 현상과 LUT 적용을 NDK(C++)로 따로 들고 있었고, 그게 색 경로를 두 벌로 만들었다.
+⚠️ 앱 안에서는 서비스 워커를 등록하지 않는다 — 서비스 워커가 낀 요청은 껍데기의 가로채기를
+지나쳐 `/shared/`가 404가 된다.
+
+**환경 주입.** `apps/studio/src/session.js`는 브라우저를 모른다 — 이미지 디코드·캔버스
+인코드·zlib을 `env`로 받는다. 같은 코드가 워커에서, 워커 없는 메인 스레드에서, 노드
+검사에서 돈다.
+
 ## 데이터 계약
 
 ### 필름 정의 — `core/color/films.js`
@@ -378,19 +463,40 @@ clearOwnLayers → grading.apply → grain.applyDiffusion → halation.apply →
 ### 색 응답 — `core/color/film.js`
 
 ```
-1. 인코딩 해제      L = v^WORKING_GAMMA
-2. 로그 노광        H = log10(L/0.18) + 노광시프트 + tungstenCast
-3. 특성곡선         D = curve(H)                    층별 농도
-4. 인화             P = 10^(−paper(k − D))          k = 확대기 색 필터
-5. 크로스토크 3×3
-6. 스캐너 스테이지  레벨 → 틴트(3점) → S커브 → 채도   ← **옵션**. 기본 "none"
-7. 화이트포인트     채널별 소프트 롤오프
+buildLut ─ 필름 정의 → LUT
+  1. 인코딩 해제    L = decode(v)                   입력 전달함수(inputs.js). 기본 v^1.8
+  2. 로그 노광      H = log10(L/0.18) + 노광시프트 + tungstenCast
+  3. 특성곡선       D = curve(H)                    층별 농도
+  4. 인화           P = 10^(−paper(k − D))          k = 확대기 색 필터
+  5. 화이트포인트   채널별 소프트 롤오프             곡선 인화지·리버설은 통과
+  6. 크로스토크 3×3
+  7. 인코딩         v' = P^(1/1.8)
+buildForParams ─ 그 LUT 위에 굽는다
+  8. 스캐너 스테이지  레벨 → 틴트(3점) → S커브 → 채도   ← **옵션**. 기본 "none"
+  9. 사용자 색 조정   bakeGrading
 ```
+
+**단계는 한 번만 정의하고, 평가만 두 가지로 한다.** `film.js`의 `emulsion`(1~3) ·
+`layerStages`(4) · `whitePointStage`(5)가 단계의 유일한 정의다. `buildLut`은 그것을
+
+- **분리형** — 채널이 독립이면 축마다 size번만 계산해 표로 둔다
+- **결합형** — 채널이 엮이면(닷지·번: 3단계와 4단계 사이에서 세 층의 농도를 함께 본다)
+  격자점마다 계산한다
+
+로 평가할 뿐이다. 단계 순서를 경로마다 손으로 옮겨 적던 시절에 닷지·번 경로에서
+화이트포인트가 통째로 빠졌다(→ [`RESOLVED.md`](./RESOLVED.md) 리뷰 D2). 채널을 엮는
+단계를 새로 넣을 자리도 여기다 — 농도 공간 3×3(TODO S2)은 결합형의 3↔4단계 사이에 들어간다.
+
+**기준점은 씬 축으로만 말한다.** 기준 그레이는 `at(0)`, 흰색은 `at(inp.hWhite)`.
+TDS 곡선 축과의 차이(`MID_GRAY_OFFSET`)는 `emulsion` 안에서만 더한다. 기준점은
+**노광 보정·텅스텐 캐스트 없이** 읽는다(아래 두 불변식이 그 이유다).
+`tools/check-conformance.js` 5e가 셋을 값으로 지킨다 — 기준 그레이에서 두 경로가
+같은 값 · 기준 그레이가 전 인화지에서 P=0.18 · 오프셋을 옮겨도 기준점이 따라감.
 
 **4단계가 메인 톤을 잡는다 — `core/color/paper.js`.** 네거티브는 확대기 빛을 막고,
 인화지가 그것을 받아 포지티브를 만든다. 밝은 피사체 → 네거 농도 높음 → 인화 노광
 적음 → 인화지 **발끝** → 밝은 인화물. 즉 **인화지 발끝이 하이라이트를, 어깨가 암부를**
-만든다(7단계 롤오프가 흉내 내던 것이 발끝이다).
+만든다(5단계 롤오프가 흉내 내던 것이 발끝이다).
 
 `k`는 채널별 인화 노광 = 확대기 색 필터다. 기준 그레이가 중성으로 인화되도록 잡는데,
 이것이 오렌지 마스크를 상쇄한다 — 실제 인화에서 필터를 돌리는 그 작업이다.
@@ -401,7 +507,7 @@ clearOwnLayers → grading.apply → grain.applyDiffusion → halation.apply →
 | `shared` | 공유 1.7066 | 필름 간 편차만 되살리는 중간 단계. ⚠️ 실측 아님 |
 | `kodak-endura-premier` | 실측 곡선 γ 3.93~4.10 | RA-4 실측(E-4070). 발끝·어깨가 물리적으로 산다 |
 
-**실측 곡선 인화지는 7단계 롤오프를 끈다.** 합성 롤오프는 "TDS 곡선에 어깨가 없다"를
+**실측 곡선 인화지는 5단계 롤오프를 끈다**(`film.js` `whitePointMode`). 합성 롤오프는 "TDS 곡선에 어깨가 없다"를
 메우려던 편법인데 인화지 발끝이 그 역할을 물리적으로 한다 — 둘 다 걸면 이중 압축이다
 (Endura + Portra 400에서 흰색이 0.83 → 0.74로 더 눌렸다). 곡선 인화지는 출력이 구조적으로
 `P = 10^(−Dp) ≤ 10^(−Dmin)`이라 원래 목적인 클리핑 방지도 필요 없다.
@@ -489,7 +595,23 @@ grain_px  = (µm / 1000) × px_per_mm
 
 ### LUT
 
-- 격자: 프리뷰 33³ / 최종·익스포트 65³. 생성 비용 33³ 1ms · 65³ 2ms → **캐시 불필요**.
+- 격자: 프리뷰 33³ / 최종·익스포트 65³.
+- **생성 비용은 입력 전달함수에 달렸다**(실측, Node 24 · 기본 인화지·스캐너 none):
+
+  | 입력 | 33³ | 65³ |
+  |---|---|---|
+  | `prophoto` · `linear-h*` | 16ms | 70ms |
+  | `acr-standard` | **47ms** | **313ms** |
+
+  `acr-standard`가 3배 비싼 것은 색상 보존 역(`inputs.remapCodes`)이 격자점마다
+  채널을 섞어, 축별 1차원 표로 접히지 않기 때문이다 — 무채색 격자점(33개)만 건너뛴다.
+  ⚠️ **예전에 적혀 있던 "33³ 1ms · 65³ 2ms → 캐시 불필요"는 낡은 수치다.** 그 시점
+  이후 인화지 곡선·롤오프·색상 보존 역이 들어왔다. 지금도 캐시를 두지 않는 것은
+  맞지만(파라미터가 바뀌면 어차피 다시 구워야 한다), **근거가 "1ms라 공짜"가 아니라
+  "파라미터 1회 변경당 한 번뿐"이다.** 엔진 패널은 한 번 변경에 LUT을 최대 세 벌
+  굽는다(미리보기 1 + `visualTables` 2 — 그레이딩이 중립이면 2벌) → `acr-standard`에서
+  112ms. 더 줄이려면 `respond`에 선형 입력 경로가 필요한데, 남은 이득이 10~15ms라
+  **일부러 우선순위를 낮춰 뒀다**(TODO N7) — 이 표가 곧 바뀔 것으로 읽지 말 것.
 - 순서: `.cube` 규약(R 인덱스가 가장 빨리 변함).
 - 보간: 사면체. 항등 LUT 오차 0(17³/33³/65³ 6갈래 분기 전부).
 
@@ -512,6 +634,8 @@ buildForParams(params, size)
    ├─→ core/io/xmp.js                Lightroom/ACR 프로파일
    └─→ apps/engine/src/preview.js    미리보기
 ```
+
+   (독립 실행형 `core/render/pipeline.js`의 `plan`이 다섯 번째다 — `check-studio.js`)
 
 **네 경로가 전부 `buildForParams`를 통과해야 한다.** 한 경로만 고치는 실수를
 `tools/check-conformance.js`가 잡는다(최대차 실측: .cube 4.2e-7, .xmp 7.6e-6,

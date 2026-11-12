@@ -26,7 +26,7 @@ const paper = C("color/paper");
 const lut = C("color/lut");
 const cube = C("io/cube");
 const xmp = C("io/xmp");
-const { defaultParams } = require(path.join(ROOT, "apps/engine/src/params"));
+const { defaultParams } = require(path.join(ROOT, "shared/params/engine"));
 
 let fails = 0;
 const ok = (name, cond, extra) => {
@@ -149,6 +149,42 @@ const ref = PROBES.map((p) => {
     }
   }
   ok(".xmp === 엔진", max < XMP_TOL, `최대차 ${max.toExponential(2)} (전 격자점 ${n}³)`);
+}
+
+// ── 2b. 잔차 감김 — **전수 불변식** ───────────────────────────────────
+//
+// `xmp.residual`은 값이 아니라 항등과의 차를 담는다. 복원값(잔차 + 항등항)이 0이나
+// 65536에 **정확히** 닿으면 mod 65536으로 감겨 **흰색이 검정으로** 뒤집힌다.
+//
+// ⚠️ **이 검사가 없어서 오래 출하됐다.** 처음 가드는 코너 8점만 막았는데, 코너는
+// 하필 잔차 인코딩에서도 값 그대로일 때와 같은 수를 내서 포맷 검증에 쓸모가 없던
+// 바로 그 점들이다(→ `core/io/xmp.js`의 `residual` 주석). 실제로는 **중간 격자점의
+// 출력 1.0**에서도 난다. 2026-10-07에 가드를 전 격자점으로 일반화했는데, 그때까지
+// 출하된 프로파일 36종 중 **28종**이 영향 범위였다 — `prophoto`(그 시점의 기본값)
+// 변형 10종을 포함한다. 즉 acr-standard가 만든 결함이 아니라 드러낸 결함이다.
+//
+// 조합을 훑어 "지금 그런 점이 나오나"를 보는 것으로는 부족하다 — 필름·인화지·
+// 스캐너·그레이딩을 건드리면 언제든 다시 나온다. **(v, i) 전역에서 감김이 불가능한
+// 것**이 지켜야 할 성질이고, 그건 32 × 4001점으로 전수 확인된다.
+{
+  const denom = xmp.LUT_SIZE - 1;
+  let wrapped = 0, worstLoss = 0, firstBad = null;
+  for (let i = 0; i < xmp.LUT_SIZE; i++) {
+    const base = Math.round((i / denom) * 65536);
+    for (let k = 0; k <= 4000; k++) {
+      const v = k / 4000;
+      const dec = (((xmp.residual(v, i, denom) + base) % 65536) + 65536) % 65536 / 65536;
+      if (Math.abs(dec - v) > 0.5) {
+        wrapped++;
+        if (!firstBad) firstBad = `i=${i} v=${v} → ${dec.toFixed(4)}`;
+      } else worstLoss = Math.max(worstLoss, Math.abs(dec - v));
+    }
+  }
+  ok("xmp.residual — 전 격자 × 전 출력값에서 감김이 불가능", wrapped === 0,
+    wrapped ? `감김 ${wrapped}건 (예: ${firstBad})` : `${xmp.LUT_SIZE}×4001점 전수`);
+  // 가드가 양끝을 1단계 안쪽으로 자르는 비용. XMP_TOL이 이 폭을 품어야 한다.
+  ok("xmp.residual — 가드로 인한 손실이 허용차 안", worstLoss <= XMP_TOL,
+    `최대 ${worstLoss.toExponential(2)} (허용차 ${XMP_TOL.toExponential(2)}, ${(worstLoss * 255).toFixed(4)}/255)`);
 }
 
 // ── 3. putPixels 경로 ────────────────────────────────────────────────
@@ -494,6 +530,92 @@ const ref = PROBES.map((p) => {
     `${chromaHighOff.toFixed(4)} → ${chromaHighOn.toFixed(4)}`);
   ok("닷지·번 — 발끝(섀도) 채도가 개선된다", chromaLowOn > chromaLowOff,
     `${chromaLowOff.toFixed(4)} → ${chromaLowOn.toFixed(4)}`);
+}
+
+// ── 5e. 단계 정의 — 평가 경로가 달라도 단계는 한 벌이다 ────────────────
+//
+// `film.js`는 단계(유제 → 인화 → 화이트포인트)를 한 번 정의하고 `buildLut`이 그것을
+// 두 방식(분리형: 축마다 미리 / 결합형: 닷지·번, 격자점마다)으로 평가한다. 예전엔
+// 단계 순서가 경로마다 손으로 복제돼 있었고 그 틈에서 결함이 났다(위 D2). 여기서는
+// **두 경로가 같은 단계를 탄다**는 것을 값으로 못 박는다.
+{
+  const inputsMod = C("color/inputs");
+  const st = film.stages;
+
+  // 기준 그레이를 격자 정중앙(코드 0.5)에 놓는 입력 — size 3이면 가운데 점이 곧 그레이다
+  const centered = (id) => {
+    const inp = inputsMod.byId(id);
+    const k = 2 * inp.midGrayEncoded;
+    const decode = (v) => inp.decode(v * k);
+    return { id: `${id}@0.5`, decode, hWhite: Math.log10(decode(1) / 0.18) };
+  };
+  const center = (t) => [t[39], t[40], t[41]]; // (1,1,1) of 3³
+
+  // (1) 기준 그레이는 luma 델타가 0이라 닷지·번 시프트가 정확히 0이다. 그러니 거기서는
+  //     결합형 = 분리형이어야 한다. 화이트포인트 방식마다 본다 — scalar·perChannel은
+  //     그레이에도 이득이 걸려서, 한 경로에만 단계가 빠지면 여기서 값이 갈라진다.
+  //     (이 두 방식 × 닷지·번은 예전 구조에서는 아예 못 돌아 에러로 막혀 있었다.)
+  let worst = 0, worstAt = "", n = 0, gained = 0;
+  for (const f0 of films.all()) {
+    for (const wp of [undefined, "scalar", "perChannel", "clip"]) {
+      // 텅스텐 캐스트는 뺀다 — 캐스트는 기준 그레이의 농도를 일부러 d0에서 떼어 놓는
+      // 것이라(그래야 정규화가 텅스텐 색을 중화하지 않는다) 그레이의 luma 델타가 0이 아니다.
+      const f = { ...f0, tungstenCast: undefined, ...(wp ? { whitePoint: wp } : {}) };
+      for (const pp of paper.all()) {
+        for (const id of ["prophoto", "linear-h5", "acr-standard"]) {
+          const o = { size: 3, paper: pp.id, input: centered(id) };
+          const a = center(film.buildLut(f, o));
+          const b = center(film.buildLut(f, { ...o, dodgeBurn: { limit: 0.4, contrast: 0.6 } }));
+          const plain = center(film.buildLut({ ...f, whitePoint: "clip" }, o));
+          if (a.some((x, i) => Math.abs(x - plain[i]) > 1e-4)) gained++;
+          for (let c = 0; c < 3; c++) {
+            const d = Math.abs(a[c] - b[c]);
+            if (d > worst) { worst = d; worstAt = `${f0.id}/${wp || "rolloff"}/${pp.id}/${id}`; }
+          }
+          n++;
+        }
+      }
+    }
+  }
+  ok("기준 그레이에서 닷지·번 경로 = 표준 경로 (화이트포인트 4방식)", worst < 1e-6,
+    `${n}조합, 최대차 ${worst.toExponential(1)}${worst ? " @" + worstAt : ""}`);
+  // 검사가 헛돌지 않는지 — 그레이에 실제로 이득이 걸리는 조합이 있어야 위가 의미 있다
+  ok("  └ 그중 화이트포인트가 그레이를 실제로 움직이는 조합이 있다", gained > 0, `${gained}조합`);
+
+  // (2) 기준 그레이는 모든 층에서 P = 0.18로 인화된다(확대기 필터의 정의) — 인화지마다.
+  let grayErr = 0;
+  for (const f of films.all()) {
+    for (const pp of paper.all()) {
+      for (const ch of ["r", "g", "b"]) {
+        const l = st.layerStages(f, ch, f.characteristicCurves[ch], +1, 0, 0, inputsMod.byId("prophoto"), pp);
+        grayErr = Math.max(grayErr, Math.abs(l.print(l.d0) - 0.18));
+      }
+    }
+  }
+  ok("기준 그레이 농도가 전 필름·전 인화지에서 P=0.18로 인화된다", grayErr < 1e-9,
+    `최대 편차 ${grayErr.toExponential(1)}`);
+
+  // (3) 앵커 오프셋을 옮겨도 기준점이 따라간다. `MID_GRAY_OFFSET`이 0인 동안에는
+  //     부호가 뒤집혀 있어도 아무 결과도 안 달라져서, 실제로 뒤집힌 채 있었다 —
+  //     0이 아닌 값을 넣어 봐야만 드러난다(TODO A2에서 이 상수를 정하는 날).
+  let offErr = 0, moved = 0;
+  for (const f of films.all()) {
+    for (const id of ["prophoto", "linear-h5", "acr-standard"]) {
+      const inp = inputsMod.byId(id);
+      const ref = st.emulsion(f.characteristicCurves.g, +1, 0, 0, inp, 0);
+      for (const off of [0.25, -0.1]) {
+        const em = st.emulsion(f.characteristicCurves.g, +1, 0, 0, inp, off);
+        // 기준 그레이 코드가 만드는 농도 = 기준점 `at(0)`
+        offErr = Math.max(offErr, Math.abs(em.density(inp.midGrayEncoded) - em.at(0)));
+        // 흰색(코드 1.0)이 만드는 농도 = `at(hWhite)`
+        offErr = Math.max(offErr, Math.abs(em.density(1) - em.at(inp.hWhite)));
+        moved = Math.max(moved, Math.abs(em.at(0) - ref.at(0)));
+      }
+    }
+  }
+  ok("앵커 오프셋을 옮겨도 그레이·흰색 기준점이 곡선 조회와 같은 자리를 읽는다",
+    offErr < 1e-4 && moved > 0.01,
+    `기준점 어긋남 ${offErr.toExponential(1)} (오프셋이 농도를 ${moved.toFixed(3)}D까지 옮기는 동안)`);
 }
 
 // ── 5c. 전 조합 스윕 ──────────────────────────────────────────────────

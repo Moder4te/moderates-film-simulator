@@ -376,6 +376,9 @@ function defaultSet(params) {
 
 module.exports = {
   LUT_SIZE,
+  // 감김 가드를 전수 검증할 수 있게 노출한다 — 코너 8점만 보던 탓에 오래 놓쳤다
+  // (`tools/check-conformance.js` §2b).
+  residual,
   GROUP,
   SPACES,
   XMP_INPUTS,

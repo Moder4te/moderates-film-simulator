@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 페이지 배경(#16171a)과 같은 색 — 뜨는 동안 흰 화면이 번쩍이지 않게 -->
+    <color name="bg">#16171a</color>
+    <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+        <item name="android:colorAccent">#e0a458</item>
+    </style>
+</resources>

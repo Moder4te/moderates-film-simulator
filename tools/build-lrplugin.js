@@ -16,7 +16,7 @@ const ROOT = path.resolve(__dirname, "..");
 const SRC = path.join(ROOT, "lrplugin");
 const OUT = path.join(ROOT, "dist", "FilmSim.lrplugin");
 
-const { defaultParams } = require(path.join(ROOT, "apps/engine/src/params"));
+const { defaultParams } = require(path.join(ROOT, "shared/params/engine"));
 const xmp = require(path.join(ROOT, "core/io/xmp"));
 const films = require(path.join(ROOT, "core/color/films"));
 const scanner = require(path.join(ROOT, "core/color/scanner"));

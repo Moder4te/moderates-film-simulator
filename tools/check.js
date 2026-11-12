@@ -15,6 +15,9 @@
  *   7. 톤            마감 그레이딩의 항등·단조성·중립 보존·디더
  *   8. 그레인        G1(채널상관)·G4(존 가중치 합)·G5(격자점수) 등을 값으로 못 박는다
  *      (docs/PLAN-GRAIN-2026-08-02.md "## 검증")
+ *   9. 할레이션      에너지 보존 · 작은 점 ≪ 큰 광원 · 해상도 불변
+ *  10. 독립 실행형   apps/studio — TIFF 입출력 · 작업 공간 · **어떻게 잘라 구워도 같은 값** ·
+ *                    엔진과 같은 색 · 묶은 번들이 소스와 같은 답. dist/studio도 여기서 빌드된다
  *
  * 4번 이후는 `lib/`를 읽으므로 sync-libs를 먼저 돌린다.
  */
@@ -107,7 +110,7 @@ step("문법 · BOM", () => {
     });
   }
   // 두 앱의 UI가 구조적으로 온전한가
-  for (const app of ["engine", "finish"]) {
+  for (const app of ["engine", "finish", "studio"]) {
     const html = fs.readFileSync(path.join(ROOT, "apps", app, "index.html"), "utf8");
     const open = (html.match(/<div\b/g) || []).length;
     const close = (html.match(/<\/div>/g) || []).length;
@@ -117,7 +120,7 @@ step("문법 · BOM", () => {
     }
   }
   console.log(
-    `  JS ${seen.length}개 · manifest 2개 · HTML 2개 · Lua ${lua.length}개(BOM·인코딩·맨 pcall) 검사, 문제 ${bad}건`
+    `  JS ${seen.length}개 · manifest 2개 · HTML 3개 · Lua ${lua.length}개(BOM·인코딩·맨 pcall) 검사, 문제 ${bad}건`
   );
   return bad === 0;
 });
@@ -136,6 +139,7 @@ for (const [name, script] of [
   ["톤", "check-tone.js"],
   ["그레인", "check-grain.js"],
   ["할레이션", "check-halation.js"],
+  ["독립 실행형", "check-studio.js"],
 ]) {
   step(name, () => {
     const r = spawnSync(process.execPath, [path.join(__dirname, script)], { stdio: "inherit" });

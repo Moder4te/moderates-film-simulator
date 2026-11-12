@@ -1,0 +1,759 @@
+/**
+ * FilmSim Studio — 화면.
+ *
+ * 계산은 전부 세션(`session.js` → `core/render`)이 하고 여기는 세 가지만 한다:
+ * 컨트롤 표에서 패널을 만들고, 값이 바뀌면 다시 구워 달라고 하고, 받은 픽셀을 그린다.
+ *
+ * ── 미리보기 요청은 "마지막 것만" ───────────────────────────────────────
+ *
+ * 슬라이더를 끌면 이벤트가 렌더보다 훨씬 빨리 쏟아진다. 전부 줄 세우면 손을 뗀 뒤에도
+ * 옛 값이 한참 그려진다. 그래서 굽는 중에 온 요청은 **가장 최근 하나만** 기억했다가
+ * 끝나면 그것을 굽는다. 끄는 동안은 초안(작은 대리본), 손을 떼면 본 대리본.
+ */
+
+const P = require("./params");
+const { SECTIONS } = require("./controls");
+const { createClient } = require("./client");
+const cube = require("../../../core/io/cube");
+const xmp = require("../../../core/io/xmp");
+const films = require("../../../core/color/films");
+const paper = require("../../../core/color/paper");
+const inputs = require("../../../core/color/inputs");
+const android = require("./android");
+const VERSION = require("./version");
+
+const $ = (id) => document.getElementById(id);
+const el = (tag, attrs, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") n.className = v;
+    else if (k === "text") n.textContent = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) n.setAttribute(k, v === true ? "" : v);
+  }
+  for (const k of kids) if (k != null) n.append(k);
+  return n;
+};
+
+const STORE_PRESETS = "filmsim.studio.presets";
+const STORE_CURRENT = "filmsim.studio.current";
+const STORE_RAW = "filmsim.studio.raw"; // RAW 현상 크기 — 프리셋이 아니라 기기 설정이다
+const store = {
+  get(key) { try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; } },
+  set(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) { /* 저장 못 해도 동작은 한다 */ } },
+};
+
+const DEFAULTS = P.defaultParams();
+let params = P.migrate(store.get(STORE_CURRENT) || {});
+let info = null;
+let view = { mode: "fit" };
+let comparing = false;
+const refreshers = []; // 파라미터 → 화면 (프리셋을 불러왔을 때)
+
+// ── 상태 줄 ──────────────────────────────────────────────────────────────
+
+function status(text, kind) {
+  $("status").textContent = text || "";
+  $("status").className = kind || "";
+}
+function progress(label, fraction) {
+  const bar = $("progress");
+  if (fraction == null || fraction >= 1) { bar.hidden = true; return; }
+  bar.hidden = false;
+  bar.value = fraction;
+  status(`${label} ${Math.round(fraction * 100)}%`);
+}
+
+const client = createClient(progress);
+
+// ── 미리보기 ─────────────────────────────────────────────────────────────
+
+let inflight = false;
+let wanted = null;
+let settle = 0;
+
+function viewSpec(draft) {
+  if (view.mode === "crop") {
+    const box = cropBox();
+    return { mode: "crop", x: view.cx - box.w / 2, y: view.cy - box.h / 2, w: box.w, h: box.h, original: comparing };
+  }
+  return { mode: "fit", draft, original: comparing };
+}
+
+/** 1:1 보기에서 구울 사각형 크기 — 화면에 보이는 만큼만(기기 픽셀 기준). */
+function cropBox() {
+  const stage = $("stage");
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let w = Math.round(stage.clientWidth * dpr), h = Math.round(stage.clientHeight * dpr);
+  // 폰의 고해상도 화면에서 사각형이 너무 커지지 않게 — 2MP면 충분하다
+  const k = Math.min(1, Math.sqrt(2_000_000 / Math.max(1, w * h)));
+  w = Math.round(w * k); h = Math.round(h * k);
+  return { w: Math.max(64, Math.min(w, info.width)), h: Math.max(64, Math.min(h, info.height)), dpr };
+}
+
+async function pump() {
+  if (inflight) return;
+  inflight = true;
+  try {
+    while (wanted) {
+      const job = wanted;
+      wanted = null;
+      try {
+        draw(await client.preview(params, viewSpec(job.draft)));
+      } catch (e) {
+        status(e.message, "error");
+      }
+    }
+  } finally {
+    inflight = false;
+  }
+}
+
+/** @param {boolean} draft 끄는 중이면 true — 초안으로 굽고, 멈추면 본 대리본으로 다시 */
+function render(draft) {
+  if (!info) return;
+  clearTimeout(settle);
+  wanted = { draft: !!draft && view.mode === "fit" };
+  pump();
+  if (draft) settle = setTimeout(() => render(false), 220);
+}
+
+function draw(res) {
+  const canvas = $("canvas");
+  if (canvas.width !== res.width || canvas.height !== res.height) {
+    canvas.width = res.width; canvas.height = res.height;
+  }
+  canvas.getContext("2d").putImageData(new ImageData(res.rgba, res.width, res.height), 0, 0);
+  canvas.style.transform = "";
+  if (res.view.mode === "crop") {
+    const dpr = cropBox().dpr;
+    canvas.style.width = `${res.width / dpr}px`;
+    canvas.style.height = `${res.height / dpr}px`;
+    view.cx = res.view.x + res.width / 2;
+    view.cy = res.view.y + res.height / 2;
+  } else {
+    canvas.style.width = canvas.style.height = "";
+  }
+  canvas.dataset.mode = res.view.mode;
+  showWarnings(res.warnings);
+  const what = comparing ? "원본" : res.view.mode === "crop" ? "1:1" : res.view.draft ? "초안" : "맞춤";
+  const note = pendingNote;
+  pendingNote = "";
+  status(`${what} ${res.width}×${res.height} · ${res.ms}ms${note ? " — " + note : ""}`, note ? "done" : "");
+}
+
+/**
+ * 경고는 그림 위에 뜬다. 한 번 눌러 닫으면 **같은 내용**은 다시 띄우지 않는다 —
+ * 슬라이더를 움직일 때마다 되살아나면 폰에서는 그림의 절반을 계속 가린다.
+ * 내용이 달라지면(다른 문제가 생기면) 다시 뜬다.
+ */
+let dismissed = "";
+function showWarnings(list) {
+  const box = $("warnings");
+  const text = (list || []).join("\n");
+  box.replaceChildren(
+    ...(list || []).map((m) => el("p", { text: m.replace(/\*\*/g, "") })),
+    el("small", { text: "눌러서 닫기" })
+  );
+  box.hidden = !text || text === dismissed;
+  box.onclick = () => { dismissed = text; box.hidden = true; };
+}
+
+function setMode(mode, at) {
+  if (!info) return;
+  if (mode === "crop") {
+    view = { mode: "crop", cx: at ? at.x : (view.cx != null ? view.cx : info.width / 2), cy: at ? at.y : (view.cy != null ? view.cy : info.height / 2) };
+  } else {
+    view = { mode: "fit", cx: view.cx, cy: view.cy };
+  }
+  $("btnFit").classList.toggle("on", mode === "fit");
+  $("btnCrop").classList.toggle("on", mode === "crop");
+  render(false);
+}
+
+function bindViewer() {
+  const canvas = $("canvas");
+  let drag = null;
+  canvas.addEventListener("pointerdown", (e) => {
+    if (!info || view.mode !== "crop") return;
+    drag = { x: e.clientX, y: e.clientY, dx: 0, dy: 0 };
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    drag.dx = e.clientX - drag.x; drag.dy = e.clientY - drag.y;
+    // 끄는 동안은 그림만 민다 — 원본 해상도 사각형을 매 프레임 다시 구울 수는 없다
+    canvas.style.transform = `translate(${drag.dx}px, ${drag.dy}px)`;
+  });
+  const end = () => {
+    if (!drag) return;
+    const dpr = cropBox().dpr;
+    view.cx -= drag.dx * dpr; view.cy -= drag.dy * dpr;
+    const moved = Math.abs(drag.dx) + Math.abs(drag.dy) > 2;
+    drag = null;
+    if (moved) render(false); else canvas.style.transform = "";
+  };
+  canvas.addEventListener("pointerup", end);
+  canvas.addEventListener("pointercancel", end);
+
+  // 맞춤 보기에서 두 번 누르면 그 자리를 1:1로
+  canvas.addEventListener("dblclick", (e) => {
+    if (!info) return;
+    if (view.mode === "crop") { setMode("fit"); return; }
+    const r = canvas.getBoundingClientRect();
+    setMode("crop", { x: ((e.clientX - r.left) / r.width) * info.width, y: ((e.clientY - r.top) / r.height) * info.height });
+  });
+
+  $("btnFit").addEventListener("click", () => setMode("fit"));
+  $("btnCrop").addEventListener("click", () => setMode("crop"));
+
+  const hold = $("btnCompare");
+  const on = (e) => { e.preventDefault(); if (!comparing) { comparing = true; hold.classList.add("on"); render(false); } };
+  const off = () => { if (comparing) { comparing = false; hold.classList.remove("on"); render(false); } };
+  hold.addEventListener("pointerdown", on);
+  hold.addEventListener("pointerup", off);
+  hold.addEventListener("pointerleave", off);
+  hold.addEventListener("pointercancel", off);
+  hold.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  let resizeTimer = 0;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { if (info && view.mode === "crop") render(false); }, 200);
+  });
+}
+
+// ── 파일 ─────────────────────────────────────────────────────────────────
+
+function proxyEdge() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  return Math.round(Math.max(screen.width, screen.height) * dpr);
+}
+
+/**
+ * 폰·태블릿인가. RAW를 원본 크기로 풀 수 있는 한도를 여기서 가른다 — 6천만 화소 원본은
+ * 현상 중에 1GB를 넘게 쓰고, 폰 브라우저 탭은 그 전에 죽는다.
+ */
+function smallDevice() {
+  const mem = navigator.deviceMemory || 0; // 없는 브라우저도 있다(0)
+  return /Android|iPhone|iPad/i.test(navigator.userAgent) || (mem > 0 && mem <= 4);
+}
+
+/** 세션에 넘길 열기 옵션. RAW 크기는 「자동/원본/절반」 중 고른 것을 따른다. */
+function openOptions() {
+  const pref = store.get(STORE_RAW) || "auto";
+  return {
+    proxyEdge: proxyEdge(),
+    rawHalf: pref === "half" ? true : pref === "full" ? false : "auto",
+    // 자동일 때만 쓴다. 2600만 화소까지는 폰에서도 원본으로(2400만 화소 카메라가 여기 든다)
+    rawHalfAbove: smallDevice() ? 26e6 : 0,
+  };
+}
+
+/**
+ * RAW를 열면 엔진이 그것을 맞게 읽도록 설정 셋을 맞춘다. RAW가 아닌 것을 다시 열면
+ * 되돌린다 — 「리니어 +5스톱」으로 JPEG을 읽으면 새까맣다.
+ *
+ *   입력 소스  「리니어 +N스톱」 — RAW는 화이트 레벨 기준 선형으로 들어온다
+ *   인화지     곡선이 있는 것(Endura). 직선 인화지는 어깨가 없어 리니어 폭을 못 담는다
+ *              (`inputs.combinationWarning`)
+ *   노광       DNG BaselineExposure. 폰 RAW는 일부러 어둡게 기록하고 "이만큼 올려 보라"고
+ *              적어 둔다. 현상에서 올리지 않고 엔진 노광으로 올린다(대수적으로 같다)
+ */
+let beforeRaw = null;
+function adaptToSource() {
+  const notes = [];
+  const f = params.film;
+  if (info.raw) {
+    if (!beforeRaw) beforeRaw = { input: f.input, paper: f.paper, exposure: f.exposure };
+    if (!/^linear-h/.test(f.input)) {
+      f.input = `linear-h${inputs.DEFAULT_HEADROOM}`;
+      notes.push(`입력 소스 → 리니어 +${inputs.DEFAULT_HEADROOM}스톱`);
+    }
+    if (!paper.byId(f.paper).curves) {
+      const curved = paper.all().find((x) => x.curves);
+      if (curved) { f.paper = curved.id; notes.push(`인화지 → ${curved.displayName}`); }
+    }
+    const range = (films.byId(f.id) && films.byId(f.id).exposureRange) || [-2, 2];
+    const be = Math.min(range[1], Math.max(range[0], Math.round(info.raw.baselineExposure * 10) / 10));
+    if (be !== 0 || beforeRaw.auto) {
+      f.exposure = be;
+      if (be !== 0) notes.push(`노광 → ${be > 0 ? "+" : ""}${be} (DNG 기준 노출)`);
+    }
+    beforeRaw.auto = be !== 0;
+  } else if (beforeRaw) {
+    f.input = beforeRaw.input; f.paper = beforeRaw.paper; f.exposure = beforeRaw.exposure;
+    beforeRaw = null;
+    notes.push("RAW용 설정을 되돌림");
+  }
+  if (notes.length) {
+    store.set(STORE_CURRENT, params);
+    refreshAll();
+  }
+  return notes;
+}
+
+function showSource(notes) {
+  dismissed = "";
+  document.body.classList.add("loaded");
+  document.body.classList.toggle("raw", !!info.raw);
+  const mp = ((info.width * info.height) / 1e6).toFixed(1);
+  $("fileInfo").textContent =
+    `${info.name} · ${info.width}×${info.height} (${mp}MP) · ${info.bits}비트 · ${info.profile || "프로파일 없음"}`;
+  view = { mode: "fit" };
+  $("btnFit").classList.add("on"); $("btnCrop").classList.remove("on");
+  render(false);
+  pendingNote = notes && notes.length ? `${info.raw ? "RAW 플랫 현상 — " : ""}${notes.join(" · ")}` : "";
+}
+
+let reloadSource = null; // 지금 연 것을 다시 받는 법 — RAW 현상 크기를 바꾸면 다시 연다
+let pendingNote = ""; // 다음 렌더가 끝나면 상태 줄에 한 번 보여 줄 말
+
+/**
+ * @param {ArrayBuffer} buffer
+ * @param {() => Promise<ArrayBuffer>} reload  같은 파일을 다시 받는다(버퍼는 워커로 넘어가 버린다)
+ */
+async function openBuffer(buffer, name, type, reload) {
+  status(`${name} 여는 중…`);
+  try {
+    info = await client.open(buffer, name, type, openOptions());
+  } catch (e) {
+    progress(null);
+    status(e.message, "error");
+    return false;
+  }
+  reloadSource = reload ? { name, type, reload } : null;
+  progress(null);
+  showSource(adaptToSource());
+  return true;
+}
+
+async function openFile(file) {
+  status(`${file.name} 여는 중…`); // 파일을 읽기 **전에** — 큰 RAW는 읽는 데만 한참이다
+  return openBuffer(await file.arrayBuffer(), file.name, file.type, () => file.arrayBuffer());
+}
+
+/**
+ * 파일을 기기에 내놓는다. 저장된 자리(보여 줄 이름)를 돌려준다.
+ *
+ * 브라우저에서는 내려받기다. Android 앱(apps/android)에서는 WebView에 다운로드
+ * 관리자가 없어서, 껍데기가 심어 둔 `FilmSimHost` 다리로 바이트를 조각내 넘긴다 —
+ * 그쪽이 MediaStore(사진첩·다운로드 폴더)에 쓴다.
+ */
+async function download(blob, name) {
+  const host = window.FilmSimHost;
+  if (!host) {
+    const url = URL.createObjectURL(blob);
+    const a = el("a", { href: url, download: name });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    return name;
+  }
+
+  const id = host.begin(name, blob.type || "");
+  if (id < 0) throw new Error("저장하지 못했습니다 — " + host.lastError());
+  try {
+    // 다리는 문자열만 나른다. 한 번에 다 넘기면 144MB TIFF가 문자열 200MB가 된다
+    const CHUNK = 3 * 256 * 1024;
+    for (let at = 0; at < blob.size; at += CHUNK) {
+      const b64 = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result.slice(fr.result.indexOf(",") + 1));
+        fr.onerror = () => reject(new Error("파일 조각을 읽지 못했습니다"));
+        fr.readAsDataURL(blob.slice(at, at + CHUNK));
+      });
+      if (!host.append(id, b64)) throw new Error("저장하지 못했습니다 — " + host.lastError());
+      if (blob.size > 4 * CHUNK) progress("기기에 저장", Math.min(0.99, (at + CHUNK) / blob.size));
+    }
+    const where = host.finish(id);
+    if (!where) throw new Error("저장하지 못했습니다 — " + host.lastError());
+    return where;
+  } catch (e) {
+    host.abort(id);
+    throw e;
+  }
+}
+
+const baseName = (name) => String(name || "image").replace(/\.[^.]+$/, "");
+
+function exportOptions() {
+  const edge = $("expEdge").value;
+  return {
+    format: $("expFormat").value,
+    quality: Number($("expQuality").value),
+    longEdge: edge === "custom" ? Number($("expEdgeCustom").value) || 0 : Number(edge) || 0,
+  };
+}
+
+/**
+ * @param {boolean} [flat] 아무 단계도 걸지 않은 16bit TIFF — RAW의 **플랫 현상본**.
+ *   `tools/decode-raw.py`가 내는 것과 같은 파일이라 Photoshop 엔진에 그대로 먹인다
+ */
+async function exportCurrent(flat) {
+  if (!info) return;
+  lock(true);
+  try {
+    const t0 = Date.now();
+    const opts = flat === true ? { format: "tiff16", flat: true, longEdge: 0 } : exportOptions();
+    const r = await client.exportImage(params, opts);
+    // 원본 이름에 꼬리를 붙인다 — 같은 폴더에 받아도 원본을 덮지 않는다
+    const where = await download(r.blob, `${baseName(info.name)}_${flat === true ? "flat" : "filmsim"}.${r.ext}`);
+    status(`저장: ${where} · ${r.width}×${r.height} · ${((Date.now() - t0) / 1000).toFixed(1)}초`, "done");
+  } catch (e) {
+    status(e.message, "error");
+  } finally {
+    progress(null);
+    lock(false);
+  }
+}
+
+/**
+ * 여러 장을 같은 설정으로. 폴더를 고를 수 있으면(데스크톱 Chrome·Edge) 거기에 쓰고,
+ * 아니면 한 장씩 내려받는다. 어느 쪽이든 이름에 `_filmsim`이 붙어 원본과 겹치지 않는다.
+ */
+async function exportBatch(files) {
+  if (!files.length) return;
+  let dir = null;
+  if (window.showDirectoryPicker) {
+    try { dir = await window.showDirectoryPicker({ mode: "readwrite" }); } catch (e) { if (e.name === "AbortError") return; }
+  }
+  lock(true);
+  const opts = exportOptions();
+  let done = 0;
+  const failed = [];
+  try {
+    for (const file of files) {
+      status(`일괄 ${done + 1}/${files.length} — ${file.name}`);
+      try {
+        info = await client.open(await file.arrayBuffer(), file.name, file.type, openOptions());
+        adaptToSource(); // RAW와 JPEG이 섞여 있어도 장마다 맞는 입력으로 읽는다
+        const r = await client.exportImage(params, opts);
+        const name = `${baseName(file.name)}_filmsim.${r.ext}`;
+        if (dir) {
+          const w = await (await dir.getFileHandle(name, { create: true })).createWritable();
+          await w.write(r.blob);
+          await w.close();
+        } else {
+          await download(r.blob, name);
+        }
+        done++;
+      } catch (e) {
+        failed.push(`${file.name}: ${e.message}`);
+      }
+    }
+  } finally {
+    progress(null);
+    lock(false);
+  }
+  if (info) showSource();
+  status(
+    failed.length ? `일괄 ${done}/${files.length}장 완료. 실패 — ${failed.join(" / ")}` : `일괄 ${done}장 완료`,
+    failed.length ? "error" : "done"
+  );
+}
+
+async function exportLook(kind) {
+  try {
+    const opts = kind === "cube"
+      ? { size: Number($("lookSize").value), space: $("cubeSpace").value, input: $("cubeInput").value }
+      : { space: $("xmpSpace").value, input: $("xmpInput").value };
+    const r = await client.exportLook(params, kind, opts);
+    status(`저장: ${await download(new Blob([r.text], { type: "text/plain" }), r.name)}`, "done");
+  } catch (e) {
+    status(e.message, "error");
+  }
+}
+
+function lock(on) {
+  document.body.classList.toggle("busy", on);
+  for (const b of document.querySelectorAll("button, input[type=file]")) b.disabled = on;
+}
+
+// ── 패널 ─────────────────────────────────────────────────────────────────
+
+function changed(path, value, live) {
+  P.set(params, path, value);
+  for (const r of refreshers) if (r.dependsOn) r();
+  store.set(STORE_CURRENT, params);
+  render(live);
+}
+
+function fmt(c, v) {
+  const digits = c.step >= 1 ? 0 : c.step >= 0.1 ? 1 : 2;
+  let s = Number(v).toFixed(digits);
+  if (c.signed && v > 0) s = "+" + s;
+  if (!c.unit) return s;
+  return c.prefixUnit ? `${c.unit} ${s}` : `${s}${c.unit === "스톱" ? " " : ""}${c.unit}`;
+}
+
+/** 로그 슬라이더(감도) — 위치 0~1000 ↔ 값. 한 스톱이 같은 거리를 차지한다. */
+const logPos = (c, v) => Math.round((Math.log(v / c.min) / Math.log(c.max / c.min)) * 1000);
+const logVal = (c, p) => Math.round(c.min * Math.pow(c.max / c.min, p / 1000));
+
+function buildRange(c, getPath) {
+  const path = () => (typeof getPath === "function" ? getPath() : c.path);
+  const out = el("output");
+  const input = el("input", c.log
+    ? { type: "range", min: 0, max: 1000, step: 1 }
+    : { type: "range", min: c.min, max: c.max, step: c.step });
+  const read = () => (c.log ? logVal(c, Number(input.value)) : Number(input.value));
+  const show = (v) => { out.textContent = fmt(c, v); };
+  input.addEventListener("input", () => { show(read()); changed(path(), read(), true); });
+  input.addEventListener("change", () => changed(path(), read(), false));
+  const label = el("span", { class: "name", text: c.label, title: "두 번 눌러 기본값으로" });
+  const reset = () => {
+    const d = P.get(DEFAULTS, path());
+    if (d == null) return;
+    changed(path(), d, false);
+    refresh();
+  };
+  label.addEventListener("dblclick", reset);
+  const refresh = () => {
+    const v = P.get(params, path());
+    const n = v == null ? P.get(DEFAULTS, path()) : v;
+    input.value = c.log ? logPos(c, Math.min(c.max, Math.max(c.min, n))) : n;
+    show(n);
+  };
+  refreshers.push(refresh);
+  return wrap(c, el("label", { class: "row range" }, el("span", { class: "head" }, label, out), input));
+}
+
+function buildSelect(c) {
+  const input = el("select", {}, ...c.options.map(([v, t]) => el("option", { value: v, text: t })));
+  input.addEventListener("change", () => changed(c.path, c.number ? Number(input.value) : input.value, false));
+  refreshers.push(() => { input.value = String(P.get(params, c.path)); });
+  return wrap(c, el("label", { class: "row" }, el("span", { class: "name", text: c.label }), input));
+}
+
+function buildCheck(c) {
+  const input = el("input", { type: "checkbox" });
+  input.addEventListener("change", () => changed(c.path, input.checked, false));
+  refreshers.push(() => { input.checked = !!P.get(params, c.path); });
+  return wrap(c, el("label", { class: "row check" }, input, el("span", { text: c.label })));
+}
+
+function buildNumber(c) {
+  const input = el("input", { type: "number", min: c.min, max: c.max, step: c.step, inputmode: "numeric" });
+  input.addEventListener("change", () => changed(c.path, Number(input.value), false));
+  refreshers.push(() => { input.value = P.get(params, c.path); });
+  return wrap(c, el("label", { class: "row" }, el("span", { class: "name", text: c.label }), input));
+}
+
+/** 색역별 보정 — 색역을 고르면 그 색역의 C·M·Y·K 넷이 나온다. 슬라이더 40개를 늘어놓지 않는다. */
+function buildSelective(c) {
+  const pick = el("select", {}, ...c.ranges.map(([v, t]) => el("option", { value: v, text: t })));
+  const box = el("div", { class: "group" }, el("label", { class: "row" }, el("span", { class: "name", text: c.label }), pick));
+  const start = refreshers.length;
+  for (const [key, label] of [["c", "시안"], ["m", "마젠타"], ["y", "옐로"], ["k", "블랙"]]) {
+    box.append(buildRange({ label, min: -100, max: 100, step: 1, signed: true }, () => `grading.selectiveColor.${pick.value}.${key}`));
+  }
+  const mine = refreshers.slice(start);
+  const mark = () => {
+    for (const o of pick.options) {
+      const v = params.grading.selectiveColor[o.value] || {};
+      const touched = v.c || v.m || v.y || v.k;
+      o.textContent = c.ranges.find((r) => r[0] === o.value)[1] + (touched ? " ●" : "");
+    }
+  };
+  mark.dependsOn = true;
+  refreshers.push(mark);
+  pick.addEventListener("change", () => mine.forEach((r) => r()));
+  return box;
+}
+
+/** `when` — 다른 값에 따라 숨는 컨트롤. 꺼진 기능의 손잡이는 보이지 않는 편이 낫다. */
+function wrap(c, node) {
+  if (c.hint) node.append(el("small", { text: c.hint }));
+  if (c.when) {
+    const test = typeof c.when === "function" ? c.when : (p) => !!P.get(p, c.when);
+    const update = () => { node.hidden = !test(params); };
+    update.dependsOn = true;
+    refreshers.push(update);
+  }
+  return node;
+}
+
+function buildPanel() {
+  const panel = $("sections");
+  for (const s of SECTIONS) {
+    const body = el("div", { class: "body" });
+    if (s.hint) body.append(el("p", { class: "hint", text: s.hint }));
+    for (const c of s.items) {
+      body.append(
+        c.type === "range" ? buildRange(c)
+        : c.type === "select" ? buildSelect(c)
+        : c.type === "check" ? buildCheck(c)
+        : c.type === "number" ? buildNumber(c)
+        : buildSelective(c)
+      );
+    }
+    const summary = el("summary", {}, el("span", { text: s.title }));
+    if (s.enable) {
+      const toggle = el("input", { type: "checkbox", title: "켜기/끄기" });
+      toggle.addEventListener("click", (e) => e.stopPropagation());
+      toggle.addEventListener("change", () => changed(s.enable, toggle.checked, false));
+      const sync = () => {
+        toggle.checked = P.get(params, s.enable) !== false;
+        body.classList.toggle("off", !toggle.checked);
+      };
+      sync.dependsOn = true;
+      refreshers.push(sync);
+      summary.append(toggle);
+    }
+    panel.append(el("details", { open: s.open === true, id: `sec-${s.id}` }, summary, body));
+  }
+}
+
+function refreshAll() {
+  for (const r of refreshers) r();
+}
+
+// ── 프리셋 ───────────────────────────────────────────────────────────────
+
+let presets = [];
+
+function loadPresets() {
+  const saved = store.get(STORE_PRESETS);
+  presets = Array.isArray(saved) && saved.length ? saved.map(P.migrate) : P.seeds();
+}
+
+function fillPresetList(selected) {
+  const sel = $("presetList");
+  sel.replaceChildren(
+    el("option", { value: "", text: "프리셋…" }),
+    ...presets.map((p, i) => el("option", { value: i, text: p.category ? `${p.category} / ${p.name}` : p.name }))
+  );
+  sel.value = selected == null ? "" : String(selected);
+}
+
+function applyParams(next) {
+  params = P.migrate(next);
+  store.set(STORE_CURRENT, params);
+  refreshAll();
+  render(false);
+}
+
+function bindPresets() {
+  loadPresets();
+  fillPresetList();
+  $("presetList").addEventListener("change", (e) => {
+    if (e.target.value === "") return;
+    applyParams(JSON.parse(JSON.stringify(presets[Number(e.target.value)])));
+    status(`프리셋: ${params.name}`);
+  });
+  $("presetSave").addEventListener("click", () => {
+    const name = prompt("프리셋 이름", params.name && params.name !== "Untitled" ? params.name : "");
+    if (!name) return;
+    params.name = name.trim();
+    const copy = JSON.parse(JSON.stringify(params));
+    const at = presets.findIndex((p) => p.name === copy.name);
+    if (at >= 0) presets[at] = copy; else presets.push(copy);
+    store.set(STORE_PRESETS, presets);
+    fillPresetList(at >= 0 ? at : presets.length - 1);
+    status(`프리셋 저장: ${copy.name}`, "done");
+  });
+  $("presetDelete").addEventListener("click", () => {
+    const i = $("presetList").value;
+    if (i === "" || !confirm(`「${presets[Number(i)].name}」 프리셋을 지울까요?`)) return;
+    presets.splice(Number(i), 1);
+    store.set(STORE_PRESETS, presets);
+    fillPresetList();
+  });
+  $("presetExport").addEventListener("click", async () => {
+    const slug = (params.name || "preset").replace(/[\\/:*?"<>|]/g, "").trim() || "preset";
+    try {
+      status(`저장: ${await download(new Blob([JSON.stringify(params, null, 2)], { type: "application/json" }), `${slug}.json`)}`, "done");
+    } catch (e) {
+      status(e.message, "error");
+    }
+  });
+  $("presetImport").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      // Photoshop 엔진·마감 플러그인의 프리셋도 그대로 읽힌다 — 없는 쪽은 기본값
+      applyParams(JSON.parse(await file.text()));
+      status(`프리셋 불러옴: ${params.name}`, "done");
+    } catch (err) {
+      status("프리셋 파일을 읽을 수 없습니다 — JSON이 아닙니다", "error");
+    }
+  });
+  $("resetAll").addEventListener("click", () => {
+    applyParams({});
+    fillPresetList();
+    status("기본값으로 되돌림");
+  });
+}
+
+// ── 시작 ─────────────────────────────────────────────────────────────────
+
+function bindFiles() {
+  const pick = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) openFile(f); };
+  $("fileOpen").addEventListener("change", pick);
+  $("fileOpen2").addEventListener("change", pick);
+  $("fileBatch").addEventListener("change", (e) => { const fs = Array.from(e.target.files); e.target.value = ""; exportBatch(fs); });
+  $("btnExport").addEventListener("click", () => exportCurrent(false));
+  $("btnFlat").addEventListener("click", () => exportCurrent(true));
+
+  // RAW 현상 크기 — 바꾸면 열려 있는 RAW를 그 크기로 다시 현상한다
+  const rawSize = $("rawSize");
+  rawSize.value = store.get(STORE_RAW) || "auto";
+  rawSize.addEventListener("change", () => {
+    store.set(STORE_RAW, rawSize.value);
+    const src = reloadSource;
+    if (info && info.raw && src) src.reload().then((b) => openBuffer(b, src.name, src.type, src.reload));
+  });
+  $("btnCube").addEventListener("click", () => exportLook("cube"));
+  $("btnXmp").addEventListener("click", () => exportLook("xmp"));
+
+  window.addEventListener("dragover", (e) => { e.preventDefault(); document.body.classList.add("drop"); });
+  window.addEventListener("dragleave", () => document.body.classList.remove("drop"));
+  window.addEventListener("drop", (e) => {
+    e.preventDefault();
+    document.body.classList.remove("drop");
+    const f = e.dataTransfer.files[0];
+    if (f) openFile(f);
+  });
+
+  const sync = () => {
+    $("expQualityRow").hidden = $("expFormat").value !== "jpeg";
+    $("expEdgeCustom").hidden = $("expEdge").value !== "custom";
+    $("expQualityOut").textContent = $("expQuality").value;
+  };
+  for (const id of ["expFormat", "expEdge", "expQuality"]) $(id).addEventListener("input", sync);
+  sync();
+
+  const fill = (id, list) => $(id).replaceChildren(...list.map(([v, t]) => el("option", { value: v, text: t })));
+  fill("lookSize", cube.SIZES.map((n) => [n, `${n}³`]));
+  fill("cubeSpace", cube.SPACES.map((s) => [s.id, s.displayName]));
+  fill("cubeInput", cube.INPUTS.map((s) => [s.id, s.displayName]));
+  fill("xmpSpace", Object.entries(xmp.SPACES).map(([id, s]) => [id, s.displayName]));
+  fill("xmpInput", xmp.XMP_INPUTS.map((s) => [s.id, s.displayName]));
+}
+
+function start() {
+  buildPanel();
+  bindViewer();
+  bindFiles();
+  bindPresets();
+  refreshAll();
+  $("about").textContent =
+    `FilmSim Studio ${VERSION} · 필름 ${films.all().length}종 · ` + (client.threaded ? "백그라운드 처리" : "단일 스레드(이 브라우저는 워커를 못 씁니다 — 처리 중 화면이 멎습니다)");
+  status("사진을 여세요 — RAW · DNG · JPEG · PNG · WebP · TIFF");
+
+  // Android 앱 안이면 — 공유로 넘겨받기와 카메라 FTP 받기 패널
+  if (window.FilmSimHost) android.init(window.FilmSimHost, { openBuffer, status }, $("sections"));
+
+  // 설치형(PWA)은 https나 localhost에서만 된다. 파일로 직접 열었으면 조용히 건너뛴다
+  // Android 앱 안에서는 등록하지 않는다. 거기서는 껍데기가 요청을 가로채 답하는데,
+  // 서비스 워커가 낀 요청은 그 가로채기를 **지나쳐** 버린다(/shared/가 404가 된다)
+  if (!window.FilmSimHost && "serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+}
+
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
+else start();

@@ -17,6 +17,8 @@
 | 필름 데이터 추가 | [`tools/README.md`](./tools/README.md) + [`tools/tds-catalog.md`](./tools/tds-catalog.md) | 정적 |
 | 그레인 물리 작업(G1~G5·M1) 재개 | [`docs/PLAN-GRAIN-2026-08-02.md`](./docs/PLAN-GRAIN-2026-08-02.md) | 동적 |
 | 사용자용 설명 | [`README.md`](./README.md) | 동적 |
+| 릴리스 노트 쓰기 | `docs/releases/<태그>.md` — 첫 줄이 제목. `build.yml`을 그 태그로 수동 실행하면 릴리스가 된다 | 동적 |
+| 독립 실행형(Photoshop 없이) 구조 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) 「독립 실행형」 · 근거는 [`docs/DECISIONS.md`](./docs/DECISIONS.md) | 정적 |
 
 ## 전체 목록
 

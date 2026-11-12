@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#16171a">
+<title>FilmSim Studio</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<style>
+:root {
+  --bg: #16171a; --panel: #1e2024; --line: #2e3138; --text: #e6e4df; --dim: #9a9890;
+  --accent: #e0a458; --accent-ink: #1a1408; --error: #ef7a6d; --ok: #8fc78a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Noto Sans KR", sans-serif;
+  display: flex; overflow: hidden;
+}
+button, select, input, .filebtn { font: inherit; color: inherit; }
+button, .filebtn {
+  background: #2a2d33; border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 12px; cursor: pointer; white-space: nowrap; display: inline-block;
+}
+button:hover, .filebtn:hover { border-color: #4a4e58; }
+button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.primary, .filebtn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button:disabled { opacity: .5; cursor: default; }
+.filebtn input { display: none; }
+select, input[type=number] {
+  background: #14151a; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; width: 100%;
+}
+
+/* ── 보기 ── */
+#viewer { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+#toolbar { display: flex; gap: 6px; padding: 8px; align-items: center; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+#toolbar .spacer { flex: 1; }
+#stage { flex: 1; min-height: 0; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #0d0e10; }
+#canvas { max-width: 100%; max-height: 100%; display: none; touch-action: none; }
+#canvas[data-mode=crop] { max-width: none; max-height: none; cursor: grab; }
+body.loaded #canvas { display: block; }
+body.loaded #empty { display: none; }
+#empty { text-align: center; color: var(--dim); padding: 24px; max-width: 30em; }
+#empty h1 { color: var(--text); font-size: 20px; margin: 0 0 6px; }
+#empty .filebtn { margin-top: 14px; padding: 12px 22px; font-size: 16px; }
+body.drop #stage { outline: 2px dashed var(--accent); outline-offset: -8px; }
+#statusbar { display: flex; gap: 10px; align-items: center; padding: 5px 10px; border-top: 1px solid var(--line); min-height: 30px; font-size: 12px; color: var(--dim); }
+#status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#status.error { color: var(--error); white-space: normal; }
+#status.done { color: var(--ok); }
+#fileInfo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 50%; }
+progress { width: 90px; height: 6px; accent-color: var(--accent); }
+#warnings { position: absolute; left: 8px; right: 8px; bottom: 8px; background: rgba(40, 30, 12, .93); border: 1px solid #6b5326; border-radius: 6px; padding: 8px 10px; font-size: 12px; max-height: 40%; overflow: auto; }
+#warnings { cursor: pointer; }
+#warnings p { margin: 0 0 6px; }
+#warnings small { text-align: right; }
+progress[hidden] { display: none; }
+
+/* ── 패널 ── */
+#panel { width: 340px; flex: none; background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; overscroll-behavior: contain; }
+#presets { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; padding: 10px; border-bottom: 1px solid var(--line); }
+#presets .wide { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
+#presets .wide > * { flex: 1; text-align: center; padding: 6px 8px; font-size: 12px; }
+details { border-bottom: 1px solid var(--line); }
+summary { padding: 11px 12px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px; list-style: none; user-select: none; }
+summary::-webkit-details-marker { display: none; }
+summary::before { content: "▸"; color: var(--dim); width: 1em; }
+details[open] > summary::before { content: "▾"; }
+summary span { flex: 1; }
+summary input { width: 18px; height: 18px; accent-color: var(--accent); }
+.body { padding: 0 12px 12px; }
+.body.off > :not(.hint) { opacity: .4; }
+.hint, small { color: var(--dim); font-size: 12px; display: block; }
+.hint { margin: 0 0 10px; }
+.row { display: block; margin: 0 0 10px; }
+.row[hidden] { display: none; }
+.row .name { display: block; margin-bottom: 3px; color: #c9c7c0; }
+.row.range .head { display: flex; justify-content: space-between; align-items: baseline; }
+.row.range .name { cursor: default; }
+.row.range output { font-variant-numeric: tabular-nums; color: var(--dim); font-size: 12px; }
+.row.check { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+.row.check input { width: 18px; height: 18px; accent-color: var(--accent); flex: none; margin: 1px 0 0; }
+.row.check span { flex: 1; }
+.row.check small { flex-basis: 100%; }
+input[type=range] { width: 100%; margin: 4px 0 0; height: 26px; accent-color: var(--accent); touch-action: pan-y; }
+.group { border: 1px solid var(--line); border-radius: 6px; padding: 10px 10px 0; margin: 0 0 10px; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.actions > * { flex: 1; text-align: center; }
+h3 { font-size: 12px; color: var(--dim); font-weight: 600; margin: 14px 0 8px; text-transform: none; }
+#about { color: var(--dim); font-size: 11px; padding: 10px 12px 24px; }
+body.busy #panel { pointer-events: none; opacity: .6; }
+.rawonly { display: none; }
+.badge { margin-left: 6px; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; flex: none !important; }
+.badge.on { background: var(--accent); color: var(--accent-ink); }
+button.small { padding: 2px 8px; font-size: 12px; }
+.hint.warn { color: var(--error); }
+.ftpinfo { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 10px 0; }
+.ftpinfo dt { color: var(--dim); font-size: 13px; }
+.ftpinfo dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; white-space: pre-line; }
+.ftplist { margin: 0 0 10px; padding: 0; list-style: none; }
+.ftplist li { display: flex; justify-content: space-between; gap: 8px; padding: 8px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.ftplist li.none { color: var(--dim); cursor: default; }
+.ftplist .meta { color: var(--dim); font-size: 12px; white-space: nowrap; }
+.ftplog { font-size: 11px; color: var(--dim); white-space: pre-wrap; margin: 6px 0; }
+details.guide { border: 0; margin-top: 8px; font-size: 13px; }
+details.guide summary { padding: 6px 0; font-weight: 500; }
+details.guide ol, details.guide ul { padding-left: 1.3em; margin: 4px 0; }
+body.raw .rawonly { display: block; }
+
+@media (max-width: 760px) {
+  body { flex-direction: column; }
+  #viewer { flex: none; height: 46vh; height: 46dvh; }
+  #panel { width: auto; flex: 1; border-left: 0; border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+  #fileInfo { display: none; }
+  #toolbar { padding: 6px; }
+  button, .filebtn { padding: 8px 10px; }
+}
+</style>
+</head>
+<body>
+<main id="viewer">
+  <div id="toolbar">
+    <label class="filebtn primary">열기<input id="fileOpen" type="file" accept="image/*,.tif,.tiff,.dng,.arw,.srf,.sr2,.cr2,.cr3,.crw,.nef,.nrw,.raf,.orf,.rw2,.rwl,.pef,.srw,.x3f,.3fr,.fff,.iiq,.erf,.mef,.mos,.mrw,.kdc,.dcr,.raw"></label>
+    <button id="btnFit" class="on" title="전체를 화면에 맞춰 본다">맞춤</button>
+    <button id="btnCrop" title="원본 해상도 그대로 — 입자·번짐의 실제 크기. 끌어서 이동">1:1</button>
+    <button id="btnCompare" title="누르고 있는 동안 원본을 보여 준다">원본</button>
+    <span class="spacer"></span>
+    <button id="btnExport" class="primary">저장</button>
+  </div>
+  <div id="stage">
+    <div id="empty">
+      <h1>FilmSim Studio</h1>
+      <p>필름 색(엔진)과 마감(할레이션·그레인)을 Photoshop 없이.<br>사진은 이 기기 안에서만 처리됩니다 — 어디로도 보내지 않습니다.</p>
+      <label class="filebtn primary">사진 열기<input id="fileOpen2" type="file" accept="image/*,.tif,.tiff,.dng,.arw,.srf,.sr2,.cr2,.cr3,.crw,.nef,.nrw,.raf,.orf,.rw2,.rwl,.pef,.srw,.x3f,.3fr,.fff,.iiq,.erf,.mef,.mos,.mrw,.kdc,.dcr,.raw"></label>
+      <p><small>RAW · DNG · JPEG · PNG · WebP · TIFF(8/16비트). RAW는 톤 커브 없이 현상(플랫 현상)해 필름 엔진에 넣습니다 — 가장 정확한 입력입니다.</small></p>
+    </div>
+    <canvas id="canvas"></canvas>
+    <div id="warnings" hidden></div>
+  </div>
+  <div id="statusbar">
+    <span id="status"></span>
+    <progress id="progress" max="1" value="0" hidden></progress>
+    <span id="fileInfo"></span>
+  </div>
+</main>
+
+<aside id="panel">
+  <div id="presets">
+    <select id="presetList" aria-label="프리셋"></select>
+    <button id="presetSave" title="현재 설정을 프리셋으로 저장">저장</button>
+    <button id="presetDelete" title="고른 프리셋 삭제">삭제</button>
+    <div class="wide">
+      <label class="filebtn">가져오기<input id="presetImport" type="file" accept=".json,application/json"></label>
+      <button id="presetExport">내보내기</button>
+      <button id="resetAll">초기화</button>
+    </div>
+  </div>
+
+  <div id="sections"></div>
+
+  <details id="sec-export">
+    <summary><span>내보내기</span></summary>
+    <div class="body">
+      <div class="cols">
+        <label class="row"><span class="name">형식</span>
+          <select id="expFormat">
+            <option value="jpeg">JPEG (sRGB)</option>
+            <option value="png">PNG 8비트 (sRGB)</option>
+            <option value="tiff16">TIFF 16비트 (ProPhoto)</option>
+          </select></label>
+        <label class="row"><span class="name">긴 변</span>
+          <select id="expEdge">
+            <option value="0">원본 크기</option>
+            <option value="4000">4000px</option>
+            <option value="3000">3000px</option>
+            <option value="2048">2048px</option>
+            <option value="custom">직접 입력</option>
+          </select></label>
+      </div>
+      <input id="expEdgeCustom" type="number" min="256" max="30000" value="2048" inputmode="numeric" hidden aria-label="긴 변 픽셀">
+      <label class="row range" id="expQualityRow"><span class="head"><span class="name">JPEG 품질</span><output id="expQualityOut"></output></span>
+        <input id="expQuality" type="range" min="60" max="100" step="1" value="92"></label>
+      <small>줄여서 내보내면 입자·번짐을 그 크기 기준으로 다시 그립니다. 파일 이름에 <code>_filmsim</code>이 붙어 원본을 덮지 않습니다.</small>
+      <div class="actions">
+        <label class="filebtn" title="여러 장을 지금 설정으로 한꺼번에">여러 장 일괄…<input id="fileBatch" type="file" accept="image/*,.tif,.tiff,.dng,.arw,.srf,.sr2,.cr2,.cr3,.crw,.nef,.nrw,.raf,.orf,.rw2,.rwl,.pef,.srw,.x3f,.3fr,.fff,.iiq,.erf,.mef,.mos,.mrw,.kdc,.dcr,.raw" multiple></label>
+      </div>
+
+      <div class="rawonly">
+        <h3>RAW 플랫 현상</h3>
+        <label class="row"><span class="name">현상 크기</span>
+          <select id="rawSize">
+            <option value="auto">자동 (폰에서 2600만 화소를 넘으면 절반)</option>
+            <option value="full">원본 크기</option>
+            <option value="half">절반 크기 (빠르고 메모리 1/4)</option>
+          </select></label>
+        <div class="actions">
+          <button id="btnFlat" title="아무 효과도 걸지 않은 선형 ProPhoto 16비트 TIFF">플랫 현상본 저장 (TIFF)</button>
+        </div>
+        <small>플랫 현상본은 톤 커브가 없는 선형 파일이라 눈으로 보면 어둡습니다. Photoshop 엔진 플러그인에 넣을 때는 입력 소스를 「리니어 +5스톱」으로 둡니다.</small>
+      </div>
+
+      <h3>룩만 내보내기 (색 — 필름·스캐너·색 조정)</h3>
+      <div class="cols">
+        <label class="row"><span class="name">.cube 격자</span><select id="lookSize"></select></label>
+        <label class="row"><span class="name">.cube 색공간</span><select id="cubeSpace"></select></label>
+      </div>
+      <label class="row"><span class="name">.cube 입력</span><select id="cubeInput"></select></label>
+      <div class="cols">
+        <label class="row"><span class="name">.xmp 색공간</span><select id="xmpSpace"></select></label>
+        <label class="row"><span class="name">.xmp 입력 가정</span><select id="xmpInput"></select></label>
+      </div>
+      <div class="actions">
+        <button id="btnCube">.cube 저장</button>
+        <button id="btnXmp">.xmp 저장 (Lightroom·ACR)</button>
+      </div>
+    </div>
+  </details>
+  <p id="about"></p>
+</aside>
+<script>/*__BUNDLE__*/</script>
+</body>
+</html>

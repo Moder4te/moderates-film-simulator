@@ -1,11 +1,18 @@
-# Moderate's Film Simulator — Photoshop UXP 플러그인
+# Moderate's Film Simulator — Photoshop UXP 플러그인 · 독립 실행형
 
-디지털 사진에 아날로그 필름의 광학적·화학적 특성을 재현하는 포토샵 플러그인.
+디지털 사진에 아날로그 필름의 광학적·화학적 특성을 재현한다. 포토샵 플러그인 두 개와,
+Photoshop 없이 Windows·Android에서 도는 [독립 실행형](#독립-실행형--filmsim-studio-photoshop-없이-windows--android)이 있다.
 
 색은 눈대중이 아니라 **제조사 기술자료(TDS)의 D-logE 특성곡선에서 유도**한다.
 층별 곡선 기울기의 차이가 필름마다 다른 색감의 정체이고, 그 수치를 그대로 쓴다.
 결과는 3D LUT으로 구워 문서에 적용하거나, `.cube` · Lightroom 프로파일로 내보낸다.
 
+> **v2.7.0** — **Photoshop 없이 도는 독립 실행형(FilmSim Studio)** 을 더했다. Windows는 HTML 파일
+> 하나, Android는 APK. 엔진(색)과 마감(할레이션·그레인)을 한 화면에서, **RAW·DNG를 톤 커브 없이
+> 직접 현상(플랫 현상)** 해 넣는다. Android 앱은 카메라 FTP 받기도 한다.
+> ⚠️ 실제 기기(Windows PC·Android 폰)에서의 동작은 아직 확인하지 못했다.
+> 자세한 내용은 [릴리스 노트](https://github.com/Moder4te/moderates-film-simulator/releases/tag/v2.7.0) 참조.
+>
 > **v2.6.0** (엔진만) — **ACR 역산의 색 문제를 해결**하고 `.xmp` 기본값을 다시 ACR 역산으로
 > 되돌렸다. 원인은 둘이었다 — 톤 커브를 채널마다 따로 되돌린 것(ACR은 색상 보존 방식)과,
 > 커브 기울기가 출렁여 피부 채도가 얼룩진 것. 24색 차트로 커브를 다시 맞췄다.
@@ -27,6 +34,60 @@
 > 확인) `tools/decode-raw.py`(+ 데스크톱 GUI)로 리니어 현상 경로와 Sony S-Log3
 > 입력을 추가했다. 고대비 장면용 **닷지·번**(실험적)도 새로 들어왔다.
 > ⚠️ 스캐너 파라미터는 아직 튜닝값이다 → [현재 한계](#현재-한계)
+
+## 독립 실행형 — FilmSim Studio (Photoshop 없이, Windows · Android)
+
+엔진(색)과 마감(할레이션·그레인)을 **브라우저에서 도는 프로그램 하나**로 묶었다.
+HTML 파일 하나가 전부이고, 사진은 그 기기 안에서만 처리된다 — 어디로도 올라가지 않는다.
+
+```bash
+node tools/build-studio.js      # → dist/studio/index.html  (의존성 없음, 노드만 있으면 된다)
+```
+
+| 어디서 | 어떻게 연다 |
+|---|---|
+| **Windows** | `dist/studio/index.html`을 더블클릭(Edge·Chrome). 설치 없음 |
+| **Android (앱)** | `node tools/build-apk.js` → `dist/FilmSimStudio-<버전>.apk`를 폰에 옮겨 설치 (Android 10 이상) |
+| **Android (브라우저)** | PC에서 `node tools/serve-studio.js` → 같은 Wi-Fi의 폰 Chrome에서 찍힌 주소로 접속 |
+| **설치형으로** | `dist/studio/` 폴더를 https로 올리면 브라우저의 「앱 설치 / 홈 화면에 추가」가 뜬다(오프라인 동작) |
+
+- **열 수 있는 파일** **RAW · DNG** · JPEG · PNG · WebP · TIFF(8/16비트, 무압축·LZW·ZIP)
+- **RAW 플랫 현상** 카메라 RAW(ARW·CR3·NEF·RAF …)와 DNG를 **톤 커브 없이** 푼다 —
+  `tools/decode-raw.py`와 같은 LibRaw·같은 인자라 결과가 화소 단위로 같다. 열면 입력 소스가
+  「리니어 +5스톱」, 인화지가 Endura로 맞춰진다. 「플랫 현상본 저장」은 그 선형 16비트 TIFF를
+  그대로 낸다(Photoshop 엔진에 먹일 파일). 큰 RAW는 「절반 크기」로 풀 수 있다
+- **내보내기** JPEG · PNG(sRGB) · TIFF 16비트(ProPhoto, ICC 포함) · `.cube` · `.xmp`.
+  여러 장 일괄 처리. 파일 이름에 `_filmsim`이 붙어 원본을 덮지 않는다
+- **보기** 「맞춤」과 「1:1」(원본 해상도 — 입자·번짐의 실제 크기). 「원본」을 누르고
+  있으면 처리 전을 보여 준다
+- **프리셋** Photoshop 엔진·마감 플러그인과 **같은 JSON**이다. 서로 열린다
+- **색은 플러그인과 같은 값이다** — 같은 `core/` 계산을 쓴다(검사로 확인). 마감은
+  기능은 같고 계산을 새로 짰다: 레이어를 쌓지 않고 한 번에 계산하므로 「색 먼저,
+  마감 나중」 순서 제약이 없다
+
+**Android 앱(APK)** 은 위 HTML을 WebView에 띄우는 껍데기다(`apps/android`). 색·마감·RAW 현상
+코드는 브라우저판과 같은 파일이고, 앱은 안드로이드만 할 수 있는 일을 더한다.
+
+- **카메라에서 바로 받기(FTP)** Sony α(α7R V 등)의 FTP 전송을 폰이 받는다. 화면이 꺼져도 받고,
+  받은 RAW를 자동으로 열 수 있다. 설정 순서는 앱의 FTP 패널에 있다
+- **넘겨받기** 갤러리의 "공유"·"다음으로 열기"로 사진을 받는다. HEIF는 안드로이드가 풀어 준다
+- **저장** JPEG·PNG는 `Pictures/FilmSim`(사진첩에 보인다), TIFF·`.cube`·`.xmp`·프리셋은
+  `Download/FilmSim`. 저장소 권한은 없다
+- **권한** 네트워크·알림 권한은 FTP 받기(카메라가 폰에 접속한다) 때문이다. 앱이 밖으로 접속하는
+  코드는 없다 — 사진은 기기를 떠나지 않는다
+- **빌드에 필요한 것** JDK 17+ 와 Android SDK(`platforms;android-35`, `build-tools`) —
+  `ANDROID_HOME`으로 가리킨다. Gradle은 쓰지 않는다
+- **설치** 스토어를 거치지 않으므로 폰이 「출처를 알 수 없는 앱」 설치 허용을 묻는다
+- **서명 키** 처음 빌드할 때 `~/.android/filmsim-studio.keystore`가 만들어진다. **이 파일을
+  보관해야** 다음 판을 덮어 깔 수 있다 — 키가 바뀌면 지우고 다시 깔아야 하고 앱에 저장한
+  프리셋이 지워진다. 자기 키를 쓰려면 `FILMSIM_KEYSTORE` · `FILMSIM_KEYSTORE_PASS`
+
+> ⚠️ **아직 없는 것** 컬러휠·벡터스코프 패널, 넓은 색역(Display P3) 입출력, Deflate·손실 JPEG·
+> JPEG XL로 압축한 DNG. **실기(실제 Windows PC·Android 폰)에서는 아직 확인하지 못했다** — 데스크톱
+> Chromium과 폰 화면 에뮬레이션에서만 돌려 봤다(`node tools/smoke-studio.js`). **APK도
+> 기기나 에뮬레이터에 올려 보지 못했다** — 빌드·서명·내용물까지만 검증했다.
+> 폰은 메모리가 작아 수천만 화소 파일에서 멎을 수 있다 — RAW는 「절반 크기」로 풀고(2600만
+> 화소를 넘으면 자동), 「긴 변」을 줄여 내보낸다.
 
 ## 두 개의 플러그인
 
@@ -324,6 +385,9 @@ uxp service stop           # ⚠️ 반드시 끈다 — 켜져 있으면 UDT가
 개인·연구·교육·취미 등 비상업 목적으로 자유롭게 쓰고 수정·재배포할 수 있으나
 상업적 이용은 허용되지 않는다.
 
+- **ACR 역산 곡선의 원 측정값도 재배포하지 않는다.** `core/color/inputs.js`의
+  `ACR_FIT` 계수는 로컬 Lightroom에 설치된 Adobe DCP 카메라 프로필을 일부 사용해
+  뽑은 것이라, 측정값 자체를 넣으면 Adobe 자산의 파생물을 재배포하게 된다. 계수만 둔다.
 - **제조사 TDS PDF는 재배포하지 않는다.** 저장소에는 그래프에서 추출한 수치 데이터만
   있고, 원본 PDF는 제외한다(`films.js`의 `source` 필드에 출처 기록).
 - 스캐너 색·프로파일 등 외부 데이터는 상업 재배포를 막는 소스(GPL/NC 등)를 피해

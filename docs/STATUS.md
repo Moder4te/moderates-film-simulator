@@ -111,6 +111,47 @@ UUID·RGBTable은 생성된 `.xmp`에서 **직접 뽑는다** — 따로 계산�
 | Inspect 덤프 | 알림창이 아니라 편집 필드. 복사해 가는 게 목적인데 macOS 알림은 긴 본문을 자른다 |
 | 파일 이름 | `xmp.fileNameFor`가 ASCII만 남기고 `\/:*?"<>|` 제거 — 양쪽 파일시스템에서 안전 |
 
+### 독립 실행형 — `apps/studio` (FilmSim Studio)
+
+Photoshop 없이 브라우저에서 돈다. `node tools/build-studio.js` → `dist/studio/index.html`.
+
+| 기능 | 상태 | 비고 |
+|---|---|---|
+| 파일 열기 | ✅ | **RAW·DNG** · JPEG·PNG·WebP(브라우저 디코드, sRGB 8bit) · TIFF 8/16bit(무압축·LZW·ZIP·PackBits, 스트립·타일). 전부 작업 공간(ProPhoto γ1.8)으로 옮겨 든다 |
+| RAW 플랫 현상 | ✅ | LibRaw 0.22.2(WebAssembly). `decode-raw.py`(rawpy)와 **화소 단위로 같다**(NEF·합성 DNG, 원본·절반). 입력 소스·인화지·노광 자동 맞춤, 플랫 현상본 TIFF 저장. 12MP NEF 2.7초(데스크톱 Chromium) |
+| 색 (엔진) | ✅ | 플러그인과 **같은 값**(격자 52³ 전 점 최대차 1e-17). 필름·노광·입력·인화지·스캐너·닷지번·색 조정 전 항목 |
+| 마감 | ✅ | 톤 · 디퓨전(변위/블러) · 할레이션 · 그레인(존·감도·포맷·기준). 계산은 새로 짰다 — 슬라이더·프리셋은 그대로 |
+| 미리보기 | ✅ | 맞춤(대리본) · **1:1**(원본 해상도, 화면만큼만) · 원본 비교. 끄는 동안은 초안 |
+| 내보내기 | ✅ | JPEG · PNG · TIFF 16bit(ProPhoto ICC) · 긴 변 지정 · 일괄 · `.cube` · `.xmp` |
+| 프리셋 | ✅ | 플러그인과 같은 JSON. 브라우저 저장소 + 파일 가져오기/내보내기 |
+| 설치형(PWA) | ⚠️ | 매니페스트·서비스 워커는 들어 있다. **https로 올려 본 적은 없다** |
+| Android APK | ⚠️ | `node tools/build-apk.js` → `dist/FilmSimStudio-<버전>.apk`(Android 10+). Studio 전체 + 카메라 FTP 받기 + 공유로 넘겨받기. 빌드·서명·내용물은 검증. **기기·에뮬레이터에서 실행해 본 적은 없다** |
+| 카메라 FTP 받기 | ⚠️ | Android 앱. 서버(`FtpServer`)는 실제 FTP 클라이언트로 16항목 검사(`check-ftp.py`). 화면 패널은 가짜 호스트로 검사. **카메라와 실제로 연결해 본 것은 이 판에서 확인 못 했다** |
+
+실측(데스크톱 Chromium, 24MP 16bit TIFF): 열기 + 첫 미리보기 1.3초 · 미리보기 0.2~0.4초 ·
+JPEG 내보내기 7.8초 · TIFF 7.0초.
+
+**확인 안 된 것**
+- **실제 Windows PC · Android 폰에서 돌려 본 적이 없다.** 데스크톱 Chromium과 폰 화면
+  에뮬레이션(Pixel 7 뷰포트·터치)까지만 봤다 — `node tools/smoke-studio.js`. 폰의 실제
+  속도·메모리 한계·파일 선택기·내려받기 동작은 모른다
+- **APK를 실제로 깔아 본 적이 없다.** 이 빌드 환경에는 에뮬레이터를 돌릴 KVM이 없다.
+  확인한 것은 `aapt2 dump`(패키지·SDK 버전·권한 0개) · `apksigner verify` · dex에 다리
+  메서드가 들어 있는 것 · 페이지 쪽 저장 다리(가짜 `FilmSimHost`로 조각 전송·실패 처리)까지다.
+  **자바 쪽 — 파일 선택기 · MediaStore 저장 · 상태 표시줄 여백 — 은 돌려 보지 못했다**
+- **그레인의 눈 맞춤.** 톤 포락선을 새로 정했다(`core/render/pipeline.js` `grainEnvelope`).
+  수치로는 Photoshop판의 명부 보상 뒤 값과 비슷한 자리지만 **나란히 놓고 본 적은 없다**
+- 폰에서 HTML 파일을 직접 여는 경로(서버 없이)
+
+**RAW에서 확인 안 된 것** Sony ARW(α7R V 포함)는 표본이 없어 돌려 보지 못했다 — LibRaw
+0.22.2의 지원 목록에는 있다. 6천만 화소 원본은 현상 중 1GB 넘게 쓴다(데스크톱은 되고, 폰은
+자동으로 절반 크기로 간다 — 그 판단이 실제 폰에서 맞는지는 모른다). Deflate·손실 JPEG·
+JPEG XL로 압축한 DNG는 못 연다.
+
+**없는 것** 컬러휠 · 벡터스코프 · 피부톤 스포이드(색역별 보정은 슬라이더로 된다) ·
+Display P3 입출력(P3 프로파일 TIFF는 가정값으로 열고 알린다) ·
+흑백 TIFF 외의 CMYK·32bit float.
+
 ## 알려진 한계
 
 ### 설계상 남겨둔 것
@@ -241,6 +282,23 @@ UUID·RGBTable은 생성된 `.xmp`에서 **직접 뽑는다** — 따로 계산�
 되짚을 필요가 있을 때만 본다. 상세는 [`RESOLVED.md`](./RESOLVED.md).
 
 ```
+v2.7.0         브랜치 통합 릴리스. studio 0.2.0 · engine 2.13.1 · finish 2.19.1
+studio 0.2.0   RAW·DNG 플랫 현상(LibRaw WebAssembly — rawpy와 화소 단위로 같다).
+               안드로이드 앱을 하나로: 옛 엔진 전용 앱(Gradle·NDK)의 FTP 받기·공유
+               받기·HEIF를 Studio 껍데기로 옮기고 네이티브 코드를 없앴다
+merge          N6 후속(LUT 생성 비용 36% · .xmp 감김 전수 검사) — main에 안 들어가
+               있던 claude/n6-followup-perf-docs-checks
+android        APK 빌드(tools/build-apk.js) — Studio HTML을 WebView에 띄우는 껍데기
+               (apps/android). Gradle 없이 SDK 도구 다섯 단계. 권한 0개, 저장은
+               FilmSimHost 다리 → MediaStore
+studio 0.1.0   독립 실행형 신설(apps/studio) — Photoshop 없이 브라우저에서 색 + 마감.
+               core/render(작업 공간 · 영역 단위 파이프라인), core/io/tiff·icc,
+               프리셋 스키마를 shared/params로, HTML 하나로 묶는 build-studio.js,
+               check-studio.js(42항목) · smoke-studio.js(브라우저 실기)
+core   film.js 단계 구조화  모델의 단계(유제 → 인화 → 화이트포인트)를 한 번만 정의하고
+               buildLut은 평가만 한다(분리형/결합형). 출력은 비트 단위로 같다(3,691개
+               LUT 해시 대조). MID_GRAY_OFFSET 부호 잠재 결함 수정, 베이스 상수를
+               inputs.js로 일원화, 정합성 검사 5e 신설
 finish 2.19.1  W1 — 입자 크기 기준 장변 ≠ 문서 장변이면 적용 완료 문구에 경고(막지 않음)
 finish 2.19.0  할레이션 JS 재구현(core/optics/halation.js) — 선형광에서 에너지 보존
                컨볼루션(지수 감쇠 λ 0.6R·2.0R), 색은 적감층 재노광 비율. Maximum
