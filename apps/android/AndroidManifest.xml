@@ -1,32 +1,62 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  FilmSim Studio의 Android 껍데기. 화면과 계산은 전부 assets/index.html(= dist/studio)이고
-  여기는 그것을 WebView에 띄울 뿐이다.
+  FilmSim Studio의 Android 껍데기. 화면과 계산(색·마감·RAW 현상)은 전부
+  assets/index.html(= dist/studio)이고 여기는 그것을 WebView에 띄운다.
 
-  **권한이 하나도 없다.** INTERNET이 없으므로 이 앱은 사진을 어디로도 보낼 수 없다 —
-  "기기 안에서만 처리한다"가 약속이 아니라 구조다. 저장은 MediaStore로 하므로(API 29+)
-  저장소 권한도 필요 없다.
+  권한은 전부 **카메라 FTP 받기**(FtpService) 때문이다 — 카메라가 폰에 접속해 사진을
+  올리려면 소켓을 열어야 한다. 앱이 밖으로 접속하는 코드는 없다: 페이지의 요청은
+  MainActivity가 전부 가로채 앱 안에서 답하고, 사진 저장은 MediaStore라 저장소 권한이 없다.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.filmsim.studio">
+
+    <!-- FTP 받기 서버. 로컬 망(핫스팟·Wi-Fi)에서만 쓴다 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- connectedDevice 포그라운드 서비스의 전제 권한(일반 권한이라 자동 허용) -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
         android:allowBackup="false"
+        android:supportsRtl="true"
         android:largeHeap="true">
         <!-- configChanges: 화면을 돌려도 액티비티를 다시 만들지 않는다. 다시 만들면 WebView가
-             새로 뜨면서 열어 둔 사진(수백 MB)이 날아간다 -->
+             새로 뜨면서 열어 둔 사진(수백 MB)이 날아간다.
+             singleTask: 공유로 사진이 올 때 새 화면을 쌓지 않고 떠 있는 화면이 받는다 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|uiMode|density|fontScale"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- 갤러리 등에서 "공유" / "다음으로 열기"로 사진을 넘겨받는다 -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
         </activity>
+
+        <service
+            android:name=".FtpService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
     </application>
 </manifest>

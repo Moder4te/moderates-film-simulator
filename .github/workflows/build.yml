@@ -1,0 +1,112 @@
+# 배포물을 만들고, 노드만으로는 못 하는 검사를 돈다.
+#
+#   native   RAW 현상(WebAssembly)이 rawpy와 화소 단위로 같은가 · FTP 받기 서버가 규약대로 도는가
+#   package  Studio(HTML) · Android APK · Photoshop 플러그인(.ccx) · Lightroom 플러그인(zip)
+#   release  수동 실행에 tag를 주면 그 이름으로 릴리스를 만들고 위 배포물을 붙인다
+#
+# 빠른 검사(node tools/check.js)는 check.yml이 따로 돈다.
+#
+# APK 서명 — 저장소 시크릿 `ANDROID_KEYSTORE_BASE64`(·`ANDROID_KEYSTORE_PASSWORD`·
+# `ANDROID_KEY_ALIAS`·`ANDROID_KEY_PASSWORD`)가 있으면 그 키로, 없으면 실행마다 새로 만든
+# 키로 서명한다. 새 키로 서명한 APK는 **기존 설치 위에 덮어 깔 수 없다**(지우고 다시 깐다).
+
+name: build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "릴리스 태그(예: v2.7.0). 비우면 빌드만 한다. docs/releases/<tag>.md가 릴리스 노트다"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install rawpy numpy
+      - name: 표본 RAW (rawpy 저장소의 시험 파일)
+        run: |
+          mkdir -p build/raw-samples
+          curl -sSfL -o build/raw-samples/sample.NEF https://raw.githubusercontent.com/letmaik/rawpy/main/test/iss030e122639.NEF
+      # 커밋된 .wasm이 tools/decode-raw.py(rawpy)와 같은 수를 내는가
+      - run: python tools/check-raw.py build/raw-samples/sample.NEF
+      # 카메라 FTP 받기 서버를 실제 FTP 클라이언트(ftplib)로 — 러너의 JDK로 돈다
+      - run: python tools/check-ftp.py
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      # Android SDK는 ubuntu-latest 러너에 이미 있다(ANDROID_HOME)
+
+      - name: 서명 키
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "FILMSIM_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "릴리스 키 시크릿 없음 — 이번 실행용 키를 새로 만들어 서명한다"
+          fi
+
+      - name: 빌드
+        env:
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KS_KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          # 시크릿이 비어 있으면 변수를 아예 두지 않는다 — 빈 값이 기본값을 덮지 않게
+          if [ -n "$KS_PASS" ]; then export FILMSIM_KEYSTORE_PASS="$KS_PASS"; fi
+          if [ -n "$KS_ALIAS" ]; then export FILMSIM_KEY_ALIAS="$KS_ALIAS"; fi
+          if [ -n "$KS_KEY_PASS" ]; then export FILMSIM_KEY_PASS="$KS_KEY_PASS"; fi
+          node tools/build-apk.js          # dist/studio 도 여기서 만들어진다
+          node tools/build-ccx.js
+          node tools/build-lrplugin.js
+          VERSION=$(node -p 'require("./apps/studio/src/version.js")')
+          cp dist/studio/index.html "dist/FilmSimStudio-$VERSION.html"
+          (cd dist && zip -q -r FilmSim.lrplugin.zip FilmSim.lrplugin)
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: filmsim-dist
+          path: |
+            dist/*.apk
+            dist/*.html
+            dist/*.ccx
+            dist/*.zip
+
+      - name: 릴리스 (tag를 줬을 때)
+        if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          NOTES="docs/releases/$TAG.md"
+          test -f "$NOTES" || { echo "$NOTES 가 없습니다"; exit 1; }
+          TITLE=$(head -n 1 "$NOTES" | sed 's/^# *//')
+          tail -n +2 "$NOTES" > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md" \
+            dist/*.apk dist/*.html dist/*.ccx dist/*.zip

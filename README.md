@@ -7,6 +7,12 @@ Photoshop 없이 Windows·Android에서 도는 [독립 실행형](#독립-실행
 층별 곡선 기울기의 차이가 필름마다 다른 색감의 정체이고, 그 수치를 그대로 쓴다.
 결과는 3D LUT으로 구워 문서에 적용하거나, `.cube` · Lightroom 프로파일로 내보낸다.
 
+> **v2.7.0** — **Photoshop 없이 도는 독립 실행형(FilmSim Studio)** 을 더했다. Windows는 HTML 파일
+> 하나, Android는 APK. 엔진(색)과 마감(할레이션·그레인)을 한 화면에서, **RAW·DNG를 톤 커브 없이
+> 직접 현상(플랫 현상)** 해 넣는다. Android 앱은 카메라 FTP 받기도 한다.
+> ⚠️ 실제 기기(Windows PC·Android 폰)에서의 동작은 아직 확인하지 못했다.
+> 자세한 내용은 [릴리스 노트](https://github.com/Moder4te/moderates-film-simulator/releases/tag/v2.7.0) 참조.
+>
 > **v2.6.0** (엔진만) — **ACR 역산의 색 문제를 해결**하고 `.xmp` 기본값을 다시 ACR 역산으로
 > 되돌렸다. 원인은 둘이었다 — 톤 커브를 채널마다 따로 되돌린 것(ACR은 색상 보존 방식)과,
 > 커브 기울기가 출렁여 피부 채도가 얼룩진 것. 24색 차트로 커브를 다시 맞췄다.
@@ -45,9 +51,11 @@ node tools/build-studio.js      # → dist/studio/index.html  (의존성 없음,
 | **Android (브라우저)** | PC에서 `node tools/serve-studio.js` → 같은 Wi-Fi의 폰 Chrome에서 찍힌 주소로 접속 |
 | **설치형으로** | `dist/studio/` 폴더를 https로 올리면 브라우저의 「앱 설치 / 홈 화면에 추가」가 뜬다(오프라인 동작) |
 
-- **열 수 있는 파일** JPEG · PNG · WebP · TIFF(8/16비트, 무압축·LZW·ZIP). 필름 엔진은
-  톤 커브 없이 현상한 **16비트 ProPhoto TIFF**에서 가장 정확하다(아래 [사용법](#사용법)).
-  RAW는 직접 못 연다 — `tools/decode-raw.py`나 Camera Raw로 TIFF를 뽑아 넣는다
+- **열 수 있는 파일** **RAW · DNG** · JPEG · PNG · WebP · TIFF(8/16비트, 무압축·LZW·ZIP)
+- **RAW 플랫 현상** 카메라 RAW(ARW·CR3·NEF·RAF …)와 DNG를 **톤 커브 없이** 푼다 —
+  `tools/decode-raw.py`와 같은 LibRaw·같은 인자라 결과가 화소 단위로 같다. 열면 입력 소스가
+  「리니어 +5스톱」, 인화지가 Endura로 맞춰진다. 「플랫 현상본 저장」은 그 선형 16비트 TIFF를
+  그대로 낸다(Photoshop 엔진에 먹일 파일). 큰 RAW는 「절반 크기」로 풀 수 있다
 - **내보내기** JPEG · PNG(sRGB) · TIFF 16비트(ProPhoto, ICC 포함) · `.cube` · `.xmp`.
   여러 장 일괄 처리. 파일 이름에 `_filmsim`이 붙어 원본을 덮지 않는다
 - **보기** 「맞춤」과 「1:1」(원본 해상도 — 입자·번짐의 실제 크기). 「원본」을 누르고
@@ -57,12 +65,16 @@ node tools/build-studio.js      # → dist/studio/index.html  (의존성 없음,
   기능은 같고 계산을 새로 짰다: 레이어를 쌓지 않고 한 번에 계산하므로 「색 먼저,
   마감 나중」 순서 제약이 없다
 
-**Android 앱(APK)** 은 위 HTML을 WebView에 띄우는 껍데기다(`apps/android`). 색·마감 코드는
-브라우저판과 같은 파일이다.
+**Android 앱(APK)** 은 위 HTML을 WebView에 띄우는 껍데기다(`apps/android`). 색·마감·RAW 현상
+코드는 브라우저판과 같은 파일이고, 앱은 안드로이드만 할 수 있는 일을 더한다.
 
-- **권한이 하나도 없다.** 인터넷 권한이 없어 사진을 어디로도 보낼 수 없고, 저장소 권한 없이
-  저장한다 — JPEG·PNG는 `Pictures/FilmSim`(사진첩에 보인다), TIFF·`.cube`·`.xmp`·프리셋은
-  `Download/FilmSim`
+- **카메라에서 바로 받기(FTP)** Sony α(α7R V 등)의 FTP 전송을 폰이 받는다. 화면이 꺼져도 받고,
+  받은 RAW를 자동으로 열 수 있다. 설정 순서는 앱의 FTP 패널에 있다
+- **넘겨받기** 갤러리의 "공유"·"다음으로 열기"로 사진을 받는다. HEIF는 안드로이드가 풀어 준다
+- **저장** JPEG·PNG는 `Pictures/FilmSim`(사진첩에 보인다), TIFF·`.cube`·`.xmp`·프리셋은
+  `Download/FilmSim`. 저장소 권한은 없다
+- **권한** 네트워크·알림 권한은 FTP 받기(카메라가 폰에 접속한다) 때문이다. 앱이 밖으로 접속하는
+  코드는 없다 — 사진은 기기를 떠나지 않는다
 - **빌드에 필요한 것** JDK 17+ 와 Android SDK(`platforms;android-35`, `build-tools`) —
   `ANDROID_HOME`으로 가리킨다. Gradle은 쓰지 않는다
 - **설치** 스토어를 거치지 않으므로 폰이 「출처를 알 수 없는 앱」 설치 허용을 묻는다
@@ -70,11 +82,12 @@ node tools/build-studio.js      # → dist/studio/index.html  (의존성 없음,
   보관해야** 다음 판을 덮어 깔 수 있다 — 키가 바뀌면 지우고 다시 깔아야 하고 앱에 저장한
   프리셋이 지워진다. 자기 키를 쓰려면 `FILMSIM_KEYSTORE` · `FILMSIM_KEYSTORE_PASS`
 
-> ⚠️ **아직 없는 것** 컬러휠·벡터스코프 패널, RAW 직접 열기, 넓은 색역(Display P3)
-> 입출력. **실기(실제 Windows PC·Android 폰)에서는 아직 확인하지 못했다** — 데스크톱
+> ⚠️ **아직 없는 것** 컬러휠·벡터스코프 패널, 넓은 색역(Display P3) 입출력, Deflate·손실 JPEG·
+> JPEG XL로 압축한 DNG. **실기(실제 Windows PC·Android 폰)에서는 아직 확인하지 못했다** — 데스크톱
 > Chromium과 폰 화면 에뮬레이션에서만 돌려 봤다(`node tools/smoke-studio.js`). **APK도
 > 기기나 에뮬레이터에 올려 보지 못했다** — 빌드·서명·내용물까지만 검증했다.
-> 폰은 메모리가 작아 수천만 화소 파일에서 멎을 수 있다 — 「긴 변」을 줄여 내보낸다.
+> 폰은 메모리가 작아 수천만 화소 파일에서 멎을 수 있다 — RAW는 「절반 크기」로 풀고(2600만
+> 화소를 넘으면 자동), 「긴 변」을 줄여 내보낸다.
 
 ## 두 개의 플러그인
 
@@ -90,65 +103,6 @@ node tools/build-studio.js      # → dist/studio/index.html  (의존성 없음,
 **왜 나눴나.** 색은 순수 계산이고 마감은 Photoshop 액션이다. 섞여 있으면 마감 쪽을
 손보다 색이 망가질 수 있는데, 그 실수는 결과를 보기 전까지 드러나지 않는다. 나눠 두면
 마감 플러그인에 색 코드가 **아예 들어 있지 않아** 물리적으로 불가능해진다.
-
-## 안드로이드 앱 (엔진만)
-
-`android/`는 **엔진(색)만** 담은 안드로이드 앱이다. `core/color`를 그대로 WebView에 실어
-휴대폰에서 사진 한 장에 필름 LUT을 건다 — 필름 · 노광 · 인화지 · 스캐너 · 닷지·번.
-마감(할레이션·그레인)은 들어 있지 않다. 결과는 `Pictures/FilmSim`에 **새 파일로** 저장하고
-원본은 건드리지 않는다. 갤러리·파일 앱에서 "공유"로 넘겨 열 수도 있다. Android 10 이상.
-
-### RAW — 정식 경로
-
-갤럭시(폴드 등, 기본 카메라 프로 모드·Expert RAW의 DNG)와 카메라 RAW(ARW · CR3 · CR2 ·
-NEF · RAF · ORF · RW2 …)를 **앱 안에서 LibRaw로 직접 현상한다.** 인자는
-`tools/decode-raw.py`와 같다 — 카메라 화이트밸런스, 자동 밝기 없음, 감마 1(선형),
-ProPhoto 16bit. 즉 「중립 현상」 조건 (b)가 **구성상** 성립하고, 엔진은 그것을
-「리니어 +N스톱」(기본 +5)으로 읽는다. `tools/check-raw-native.py`가 같은 RAW를 폰 코드와
-rawpy로 각각 풀어 화소 단위로 대조한다(CI에서 매번 — 현재 16bit 최대차 0).
-
-- RAW를 열면 인화지가 곡선 없는 것이면 **Kodak Endura Premier**로 바꾼다 — 리니어 입력은
-  어깨 있는 인화지가 필요하다(`inputs.js` `combinationWarning`).
-- DNG의 BaselineExposure(폰 RAW는 일부러 어둡게 기록하고 이 값으로 "올려 보라"고 적어 둔다)는
-  **노광 슬라이더 시작값**으로 옮긴다. 현상 값 자체는 decode-raw.py와 같게 둔다.
-- 기준 그레이를 재지 않으므로(`--midgray` 없음) 노출은 노광 슬라이더로 눈으로 맞춘다 —
-  조건 (a)는 노광과 대수적으로 같아 완전히 상쇄된다.
-- 미리보기는 줄인 것으로 계산하고, 저장할 때 원본 해상도에 네이티브로 같은 LUT을 건다.
-  메모리가 모자라면 "RAW 반해상도로 현상"을 켠다.
-- ⚠️ **JPEG XL로 압축한 DNG는 못 연다** — LibRaw가 Adobe DNG SDK 없이는 풀지 못한다.
-  카메라 앱에 RAW 압축(JPEG XL) 설정이 있으면 끄고 찍는다.
-- LibRaw(LGPL 2.1 / CDDL 1.0)는 빌드 때 받아 정적으로 링크한다(CDDL 조건). 소스는
-  <https://github.com/LibRaw/LibRaw> 0.22.2.
-
-### JPEG · HEIF
-
-sRGB를 ProPhoto로 옮겨 엔진에 넣는다. ⚠️ 휴대폰 JPEG은 「중립 현상」이 아니다 — 카메라
-앱의 톤 커브가 이미 걸려 있어 조건 (b)를 못 맞춘다. 노광으로 맞춰 보는 **근사**다.
-HEIF(.HIF·.HEIC)는 WebView가 못 풀어 안드로이드 디코더로 풀어 넣는다 — 10bit HEIF도 8bit가 된다.
-
-### 카메라에서 바로 받기 (FTP)
-
-Sony α(α7R V 등)의 **FTP 전송**으로 찍은 사진을 폰이 바로 받는다. 카메라가 FTP
-클라이언트이고 앱이 **받기 전용 FTP 서버**다(포트 2121, 무작위 비밀번호). 화면이 꺼져도
-받도록 알림과 함께 포그라운드 서비스로 돈다. 받은 파일은 `DCIM/FilmSim`에 모이고, 설정에
-따라 **RAW가 오면 바로 현상해 연다**(연사로 몰려오면 최신 한 장만).
-
-- 앱의 「카메라에서 바로 받기 (FTP)」를 펼치면 서버 주소·포트·사용자 이름·비밀번호와
-  α7R V 메뉴 설정 순서가 나온다. 밖에서는 폰 **핫스팟**에 카메라를 붙인다.
-- ⚠️ **평문 FTP만** 받는다 — 카메라의 「보안 프로토콜」을 끈다. 로컬 망(핫스팟·집 Wi-Fi)
-  에서만 쓴다. 공용 Wi-Fi에서는 켜지 않는다.
-- 받기만 한다. 내려받기·지우기 명령은 거절한다 — 폰의 파일을 네트워크로 내줄 길이 없다.
-- RAW만 보내면 장당 수십~백MB라 느리다. RAW+JPEG을 보내고 「RAW만 자동으로 열기」를 권한다.
-- `tools/check-ftp.py`가 서버를 실제 FTP 클라이언트로 시험한다(패시브·액티브, 중복 확인,
-  끊긴 전송 정리 등 — CI에서 매번). **실제 α7R V와는 아직 맞춰 보지 않았다.**
-
-### 빌드
-
-- APK는 GitHub Actions(`android` 워크플로)가 빌드한다 → 실행 페이지의 Artifacts
-  `film-sim-engine-apk`. `v*` 태그면 릴리스에도 붙는다.
-- 직접 빌드: Android SDK(NDK·CMake 포함) + JDK 17 + Node + git이 있으면
-  `cd android && ./gradlew assembleRelease`. Gradle이 `tools/build-android-web.js`로 엔진
-  번들을 먼저 만들고, CMake가 LibRaw를 받아 빌드한다.
 
 ## 설치
 

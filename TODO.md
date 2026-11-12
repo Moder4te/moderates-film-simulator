@@ -55,6 +55,10 @@
   ⑥ 「열기」가 시스템 선택기를 띄우는가 · TIFF가 목록에 보이는가 ⑦ 저장한 JPEG이 사진첩
   `Pictures/FilmSim`에, TIFF가 `Download/FilmSim`에 있는가 ⑧ Android 15에서 맨 위 도구 줄이
   상태 표시줄에 가리지 않는가 ⑨ 화면을 돌려도 열어 둔 사진이 남는가
+- **RAW** ⑩ α7R V의 ARW(무압축·무손실 압축·압축 각각)가 열리는가 ⑪ 폰에서 6천만 화소 RAW가
+  자동으로 절반 크기로 열리는가, 원본 크기를 고르면 어떻게 죽는가 ⑫ 폰 DNG의 BaselineExposure가
+  노광에 들어가는가
+- **FTP** ⑬ 카메라 → 폰 전송이 되고 받은 RAW가 자동으로 열리는가 ⑭ 화면을 끄고도 받는가
 - **완료 기준** 위 넷을 두 기기에서 확인하고 `docs/STATUS.md` "확인 안 된 것"을 갱신
 
 ## ST2. 독립 실행형 그레인 — 눈으로 맞추기
@@ -66,6 +70,7 @@
 
 ## ST3. 독립 실행형에 없는 것
 
+Deflate·손실 JPEG·JPEG XL DNG(`native/raw`에 zlib·libjpeg·libjxl을 넣어 다시 빌드) ·
 컬러휠·벡터스코프(계산은 `core/color/analysis`·`vectorscope`에 있고 화면만 없다) ·
 Display P3 입출력(`working.SOURCE_SPACES`에 표 하나) · https 배포(설치형 확인) ·
 네이티브 껍데기(HTML을 감싸면 된다 — `docs/DECISIONS.md`).

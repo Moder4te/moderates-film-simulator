@@ -20,11 +20,11 @@ import tempfile
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "android", "app", "src", "main", "java", "com", "filmsim", "engine", "FtpServer.java")
+SRC = os.path.join(ROOT, "apps", "android", "java", "com", "filmsim", "studio", "FtpServer.java")
 USER, PASSWORD = "camera", "s3cret-pw"
 
 HARNESS = r"""
-package com.filmsim.engine;
+package com.filmsim.studio;
 
 import java.io.*;
 import java.nio.file.*;
@@ -101,7 +101,7 @@ def main():
 
     port = free_port()
     proc = subprocess.Popen(
-        ["java", "-cp", cls_dir, "com.filmsim.engine.FtpCheckMain", str(port), out_dir],
+        ["java", "-cp", cls_dir, "com.filmsim.studio.FtpCheckMain", str(port), out_dir],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
     )
     try:

@@ -5,8 +5,9 @@
  *   node tools/build-apk.js        →  dist/FilmSimStudio-<버전>.apk
  *
  * APK 안에 든 것은 `dist/studio/index.html`(브라우저에서 여는 그 파일)과, 그것을
- * WebView에 띄우는 액티비티 하나(`apps/android`)다. 색·마감 코드는 한 줄도 다시 짜지
- * 않았다 — 껍데기는 파일 고르기와 저장만 이어 준다.
+ * WebView에 띄우는 껍데기(`apps/android`)다. 색·마감·RAW 현상 코드는 한 줄도 다시 짜지
+ * 않았다 — 껍데기는 파일 고르기·넘겨받기·저장과 카메라 FTP 받기만 한다. 네이티브(NDK)
+ * 코드가 없어 APK 하나가 모든 기기 구조(arm64·x86 …)에서 돈다.
  *
  * ── 필요한 것 ───────────────────────────────────────────────────────────
  *
@@ -34,8 +35,9 @@
  *
  *   FILMSIM_KEYSTORE        키 저장소 경로. 없으면 ~/.android/filmsim-studio.keystore를
  *                           쓰고, 그것도 없으면 그 자리에 새로 만든다
- *   FILMSIM_KEYSTORE_PASS   비밀번호(기본 "android" — 디버그 키의 관례)
+ *   FILMSIM_KEYSTORE_PASS   저장소 비밀번호(기본 "android" — 디버그 키의 관례)
  *   FILMSIM_KEY_ALIAS       키 이름(기본 "filmsim")
+ *   FILMSIM_KEY_PASS        키 비밀번호(기본: 저장소 비밀번호와 같다)
  *
  * ⚠️ 키 저장소를 **저장소에 커밋하지 말 것.** 그 키를 가진 사람은 누구나 이 앱의
  * "업데이트"를 만들 수 있다.
@@ -93,6 +95,7 @@ function keystore() {
   const file = process.env.FILMSIM_KEYSTORE || path.join(os.homedir(), ".android", "filmsim-studio.keystore");
   const pass = process.env.FILMSIM_KEYSTORE_PASS || "android";
   const alias = process.env.FILMSIM_KEY_ALIAS || "filmsim";
+  const keyPass = process.env.FILMSIM_KEY_PASS || pass;
   let created = false;
   if (!fs.existsSync(file)) {
     if (process.env.FILMSIM_KEYSTORE) fail(`키 저장소가 없습니다: ${file}`);
@@ -104,7 +107,7 @@ function keystore() {
     ]);
     created = true;
   }
-  return { file, pass, alias, created };
+  return { file, pass, alias, keyPass, created };
 }
 
 /** "0.1.0" → 100. 안드로이드는 이 정수가 커져야 업데이트로 받아 준다. */
@@ -177,7 +180,7 @@ function build() {
   fs.mkdirSync(outDir, { recursive: true });
   const out = path.join(outDir, `FilmSimStudio-${version}.apk`);
   run(sdk.apksigner, [
-    "sign", "--ks", ks.file, "--ks-pass", `pass:${ks.pass}`, "--ks-key-alias", ks.alias,
+    "sign", "--ks", ks.file, "--ks-pass", `pass:${ks.pass}`, "--ks-key-alias", ks.alias, "--key-pass", `pass:${ks.keyPass}`,
     "--min-sdk-version", String(MIN_SDK), "--out", out, aligned,
   ]);
   // apksigner가 남기는 부속 파일(.idsig)은 설치에 필요 없다

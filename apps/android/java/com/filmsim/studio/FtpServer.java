@@ -1,4 +1,4 @@
-package com.filmsim.engine;
+package com.filmsim.studio;
 
 import java.io.BufferedReader;
 import java.io.IOException;

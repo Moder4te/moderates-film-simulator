@@ -1,4 +1,4 @@
-package com.filmsim.engine;
+package com.filmsim.studio;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -38,8 +38,8 @@ import java.util.Locale;
  */
 public class FtpService extends Service {
 
-    static final String ACTION_START = "com.filmsim.engine.FTP_START";
-    static final String ACTION_STOP = "com.filmsim.engine.FTP_STOP";
+    static final String ACTION_START = "com.filmsim.studio.FTP_START";
+    static final String ACTION_STOP = "com.filmsim.studio.FTP_STOP";
     static final int DEFAULT_PORT = 2121; // 1024 아래는 루트 권한이 필요하다
     static final String USER = "filmsim";
 

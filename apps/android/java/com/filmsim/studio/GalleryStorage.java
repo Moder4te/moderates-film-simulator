@@ -1,4 +1,4 @@
-package com.filmsim.engine;
+package com.filmsim.studio;
 
 import android.content.ContentResolver;
 import android.content.ContentValues;

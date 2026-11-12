@@ -30,6 +30,15 @@ const APPS = ["engine", "finish"];
 /** 앱이 실행에 실제로 쓰는 것만. 문서·도구·아카이브는 넣지 않는다. */
 const INCLUDE = ["manifest.json", "index.html", "icons", "src", "lib"];
 
+function hasCommand(name) {
+  try {
+    execSync(process.platform === "win32" ? `where ${name}` : `command -v ${name}`, { stdio: "ignore" });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 function copy(src, dst) {
   const st = fs.statSync(src);
   if (st.isDirectory()) {
@@ -78,10 +87,20 @@ for (const app of APPS) {
 
   console.log(`
 ${manifest.id} v${manifest.version} — 스테이징 ${(sizeOf(stage) / 1024).toFixed(0)} KB`);
-  execSync(
-    `uxp plugin package --manifest ${q(path.join(stage, "manifest.json"))} --outputPath ${q(DIST)}`,
-    { stdio: "inherit" }
-  );
+  // `.ccx`는 manifest.json이 맨 위에 오는 zip이다. Adobe의 `uxp` CLI가 있으면 그것으로,
+  // 없으면(CI 러너) `zip`으로 같은 모양을 만든다 — 이름도 CLI와 같게 `<id>_PS.ccx`
+  if (hasCommand("uxp")) {
+    execSync(
+      `uxp plugin package --manifest ${q(path.join(stage, "manifest.json"))} --outputPath ${q(DIST)}`,
+      { stdio: "inherit" }
+    );
+  } else if (hasCommand("zip")) {
+    const out = path.join(DIST, `${manifest.id}_PS.ccx`);
+    fs.rmSync(out, { force: true });
+    execSync(`zip -q -r -X ${q(out)} .`, { cwd: stage, stdio: "inherit" });
+  } else {
+    throw new Error("uxp CLI도 zip도 없어 .ccx를 만들 수 없습니다");
+  }
 }
 
 for (const f of fs.readdirSync(DIST)) {

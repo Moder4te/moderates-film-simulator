@@ -19,6 +19,7 @@ const xmp = require("../../../core/io/xmp");
 const films = require("../../../core/color/films");
 const paper = require("../../../core/color/paper");
 const inputs = require("../../../core/color/inputs");
+const android = require("./android");
 const VERSION = require("./version");
 
 const $ = (id) => document.getElementById(id);
@@ -305,22 +306,31 @@ function showSource(notes) {
   pendingNote = notes && notes.length ? `${info.raw ? "RAW 플랫 현상 — " : ""}${notes.join(" · ")}` : "";
 }
 
-let lastFile = null;
+let reloadSource = null; // 지금 연 것을 다시 받는 법 — RAW 현상 크기를 바꾸면 다시 연다
 let pendingNote = ""; // 다음 렌더가 끝나면 상태 줄에 한 번 보여 줄 말
 
-async function openFile(file) {
-  status(`${file.name} 여는 중…`);
+/**
+ * @param {ArrayBuffer} buffer
+ * @param {() => Promise<ArrayBuffer>} reload  같은 파일을 다시 받는다(버퍼는 워커로 넘어가 버린다)
+ */
+async function openBuffer(buffer, name, type, reload) {
+  status(`${name} 여는 중…`);
   try {
-    info = await client.open(await file.arrayBuffer(), file.name, file.type, openOptions());
+    info = await client.open(buffer, name, type, openOptions());
   } catch (e) {
     progress(null);
     status(e.message, "error");
     return false;
   }
-  lastFile = file;
+  reloadSource = reload ? { name, type, reload } : null;
   progress(null);
   showSource(adaptToSource());
   return true;
+}
+
+async function openFile(file) {
+  status(`${file.name} 여는 중…`); // 파일을 읽기 **전에** — 큰 RAW는 읽는 데만 한참이다
+  return openBuffer(await file.arrayBuffer(), file.name, file.type, () => file.arrayBuffer());
 }
 
 /**
@@ -693,7 +703,8 @@ function bindFiles() {
   rawSize.value = store.get(STORE_RAW) || "auto";
   rawSize.addEventListener("change", () => {
     store.set(STORE_RAW, rawSize.value);
-    if (info && info.raw && lastFile) openFile(lastFile);
+    const src = reloadSource;
+    if (info && info.raw && src) src.reload().then((b) => openBuffer(b, src.name, src.type, src.reload));
   });
   $("btnCube").addEventListener("click", () => exportLook("cube"));
   $("btnXmp").addEventListener("click", () => exportLook("xmp"));
@@ -733,8 +744,13 @@ function start() {
     `FilmSim Studio ${VERSION} · 필름 ${films.all().length}종 · ` + (client.threaded ? "백그라운드 처리" : "단일 스레드(이 브라우저는 워커를 못 씁니다 — 처리 중 화면이 멎습니다)");
   status("사진을 여세요 — RAW · DNG · JPEG · PNG · WebP · TIFF");
 
+  // Android 앱 안이면 — 공유로 넘겨받기와 카메라 FTP 받기 패널
+  if (window.FilmSimHost) android.init(window.FilmSimHost, { openBuffer, status }, $("sections"));
+
   // 설치형(PWA)은 https나 localhost에서만 된다. 파일로 직접 열었으면 조용히 건너뛴다
-  if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
+  // Android 앱 안에서는 등록하지 않는다. 거기서는 껍데기가 요청을 가로채 답하는데,
+  // 서비스 워커가 낀 요청은 그 가로채기를 **지나쳐** 버린다(/shared/가 404가 된다)
+  if (!window.FilmSimHost && "serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
 }

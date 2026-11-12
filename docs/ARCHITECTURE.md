@@ -13,6 +13,7 @@ core/     순수 계산. photoshop·uxp·DOM 접근 금지 (검사로 강제)
   optics/   format grainfield displace tone
   io/       cube xmp xmpcodec        직렬화만. 파일 쓰기는 앱이 한다
             tiff icc                 독립 실행형의 16bit 입출력(읽기·쓰기 · ProPhoto ICC)
+            rawdecoder               RAW 플랫 현상 — LibRaw(WebAssembly)를 띄운다
   render/   working pipeline         **독립 실행형의 렌더 계층** — color + optics를 함께 쓴다
 host/     UXP 경계. batchPlay 디스크립터는 여기서만
   ps.js     collectLayers(레이어 트리 재귀 탐색)도 여기 한 벌만 둔다
@@ -28,11 +29,14 @@ apps/
   studio/   독립 실행형 (색 + 마감, 브라우저) — Photoshop·UXP를 모른다
     src/    main controls params client worker session env
             lib/ 없음 — `build-studio.js`가 core/를 직접 묶어 HTML 하나로 낸다
-  android/  위 HTML을 WebView에 띄우는 껍데기 (자바 파일 하나). 계산이 없다
+    vendor/ filmsim-raw.wasm — RAW 현상부. 커밋한다(다시 빌드: build-raw-wasm.sh)
+  android/  위 HTML을 WebView에 띄우는 껍데기 + 카메라 FTP 받기. 색 계산이 없다
+native/   raw/filmsim_raw.cpp — LibRaw를 감싼 플랫 현상. WebAssembly로만 빌드한다
 tools/    check(.js 문법·BOM) check-boundaries check-paths check-load check-api
           check-conformance check-tone check-docs check-studio · sync-libs build-ccx
           build-studio serve-studio smoke-studio(브라우저 실기, playwright 필요)
           build-apk(Android SDK 필요 — check.js에는 없다)
+          build-raw-wasm.sh(emscripten 필요) · check-raw.py(rawpy 대조) · check-ftp.py
           extract_tds_curves.py decode-raw.py
 ```
 
@@ -403,12 +407,26 @@ Photoshop 플러그인과 **단계는 같고 구조가 다르다.** 플러그인
   읽는다(격자가 입자보다 훨씬 성겨 평균이 같다 — 그 대신 여백 없이 띠로 돈다)
 - **미리보기** 대리본에서 물리 크기를 비율로 줄이고, 입자가 1px 밑이면 세기로 환산
 
+**RAW는 플랫 현상해서 연다.** `core/io/rawdecoder.js`가 `filmsim-raw.wasm`(LibRaw 0.22.2)을
+띄워 톤 커브 없이 푼다 — 인자는 `tools/decode-raw.py`와 같고(`native/raw/filmsim_raw.cpp`),
+선형값은 rawpy와 화소 단위로 같다(`tools/check-raw.py`). 결과는 **화이트 레벨 기준 선형**을
+작업 인코딩한 것이라, 엔진의 입력 소스 「리니어 +N스톱」이 그대로 읽는다. 화면은 RAW를 열 때
+입력 소스·인화지·노광(DNG BaselineExposure)을 맞추고, 다른 파일을 열면 되돌린다
+(`main.js` `adaptToSource`). RAW는 **이름으로** 가른다 — DNG·ARW·NEF는 내용이 TIFF와 같아서
+내용으로 가르면 안에 든 미리보기가 열린다.
+
+`.wasm`은 emscripten의 JS 없이(`-sSTANDALONE_WASM`) 직접 띄운다 — 수입 함수가 WASI 여덟 개뿐이라
+노드 검사·워커·WebView에서 같은 코드다. 인스턴스는 현상마다 새로 만든다(WebAssembly 메모리는
+줄지 않는다 — 6천만 화소를 한 번 풀면 1GB가 남는다).
+
 **Android 앱은 같은 HTML이다.** `apps/android`의 액티비티는 `assets/index.html`을 WebView에
-띄우고, WebView가 스스로 못 하는 둘만 이어 준다 — 파일 고르기(`onShowFileChooser`)와
-저장(`FilmSimHost` 다리: 페이지가 바이트를 조각내 넘기면 MediaStore에 쓴다). 페이지는
-`window.FilmSimHost`가 있으면 내려받기 대신 그 다리로 저장한다(`main.js`의 `download`) —
-플랫폼 분기는 그 한 곳뿐이다. **매니페스트에 권한이 없다**(INTERNET 포함). 껍데기에 계산을
-넣지 않는다 — 넣는 순간 색 엔진이 두 벌이 된다.
+띄우고 안드로이드만 할 수 있는 일을 이어 준다 — 파일 고르기, 넘겨받기(공유·FTP로 받은 파일을
+`/shared/<번호>`로 흘려 준다), 저장(`FilmSimHost` 다리 → MediaStore), 카메라 FTP 받기
+(`FtpService`). 페이지 쪽 분기는 두 곳이다: `main.js`의 `download`(다리로 저장)와
+`android.js`(넘겨받기·FTP 패널). **껍데기에 색 계산을 넣지 않는다** — 예전 안드로이드 앱은
+RAW 현상과 LUT 적용을 NDK(C++)로 따로 들고 있었고, 그게 색 경로를 두 벌로 만들었다.
+⚠️ 앱 안에서는 서비스 워커를 등록하지 않는다 — 서비스 워커가 낀 요청은 껍데기의 가로채기를
+지나쳐 `/shared/`가 404가 된다.
 
 **환경 주입.** `apps/studio/src/session.js`는 브라우저를 모른다 — 이미지 디코드·캔버스
 인코드·zlib을 `env`로 받는다. 같은 코드가 워커에서, 워커 없는 메인 스레드에서, 노드

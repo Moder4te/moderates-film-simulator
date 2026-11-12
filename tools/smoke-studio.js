@@ -239,8 +239,23 @@ async function hostBridge(label, url, tmp) {
       finish(id) { const j = jobs[id]; delete jobs[id]; saved.push(j); return "Pictures/FilmSim/" + j.name; },
       abort(id) { delete jobs[id]; window.__aborted = (window.__aborted || 0) + 1; },
       lastError() { return "가짜 실패"; },
+      // 넘겨받기 · FTP — 껍데기(MainActivity.Host)와 같은 모양
+      pendingShared() { return ""; },
+      ftpState() { return JSON.stringify(window.__ftp); },
+      ftpStart() { window.__ftp.running = true; window.filmSimFtpUpdate(JSON.stringify(window.__ftp)); },
+      ftpStop() { window.__ftp.running = false; window.filmSimFtpUpdate(JSON.stringify(window.__ftp)); },
+      ftpNewPassword() {}, setFtpAutoOpen(m) { window.__ftp.autoOpen = m; },
+      ftpOpen(uri) { window.__opened = uri; window.filmSimOpenShared("DSC00042.dng", 7); },
+    };
+    window.__ftp = {
+      running: false, port: 2121, user: "filmsim", password: "abcd2345", error: null, autoOpen: "raw",
+      folder: "DCIM/FilmSim", addresses: [{ label: "핫스팟", ip: "192.168.43.1" }],
+      received: [{ name: "DSC00042.dng", size: 1100000, uri: "content://x/42", time: 1760000000000 }], log: ["12:00:00  받음"],
     };
   });
+  // 껍데기는 /shared/<번호>에 그 파일을 흘려 준다 — 여기서는 합성 DNG로 답한다
+  await page.route("**/shared/*", (route) =>
+    route.fulfill({ status: 200, contentType: "image/x-adobe-dng", body: fs.readFileSync(path.join(tmp, "scene.dng")) }));
   await page.goto(url);
   await page.setInputFiles("#fileOpen", path.join(tmp, "scene16.tif"));
   await page.waitForFunction(() => /^맞춤 \d+/.test(document.getElementById("status").textContent), null, { timeout: 60000 });
@@ -272,6 +287,19 @@ async function hostBridge(label, url, tmp) {
   ok("쓰다 실패하면 반쯤 쓴 파일을 지우고 알린다",
     /저장하지 못했습니다/.test(bad.status) && (await page.evaluate(() => window.__aborted)) === 1, bad.status);
   ok("  └ 실패 뒤에도 화면이 잠기지 않는다", await page.locator("#btnExport").isEnabled());
+
+  // ── 카메라 FTP 받기 패널 · 넘겨받기 ──
+  const ftp = page.locator("#sec-ftp");
+  await ftp.locator("> summary").click();
+  ok("FTP 패널이 서버 주소·계정을 보여 준다",
+    /192\.168\.43\.1/.test(await ftp.textContent()) && /abcd2345/.test(await ftp.textContent()) && /2121/.test(await ftp.textContent()));
+  await ftp.locator("button.primary").click();
+  ok("  └ 시작하면 「받는 중」으로 바뀐다", /받는 중/.test(await ftp.locator(".badge").textContent()) && /정지/.test(await ftp.locator("button.primary").textContent()));
+  await ftp.locator(".ftplist li").first().click();
+  await page.waitForFunction(() => /DSC00042\.dng/.test(document.getElementById("fileInfo").textContent) , null, { timeout: 20000 })
+    .catch(async () => console.log("    (멈춤) 상태 줄:", await page.locator("#status").textContent(), "| 열림:", await page.evaluate(() => window.__opened)));
+  const shared = await page.locator("#fileInfo").textContent();
+  ok("받은 사진을 누르면 /shared/로 받아 RAW로 연다", /RAW 플랫 현상/.test(shared) && (await page.evaluate(() => window.__opened)) === "content://x/42", shared);
 
   ok("콘솔 오류 없음", errors.length === 0, errors.slice(0, 3).join(" | "));
   await browser.close();
