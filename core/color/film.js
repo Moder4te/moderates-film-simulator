@@ -549,14 +549,17 @@ function buildLut(film, opts) {
   for (let bi = 0; bi < size; bi++) {
     for (let gi = 0; gi < size; gi++) {
       for (let ri = 0; ri < size; ri++) {
-        const offAxis = remap !== null && remap(ri / d, gi / d, bi / d, rc);
+        // 색상 보존 역은 **중간 채널 하나만** 축 밖으로 옮긴다(→ inputs.remapCodes가 그
+        // 채널 번호를 돌려준다. 옮길 것이 없으면 −1). 최대·최소 채널은 축 표의 값
+        // 그대로라, 세 채널을 다 다시 구하면 같은 값을 두 번 더 계산하는 것뿐이다.
+        const md = remap !== null ? remap(ri / d, gi / d, bi / d, rc) : -1;
         let pr, pgv, pb;
         if (coupled) {
           // 세 채널의 농도 델타(D−d0)를 갖고 있어야 luma를 구할 수 있어서 여기서만
           // 채널 독립이 깨진다.
-          const Dr = offAxis ? layers[0].density(rc[0]) : axis[0][ri];
-          const Dg = offAxis ? layers[1].density(rc[1]) : axis[1][gi];
-          const Db = offAxis ? layers[2].density(rc[2]) : axis[2][bi];
+          const Dr = md === 0 ? layers[0].density(rc[0]) : axis[0][ri];
+          const Dg = md === 1 ? layers[1].density(rc[1]) : axis[1][gi];
+          const Db = md === 2 ? layers[2].density(rc[2]) : axis[2][bi];
           const lumaDelta = (Dr - d0[0] + (Dg - d0[1]) + (Db - d0[2])) / 3;
           // 압축량을 **균일한 농도 시프트**로 건다 — 채도(luma에서 벗어난 양)를
           // 농도 공간에서 그대로 남기기 위해서다. 그게 이 기능의 목적이다.
@@ -564,14 +567,10 @@ function buildLut(film, opts) {
           pr = finish[0](layers[0].print(Dr + s));
           pgv = finish[1](layers[1].print(Dg + s));
           pb = finish[2](layers[2].print(Db + s));
-        } else if (offAxis) {
-          pr = respond(0, rc[0]);
-          pgv = respond(1, rc[1]);
-          pb = respond(2, rc[2]);
         } else {
-          pr = axis[0][ri];
-          pgv = axis[1][gi];
-          pb = axis[2][bi];
+          pr = md === 0 ? respond(0, rc[0]) : axis[0][ri];
+          pgv = md === 1 ? respond(1, rc[1]) : axis[1][gi];
+          pb = md === 2 ? respond(2, rc[2]) : axis[2][bi];
         }
 
         let R = pr;
