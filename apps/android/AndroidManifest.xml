@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FilmSim Studio의 Android 껍데기. 화면과 계산은 전부 assets/index.html(= dist/studio)이고
+  여기는 그것을 WebView에 띄울 뿐이다.
+
+  **권한이 하나도 없다.** INTERNET이 없으므로 이 앱은 사진을 어디로도 보낼 수 없다 —
+  "기기 안에서만 처리한다"가 약속이 아니라 구조다. 저장은 MediaStore로 하므로(API 29+)
+  저장소 권한도 필요 없다.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.filmsim.studio">
+
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/AppTheme"
+        android:allowBackup="false"
+        android:largeHeap="true">
+        <!-- configChanges: 화면을 돌려도 액티비티를 다시 만들지 않는다. 다시 만들면 WebView가
+             새로 뜨면서 열어 둔 사진(수백 MB)이 날아간다 -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|uiMode|density|fontScale"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

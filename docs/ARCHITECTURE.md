@@ -28,9 +28,11 @@ apps/
   studio/   독립 실행형 (색 + 마감, 브라우저) — Photoshop·UXP를 모른다
     src/    main controls params client worker session env
             lib/ 없음 — `build-studio.js`가 core/를 직접 묶어 HTML 하나로 낸다
+  android/  위 HTML을 WebView에 띄우는 껍데기 (자바 파일 하나). 계산이 없다
 tools/    check(.js 문법·BOM) check-boundaries check-paths check-load check-api
           check-conformance check-tone check-docs check-studio · sync-libs build-ccx
           build-studio serve-studio smoke-studio(브라우저 실기, playwright 필요)
+          build-apk(Android SDK 필요 — check.js에는 없다)
           extract_tds_curves.py decode-raw.py
 ```
 
@@ -400,6 +402,13 @@ Photoshop 플러그인과 **단계는 같고 구조가 다르다.** 플러그인
 - **할레이션** 계산은 `core/optics/halation.js`의 `spread` 그대로. 소스를 디퓨전 **전** 값에서
   읽는다(격자가 입자보다 훨씬 성겨 평균이 같다 — 그 대신 여백 없이 띠로 돈다)
 - **미리보기** 대리본에서 물리 크기를 비율로 줄이고, 입자가 1px 밑이면 세기로 환산
+
+**Android 앱은 같은 HTML이다.** `apps/android`의 액티비티는 `assets/index.html`을 WebView에
+띄우고, WebView가 스스로 못 하는 둘만 이어 준다 — 파일 고르기(`onShowFileChooser`)와
+저장(`FilmSimHost` 다리: 페이지가 바이트를 조각내 넘기면 MediaStore에 쓴다). 페이지는
+`window.FilmSimHost`가 있으면 내려받기 대신 그 다리로 저장한다(`main.js`의 `download`) —
+플랫폼 분기는 그 한 곳뿐이다. **매니페스트에 권한이 없다**(INTERNET 포함). 껍데기에 계산을
+넣지 않는다 — 넣는 순간 색 엔진이 두 벌이 된다.
 
 **환경 주입.** `apps/studio/src/session.js`는 브라우저를 모른다 — 이미지 디코드·캔버스
 인코드·zlib을 `env`로 받는다. 같은 코드가 워커에서, 워커 없는 메인 스레드에서, 노드

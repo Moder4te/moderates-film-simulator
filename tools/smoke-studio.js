@@ -184,6 +184,70 @@ async function run(label, url, contextOpts, tmp) {
   await browser.close();
 }
 
+/**
+ * Android 앱(apps/android)에서는 저장이 내려받기가 아니라 `window.FilmSimHost` 다리를
+ * 탄다. 진짜 다리는 기기에서만 돌므로, 같은 모양의 **가짜**를 심어 페이지 쪽 절반
+ * (조각내기 · base64 · 순서 · 실패 처리)을 본다. 받은 조각을 이어 붙여 파일이
+ * 온전한지까지 확인한다.
+ */
+async function hostBridge(label, url, tmp) {
+  console.log(`\n${label}`);
+  const browser = await chromium.launch();
+  const ctx = await browser.newContext(Object.assign({}, devices["Pixel 7"]));
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  let downloads = 0;
+  page.on("download", () => downloads++);
+  await page.addInitScript(() => {
+    const jobs = {}, saved = [];
+    let seq = 0;
+    window.__saved = saved;
+    window.__failAppend = false;
+    window.FilmSimHost = {
+      begin(name, mime) { const id = ++seq; jobs[id] = { name, mime, chunks: [] }; return id; },
+      append(id, b64) { if (window.__failAppend) return false; jobs[id].chunks.push(b64); return true; },
+      finish(id) { const j = jobs[id]; delete jobs[id]; saved.push(j); return "Pictures/FilmSim/" + j.name; },
+      abort(id) { delete jobs[id]; window.__aborted = (window.__aborted || 0) + 1; },
+      lastError() { return "가짜 실패"; },
+    };
+  });
+  await page.goto(url);
+  await page.setInputFiles("#fileOpen", path.join(tmp, "scene16.tif"));
+  await page.waitForFunction(() => /^맞춤 \d+/.test(document.getElementById("status").textContent), null, { timeout: 60000 });
+  await page.locator("#sec-export > summary").click();
+
+  const save = async (format) => {
+    await page.selectOption("#expFormat", format);
+    const before = await page.evaluate(() => window.__saved.length);
+    await page.locator("#btnExport").click();
+    await page.waitForFunction((n) => window.__saved.length > n || /error/.test(document.getElementById("status").className), before, { timeout: 120000 });
+    const job = await page.evaluate(() => { const j = window.__saved[window.__saved.length - 1]; return j && { name: j.name, chunks: j.chunks }; });
+    return { job, status: await page.locator("#status").textContent(), bytes: job ? Buffer.concat(job.chunks.map((c) => Buffer.from(c, "base64"))) : null };
+  };
+
+  const jpg = await save("jpeg");
+  ok("JPEG이 다리로 넘어가고 저장 자리를 보여 준다",
+    jpg.bytes && jpg.bytes[0] === 0xff && jpg.bytes[1] === 0xd8 && jpg.bytes[jpg.bytes.length - 2] === 0xff && jpg.bytes[jpg.bytes.length - 1] === 0xd9 &&
+      /Pictures\/FilmSim\/scene16_filmsim\.jpg/.test(jpg.status), jpg.status);
+
+  const tif = await save("tiff16");
+  const dec = tif.bytes ? await tiff.decode(tif.bytes) : null;
+  ok("TIFF가 여러 조각으로 넘어가도 온전하다", dec && dec.width === 900 && dec.height === 600 && tif.job.chunks.length > 1,
+    dec ? `${(tif.bytes.length / 1e6).toFixed(1)}MB, ${tif.job.chunks.length}조각` : tif.status);
+
+  ok("브라우저 내려받기는 일어나지 않는다", downloads === 0);
+
+  await page.evaluate(() => { window.__failAppend = true; });
+  const bad = await save("jpeg");
+  ok("쓰다 실패하면 반쯤 쓴 파일을 지우고 알린다",
+    /저장하지 못했습니다/.test(bad.status) && (await page.evaluate(() => window.__aborted)) === 1, bad.status);
+  ok("  └ 실패 뒤에도 화면이 잠기지 않는다", await page.locator("#btnExport").isEnabled());
+
+  ok("콘솔 오류 없음", errors.length === 0, errors.slice(0, 3).join(" | "));
+  await browser.close();
+}
+
 (async () => {
   build();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "filmsim-smoke-"));
@@ -204,6 +268,8 @@ async function run(label, url, contextOpts, tmp) {
 
   await run("파일로 직접 열기 (file://) — 데스크톱", "file://" + path.join(dist, "index.html"), { viewport: { width: 1280, height: 800 } }, tmp);
   await run("서버로 열기 (http) — 폰 화면", `http://127.0.0.1:${port}/`, devices["Pixel 7"], tmp);
+
+  await hostBridge("Android 앱의 저장 다리 (모의 FilmSimHost)", `http://127.0.0.1:${port}/`, tmp);
 
   server.close();
   console.log(fails ? `\n브라우저 검사 실패 ${fails}건` : "\n브라우저 검사 통과");

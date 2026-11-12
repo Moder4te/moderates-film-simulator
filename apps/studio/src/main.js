@@ -245,13 +245,47 @@ async function openFile(file) {
   return true;
 }
 
-function download(blob, name) {
-  const url = URL.createObjectURL(blob);
-  const a = el("a", { href: url, download: name });
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
+/**
+ * 파일을 기기에 내놓는다. 저장된 자리(보여 줄 이름)를 돌려준다.
+ *
+ * 브라우저에서는 내려받기다. Android 앱(apps/android)에서는 WebView에 다운로드
+ * 관리자가 없어서, 껍데기가 심어 둔 `FilmSimHost` 다리로 바이트를 조각내 넘긴다 —
+ * 그쪽이 MediaStore(사진첩·다운로드 폴더)에 쓴다.
+ */
+async function download(blob, name) {
+  const host = window.FilmSimHost;
+  if (!host) {
+    const url = URL.createObjectURL(blob);
+    const a = el("a", { href: url, download: name });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    return name;
+  }
+
+  const id = host.begin(name, blob.type || "");
+  if (id < 0) throw new Error("저장하지 못했습니다 — " + host.lastError());
+  try {
+    // 다리는 문자열만 나른다. 한 번에 다 넘기면 144MB TIFF가 문자열 200MB가 된다
+    const CHUNK = 3 * 256 * 1024;
+    for (let at = 0; at < blob.size; at += CHUNK) {
+      const b64 = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result.slice(fr.result.indexOf(",") + 1));
+        fr.onerror = () => reject(new Error("파일 조각을 읽지 못했습니다"));
+        fr.readAsDataURL(blob.slice(at, at + CHUNK));
+      });
+      if (!host.append(id, b64)) throw new Error("저장하지 못했습니다 — " + host.lastError());
+      if (blob.size > 4 * CHUNK) progress("기기에 저장", Math.min(0.99, (at + CHUNK) / blob.size));
+    }
+    const where = host.finish(id);
+    if (!where) throw new Error("저장하지 못했습니다 — " + host.lastError());
+    return where;
+  } catch (e) {
+    host.abort(id);
+    throw e;
+  }
 }
 
 const baseName = (name) => String(name || "image").replace(/\.[^.]+$/, "");
@@ -272,9 +306,8 @@ async function exportCurrent() {
     const t0 = Date.now();
     const r = await client.exportImage(params, exportOptions());
     // 원본 이름에 꼬리를 붙인다 — 같은 폴더에 받아도 원본을 덮지 않는다
-    const name = `${baseName(info.name)}_filmsim.${r.ext}`;
-    download(r.blob, name);
-    status(`저장: ${name} · ${r.width}×${r.height} · ${((Date.now() - t0) / 1000).toFixed(1)}초`, "done");
+    const where = await download(r.blob, `${baseName(info.name)}_filmsim.${r.ext}`);
+    status(`저장: ${where} · ${r.width}×${r.height} · ${((Date.now() - t0) / 1000).toFixed(1)}초`, "done");
   } catch (e) {
     status(e.message, "error");
   } finally {
@@ -309,7 +342,7 @@ async function exportBatch(files) {
           await w.write(r.blob);
           await w.close();
         } else {
-          download(r.blob, name);
+          await download(r.blob, name);
         }
         done++;
       } catch (e) {
@@ -338,8 +371,7 @@ async function exportLook(kind) {
       ? { size: Number($("lookSize").value), space: $("cubeSpace").value, input: $("cubeInput").value }
       : { space: $("xmpSpace").value, input: $("xmpInput").value };
     const r = await client.exportLook(params, kind, opts);
-    download(new Blob([r.text], { type: "text/plain" }), r.name);
-    status(`저장: ${r.name}`, "done");
+    status(`저장: ${await download(new Blob([r.text], { type: "text/plain" }), r.name)}`, "done");
   } catch (e) {
     status(e.message, "error");
   }
@@ -540,9 +572,13 @@ function bindPresets() {
     store.set(STORE_PRESETS, presets);
     fillPresetList();
   });
-  $("presetExport").addEventListener("click", () => {
+  $("presetExport").addEventListener("click", async () => {
     const slug = (params.name || "preset").replace(/[\\/:*?"<>|]/g, "").trim() || "preset";
-    download(new Blob([JSON.stringify(params, null, 2)], { type: "application/json" }), `${slug}.json`);
+    try {
+      status(`저장: ${await download(new Blob([JSON.stringify(params, null, 2)], { type: "application/json" }), `${slug}.json`)}`, "done");
+    } catch (e) {
+      status(e.message, "error");
+    }
   });
   $("presetImport").addEventListener("change", async (e) => {
     const file = e.target.files[0];

@@ -41,7 +41,8 @@ node tools/build-studio.js      # → dist/studio/index.html  (의존성 없음,
 | 어디서 | 어떻게 연다 |
 |---|---|
 | **Windows** | `dist/studio/index.html`을 더블클릭(Edge·Chrome). 설치 없음 |
-| **Android** | PC에서 `node tools/serve-studio.js` → 같은 Wi-Fi의 폰 Chrome에서 찍힌 주소로 접속 |
+| **Android (앱)** | `node tools/build-apk.js` → `dist/FilmSimStudio-<버전>.apk`를 폰에 옮겨 설치 (Android 10 이상) |
+| **Android (브라우저)** | PC에서 `node tools/serve-studio.js` → 같은 Wi-Fi의 폰 Chrome에서 찍힌 주소로 접속 |
 | **설치형으로** | `dist/studio/` 폴더를 https로 올리면 브라우저의 「앱 설치 / 홈 화면에 추가」가 뜬다(오프라인 동작) |
 
 - **열 수 있는 파일** JPEG · PNG · WebP · TIFF(8/16비트, 무압축·LZW·ZIP). 필름 엔진은
@@ -56,9 +57,23 @@ node tools/build-studio.js      # → dist/studio/index.html  (의존성 없음,
   기능은 같고 계산을 새로 짰다: 레이어를 쌓지 않고 한 번에 계산하므로 「색 먼저,
   마감 나중」 순서 제약이 없다
 
+**Android 앱(APK)** 은 위 HTML을 WebView에 띄우는 껍데기다(`apps/android`). 색·마감 코드는
+브라우저판과 같은 파일이다.
+
+- **권한이 하나도 없다.** 인터넷 권한이 없어 사진을 어디로도 보낼 수 없고, 저장소 권한 없이
+  저장한다 — JPEG·PNG는 `Pictures/FilmSim`(사진첩에 보인다), TIFF·`.cube`·`.xmp`·프리셋은
+  `Download/FilmSim`
+- **빌드에 필요한 것** JDK 17+ 와 Android SDK(`platforms;android-35`, `build-tools`) —
+  `ANDROID_HOME`으로 가리킨다. Gradle은 쓰지 않는다
+- **설치** 스토어를 거치지 않으므로 폰이 「출처를 알 수 없는 앱」 설치 허용을 묻는다
+- **서명 키** 처음 빌드할 때 `~/.android/filmsim-studio.keystore`가 만들어진다. **이 파일을
+  보관해야** 다음 판을 덮어 깔 수 있다 — 키가 바뀌면 지우고 다시 깔아야 하고 앱에 저장한
+  프리셋이 지워진다. 자기 키를 쓰려면 `FILMSIM_KEYSTORE` · `FILMSIM_KEYSTORE_PASS`
+
 > ⚠️ **아직 없는 것** 컬러휠·벡터스코프 패널, RAW 직접 열기, 넓은 색역(Display P3)
 > 입출력. **실기(실제 Windows PC·Android 폰)에서는 아직 확인하지 못했다** — 데스크톱
-> Chromium과 폰 화면 에뮬레이션에서만 돌려 봤다(`node tools/smoke-studio.js`).
+> Chromium과 폰 화면 에뮬레이션에서만 돌려 봤다(`node tools/smoke-studio.js`). **APK도
+> 기기나 에뮬레이터에 올려 보지 못했다** — 빌드·서명·내용물까지만 검증했다.
 > 폰은 메모리가 작아 수천만 화소 파일에서 멎을 수 있다 — 「긴 변」을 줄여 내보낸다.
 
 ## 두 개의 플러그인

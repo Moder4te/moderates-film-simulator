@@ -124,6 +124,7 @@ Photoshop 없이 브라우저에서 돈다. `node tools/build-studio.js` → `di
 | 내보내기 | ✅ | JPEG · PNG · TIFF 16bit(ProPhoto ICC) · 긴 변 지정 · 일괄 · `.cube` · `.xmp` |
 | 프리셋 | ✅ | 플러그인과 같은 JSON. 브라우저 저장소 + 파일 가져오기/내보내기 |
 | 설치형(PWA) | ⚠️ | 매니페스트·서비스 워커는 들어 있다. **https로 올려 본 적은 없다** |
+| Android APK | ⚠️ | `node tools/build-apk.js` → `dist/FilmSimStudio-0.1.0.apk`(0.26MB, Android 10+, 권한 없음). 빌드·서명(v3)·정렬·내용물은 검증. **기기·에뮬레이터에서 실행해 본 적은 없다** |
 
 실측(데스크톱 Chromium, 24MP 16bit TIFF): 열기 + 첫 미리보기 1.3초 · 미리보기 0.2~0.4초 ·
 JPEG 내보내기 7.8초 · TIFF 7.0초.
@@ -132,6 +133,10 @@ JPEG 내보내기 7.8초 · TIFF 7.0초.
 - **실제 Windows PC · Android 폰에서 돌려 본 적이 없다.** 데스크톱 Chromium과 폰 화면
   에뮬레이션(Pixel 7 뷰포트·터치)까지만 봤다 — `node tools/smoke-studio.js`. 폰의 실제
   속도·메모리 한계·파일 선택기·내려받기 동작은 모른다
+- **APK를 실제로 깔아 본 적이 없다.** 이 빌드 환경에는 에뮬레이터를 돌릴 KVM이 없다.
+  확인한 것은 `aapt2 dump`(패키지·SDK 버전·권한 0개) · `apksigner verify` · dex에 다리
+  메서드가 들어 있는 것 · 페이지 쪽 저장 다리(가짜 `FilmSimHost`로 조각 전송·실패 처리)까지다.
+  **자바 쪽 — 파일 선택기 · MediaStore 저장 · 상태 표시줄 여백 — 은 돌려 보지 못했다**
 - **그레인의 눈 맞춤.** 톤 포락선을 새로 정했다(`core/render/pipeline.js` `grainEnvelope`).
   수치로는 Photoshop판의 명부 보상 뒤 값과 비슷한 자리지만 **나란히 놓고 본 적은 없다**
 - 폰에서 HTML 파일을 직접 여는 경로(서버 없이)
@@ -270,6 +275,9 @@ RAW 직접 열기 · Display P3 입출력(P3 프로파일 TIFF는 가정값으�
 되짚을 필요가 있을 때만 본다. 상세는 [`RESOLVED.md`](./RESOLVED.md).
 
 ```
+android        APK 빌드(tools/build-apk.js) — Studio HTML을 WebView에 띄우는 껍데기
+               (apps/android). Gradle 없이 SDK 도구 다섯 단계. 권한 0개, 저장은
+               FilmSimHost 다리 → MediaStore
 studio 0.1.0   독립 실행형 신설(apps/studio) — Photoshop 없이 브라우저에서 색 + 마감.
                core/render(작업 공간 · 영역 단위 파이프라인), core/io/tiff·icc,
                프리셋 스키마를 shared/params로, HTML 하나로 묶는 build-studio.js,
